@@ -161,6 +161,39 @@ ul.liste li .farve-knap{
 .aftale-tid{font-size:13px; color:var(--tekst-svag); min-width:86px; flex-shrink:0;}
 .aftale-titel{flex:1; word-break:break-word;}
 .aftale-prik{width:10px; height:10px; border-radius:50%; flex-shrink:0;}
+.uge-hoved{
+  display:grid; grid-template-columns:36px repeat(7,1fr);
+  position:sticky; top:0; background:var(--bg); z-index:6; padding:6px 0 4px;
+}
+.uge-hoved .dag{text-align:center; font-size:11px; color:var(--tekst-svag); cursor:default;}
+.uge-hoved .dagtal{
+  display:block; margin:3px auto 0; width:28px; height:28px; line-height:28px;
+  border-radius:50%; text-align:center; font-size:14px; font-weight:600; color:var(--tekst);
+}
+.uge-hoved .idag .dagtal{background:var(--grøn); color:#fff;}
+.uge-heldags{display:grid; grid-template-columns:36px repeat(7,1fr); gap:2px; margin-bottom:2px;}
+.uge-heldags .chip{
+  border-radius:5px; font-size:10px; padding:2px 3px; overflow:hidden;
+  white-space:nowrap; text-overflow:ellipsis; cursor:pointer; line-height:1.4;
+}
+.uge-wrap{display:flex;}
+.uge-tider{width:36px; flex-shrink:0; position:relative;}
+.uge-tider span{
+  position:absolute; right:6px; transform:translateY(-50%);
+  font-size:10px; color:var(--tekst-svag);
+}
+.uge-kolonner{flex:1; display:grid; grid-template-columns:repeat(7,1fr); position:relative;}
+.uge-kolonne{
+  position:relative; border-left:1px solid var(--kant);
+  background-image:repeating-linear-gradient(to bottom,
+    var(--kant), var(--kant) 1px, transparent 1px, transparent 56px);
+}
+.uge-aftale{
+  position:absolute; left:1px; right:1px; border-radius:6px; padding:2px 4px;
+  font-size:10.5px; line-height:1.25; overflow:hidden; cursor:pointer;
+  border:1px solid rgba(0,0,0,0.18);
+}
+.uge-nu{position:absolute; left:0; right:0; height:2px; background:#E24B4A; z-index:4; pointer-events:none;}
 #kal-kilder{display:flex; flex-wrap:wrap; gap:6px; margin:0 0 10px;}
 .kilde-chip{
   display:inline-flex; align-items:center; gap:7px; font:inherit; font-size:13px;
@@ -337,7 +370,6 @@ body.mørk .kontakt span::before{background:#D8D6CC;}
           <button data-visning="MÅNED">Måned</button>
         </div>
       </div>
-      <div id="kal-kilder"></div>
       <p class="indstil-note" id="kal-status" style="padding:0 0 6px;"></p>
       <div id="kal-uge" class="skjult">
         <div class="kal-nav">
@@ -418,7 +450,8 @@ body.mørk .kontakt span::before{background:#D8D6CC;}
     </div>
     <div class="indstil-gruppe">
       <h2>Kalender</h2>
-      <p class="indstil-note">Hvilke kalendere der vises, vælger du øverst i Kalender-fanen ved at trykke på kalender-mærkerne. Valget er personligt og følger dine delinger i Google Kalender.</p>
+      <div id="kal-kilder" style="padding:10px 0 4px;"></div>
+      <p class="indstil-note">Tryk på en kalender for at vise eller skjule den. Valget er personligt og følger ellers dine valg i Google Kalender.</p>
     </div>
     <div class="indstil-gruppe">
       <h2>Indkøbsliste</h2>
@@ -1046,7 +1079,7 @@ let kalListe = [];          // kalendere fra Google: {id, navn, farve, kanRette,
 let kalBegivenheder = [];
 let kalMåned = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
 let kalUge = mandagFør(new Date());
-let valgtDag = null, redigerer = null;
+let valgtDag = null, redigerer = null, editorForud = null;
 let kalValg = {};           // personlige til/fra-valg pr. kalender (gemmes lokalt)
 try{ kalValg = JSON.parse(localStorage.getItem("praktik-kal-valg")) || {}; }catch(e){}
 
@@ -1157,6 +1190,13 @@ function valgteKalendere(){ return kalListe.filter(erValgt); }
 function tegnKilder(){
   const el = document.getElementById("kal-kilder");
   el.innerHTML = "";
+  if(kalListe.length === 0){
+    const p = document.createElement("p");
+    p.className = "indstil-note"; p.style.padding = "0";
+    p.textContent = "Forbind Google Kalender i Kalender-fanen, så dine kalendere vises her.";
+    el.appendChild(p);
+    return;
+  }
   for(const k of kalListe){
     const chip = document.createElement("button");
     chip.className = "kilde-chip" + (erValgt(k) ? "" : " fra");
@@ -1295,30 +1335,161 @@ function tegnListeVisning(){
 }
 
 function tegnUgeVisning(){
-  const slut = new Date(kalUge); slut.setDate(slut.getDate()+6);
+  const TIME_H = 56;
+  const slutDag = new Date(kalUge); slutDag.setDate(slutDag.getDate()+6);
   const fmt = d => d.toLocaleDateString("da-DK", {day:"numeric", month:"short"});
-  document.getElementById("uge-titel").textContent = fmt(kalUge) + " \u2013 " + fmt(slut) +
+  document.getElementById("uge-titel").textContent = fmt(kalUge) + " \u2013 " + fmt(slutDag) +
     (kalUge.getFullYear() !== new Date().getFullYear() ? " " + kalUge.getFullYear() : "");
   const el = document.getElementById("uge-liste");
   el.innerHTML = "";
   const idagNøgle = datoNøgle(new Date());
+  const dage = [];
   for(let i=0; i<7; i++){
     const d = new Date(kalUge); d.setDate(kalUge.getDate()+i);
-    const h = document.createElement("div");
-    h.className = "kal-hoved";
-    h.textContent = dagOverskrift(d, false);
-    if(datoNøgle(d) === idagNøgle) h.style.color = "var(--grøn)";
-    el.appendChild(h);
-    const aftaler = aftalerPåDag(d);
-    if(aftaler.length === 0){
-      const p = document.createElement("p");
-      p.style.cssText = "color:var(--tekst-svag); font-size:13.5px; padding:0 4px 2px; margin:0;";
-      p.textContent = "–";
-      el.appendChild(p);
-    } else {
-      for(const e of aftaler) el.appendChild(lavAftaleRække(e));
-    }
+    dage.push(d);
   }
+
+  // Overskrift med ugedage
+  const hoved = document.createElement("div");
+  hoved.className = "uge-hoved";
+  hoved.appendChild(document.createElement("span"));
+  for(const d of dage){
+    const c = document.createElement("div");
+    c.className = "dag" + (datoNøgle(d) === idagNøgle ? " idag" : "");
+    c.innerHTML = d.toLocaleDateString("da-DK", {weekday:"short"}).replace(".","");
+    const tal = document.createElement("span");
+    tal.className = "dagtal"; tal.textContent = d.getDate();
+    c.appendChild(tal);
+    hoved.appendChild(c);
+  }
+  el.appendChild(hoved);
+
+  // Heldagsrække
+  const heldagsPrDag = dage.map(d => aftalerPåDag(d).filter(e=>e.heldags));
+  if(heldagsPrDag.some(l => l.length > 0)){
+    const række = document.createElement("div");
+    række.className = "uge-heldags";
+    række.appendChild(document.createElement("span"));
+    for(const liste of heldagsPrDag){
+      const celle = document.createElement("div");
+      for(const e of liste.slice(0,3)){
+        const chip = document.createElement("div");
+        chip.className = "chip";
+        chip.style.background = e.farve;
+        chip.style.color = tekstFarvePå(e.farve);
+        chip.textContent = e.titel;
+        chip.addEventListener("click", ()=> åbnEditor(e));
+        celle.appendChild(chip);
+      }
+      række.appendChild(celle);
+    }
+    el.appendChild(række);
+  }
+
+  // Tidsgitter
+  const wrap = document.createElement("div");
+  wrap.className = "uge-wrap";
+  const tider = document.createElement("div");
+  tider.className = "uge-tider";
+  tider.style.height = (24*TIME_H) + "px";
+  for(let t=1; t<24; t++){
+    const s = document.createElement("span");
+    s.style.top = (t*TIME_H) + "px";
+    s.textContent = String(t).padStart(2,"0");
+    tider.appendChild(s);
+  }
+  wrap.appendChild(tider);
+  const kolonner = document.createElement("div");
+  kolonner.className = "uge-kolonner";
+  for(const d of dage){
+    const kol = document.createElement("div");
+    kol.className = "uge-kolonne";
+    kol.style.height = (24*TIME_H) + "px";
+
+    // tryk på tomt felt -> ny aftale på det tidspunkt
+    kol.addEventListener("click", ev=>{
+      if(ev.target !== kol) return;
+      const time = Math.max(0, Math.min(23, Math.floor(ev.offsetY / TIME_H)));
+      editorForud = {
+        dato: datoNøgle(d),
+        fra: String(time).padStart(2,"0")+":00",
+        til: time === 23 ? "23:59" : String(time+1).padStart(2,"0")+":00"
+      };
+      åbnEditor(null);
+    });
+
+    // placer dagens tidsbestemte aftaler (med kolonnedeling ved overlap)
+    const dagStart = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    const aftaler = aftalerPåDag(d).filter(e=>!e.heldags)
+      .map(e=>{
+        const fra = Math.max(0, (e.start.getTime()-dagStart)/3600000);
+        const til = Math.min(24, (e.slut.getTime()-dagStart)/3600000);
+        return {e, fra, til: Math.max(til, fra+0.4)};
+      })
+      .sort((a,b)=> a.fra - b.fra || b.til - a.til);
+    const kolSlut = [];
+    let klynge = [], klyngeSlut = 0;
+    const luk = ()=>{
+      const antal = Math.max(1, ...klynge.map(p=>p.kol+1));
+      for(const p of klynge){ p.antal = antal; }
+      klynge = []; kolSlut.length = 0;
+    };
+    for(const p of aftaler){
+      if(klynge.length && p.fra >= klyngeSlut) luk();
+      let k = 0;
+      while(kolSlut[k] !== undefined && kolSlut[k] > p.fra) k++;
+      p.kol = k; kolSlut[k] = p.til;
+      klynge.push(p);
+      klyngeSlut = Math.max(klyngeSlut, p.til);
+    }
+    if(klynge.length) luk();
+    for(const p of aftaler){
+      const b = document.createElement("div");
+      b.className = "uge-aftale";
+      b.style.top = (p.fra*TIME_H) + "px";
+      b.style.height = ((p.til-p.fra)*TIME_H - 2) + "px";
+      b.style.background = p.e.farve;
+      b.style.color = tekstFarvePå(p.e.farve);
+      const bredde = 100 / p.antal;
+      b.style.left = "calc(" + (p.kol*bredde) + "% + 1px)";
+      b.style.width = "calc(" + bredde + "% - 2px)";
+      b.style.right = "auto";
+      b.textContent = p.e.titel;
+      b.addEventListener("click", ()=> åbnEditor(p.e));
+      kol.appendChild(b);
+    }
+
+    // nu-linje på dagens kolonne
+    if(datoNøgle(d) === idagNøgle){
+      const nu = new Date();
+      const linje = document.createElement("div");
+      linje.className = "uge-nu";
+      linje.style.top = ((nu.getHours() + nu.getMinutes()/60) * TIME_H) + "px";
+      kol.appendChild(linje);
+    }
+    kolonner.appendChild(kol);
+  }
+  wrap.appendChild(kolonner);
+  el.appendChild(wrap);
+
+  // rul hen til morgenen (eller dagens første aftale)
+  setTimeout(()=>{
+    const hovedEl = document.querySelector("main");
+    const idag = dage.find(d=>datoNøgle(d)===idagNøgle);
+    let målTime = 7;
+    if(idag){
+      const første = aftalerPåDag(idag).filter(e=>!e.heldags)[0];
+      if(første) målTime = Math.max(0, første.start.getHours() - 1);
+    }
+    hovedEl.scrollTop = wrap.offsetTop - hovedEl.offsetTop + målTime*TIME_H - 60;
+  }, 0);
+}
+
+function tekstFarvePå(hex){
+  try{
+    const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
+    return (0.299*r + 0.587*g + 0.114*b) > 150 ? "#1F2430" : "#FFFFFF";
+  }catch(e){ return "#FFFFFF"; }
 }
 
 function tegnMånedVisning(){
@@ -1412,9 +1583,11 @@ function åbnEditor(aftale){
     document.getElementById("aftale-titel").value = "";
     document.getElementById("aftale-heldags").checked = false;
     document.getElementById("aftale-dato").value =
-      (tilstand.indstillinger.kalVisning === "MÅNED" && valgtDag) ? valgtDag : datoNøgle(new Date());
-    document.getElementById("aftale-start").value = "09:00";
-    document.getElementById("aftale-slut").value = "10:00";
+      (editorForud && editorForud.dato) ||
+      ((tilstand.indstillinger.kalVisning === "MÅNED" && valgtDag) ? valgtDag : datoNøgle(new Date()));
+    document.getElementById("aftale-start").value = (editorForud && editorForud.fra) || "09:00";
+    document.getElementById("aftale-slut").value = (editorForud && editorForud.til) || "10:00";
+    editorForud = null;
   }
   opdaterTidsfelter();
   document.getElementById("aftale-skærm").classList.remove("skjult");
@@ -1508,6 +1681,7 @@ async function kalStart(){
   }
   hentKalTokenLokalt();
   visKalUI();
+  tegnKilder();
   if(tokenOk()){ await hentKalendere(); hentBegivenheder(); }
 }
 
