@@ -58,9 +58,11 @@ nav svg{width:24px; height:24px; stroke:currentColor; fill:none; stroke-width:1.
 /* ---------- Fælles liste-stil ---------- */
 .tilføj-række{display:flex; gap:8px; margin:8px 0 12px;}
 .tilføj-række input{
-  flex:1; font:inherit; padding:13px 16px; border:1px solid var(--kant);
+  flex:1; font:inherit; font-size:18px; color:var(--tekst); caret-color:var(--grøn);
+  padding:13px 16px; border:1px solid var(--kant);
   border-radius:14px; background:var(--kort); outline:none; min-width:0;
 }
+.tilføj-række input::placeholder{color:var(--tekst-svag); opacity:1;}
 .tilføj-række input:focus{border-color:var(--grøn);}
 .tilføj-række button{
   width:50px; border:none; border-radius:14px; background:var(--grøn);
@@ -179,7 +181,7 @@ ul.liste li .farve-knap{
 .uge-hoved .idag .dagtal{background:var(--grøn); color:#fff;}
 .uge-heldags{display:grid; grid-template-columns:36px repeat(7,1fr); gap:2px; margin-bottom:2px;}
 .uge-heldags .chip{
-  border-radius:5px; font-size:10px; padding:2px 3px; overflow:hidden;
+  border-radius:5px; font-size:11.5px; padding:2px 4px; overflow:hidden;
   white-space:nowrap; text-overflow:ellipsis; cursor:pointer; line-height:1.4;
 }
 .uge-wrap{display:flex;}
@@ -195,9 +197,9 @@ ul.liste li .farve-knap{
     var(--kant), var(--kant) 1px, transparent 1px, transparent 56px);
 }
 .uge-aftale{
-  position:absolute; left:1px; right:1px; border-radius:6px; padding:2px 4px;
-  font-size:10.5px; line-height:1.25; overflow:hidden; cursor:pointer;
-  border:1px solid rgba(0,0,0,0.18);
+  position:absolute; left:1px; right:1px; border-radius:6px; padding:3px 4px;
+  font-size:12.5px; line-height:1.25; overflow:hidden; cursor:pointer;
+  border:1px solid rgba(0,0,0,0.18); font-weight:500;
 }
 .uge-nu{position:absolute; left:0; right:0; height:2px; background:#E24B4A; z-index:4; pointer-events:none;}
 #kal-kilder{display:flex; flex-wrap:wrap; gap:6px; margin:0 0 10px;}
@@ -407,9 +409,9 @@ body.mørk .kontakt span::before{background:#D8D6CC;}
         <div class="tal" id="r-tal">0</div>
       </div>
       <div class="taster">
-        <button class="op" data-k="C">C</button>
         <button class="op" data-k="(">(</button>
         <button class="op" data-k=")">)</button>
+        <button class="op" data-k="C">C</button>
         <button class="op" data-k="⌫">⌫</button>
         <button class="op" data-k="%">%</button>
         <button class="op" data-k="√">√</button>
@@ -1007,39 +1009,50 @@ function beregnUdtryk(s){
     }
     return tal();
   }
-  function faktor(){
+  function led(){
+    /* returnerer {v, pct}: pct=true hvis leddet er et rent "tal%"
+       (købmandsprocent: 100+10% = 110) */
+    const første = faktorP();
+    let v = første.v, pct = første.pct;
     spring();
-    if(s[i]==="−" || s[i]==="-"){ i++; return -faktor(); }
-    if(s[i]==="√"){ i++; const v = faktor(); if(v < 0) return NaN; return Math.sqrt(v); }
-    let v = primær();
+    if(s[i]==="^"){ i++; v = Math.pow(v, led().v); pct = false; }
     for(;;){
       spring();
-      if(s[i]==="%"){ i++; v = v/100; }
-      else if(s[i]==="²"){ i++; v = v*v; }
-      else return v;
+      if(s[i]==="×"){ i++; v *= led1(); pct = false; }
+      else if(s[i]==="÷"){ i++; const n = led1(); v = n===0 ? NaN : v/n; pct = false; }
+      else return {v, pct};
+    }
+    function led1(){
+      const f = faktorP();
+      spring();
+      if(s[i]==="^"){ i++; return Math.pow(f.v, led().v); }
+      return f.v;
     }
   }
-  function potens(){
-    const v = faktor();
+  function faktorP(){
     spring();
-    if(s[i]==="^"){ i++; return Math.pow(v, potens()); }
-    return v;
-  }
-  function led(){
-    let v = potens();
+    if(s[i]==="−" || s[i]==="-"){ i++; return {v: -faktorP().v, pct:false}; }
+    if(s[i]==="√"){ i++; const f = faktorP(); return {v: f.v < 0 ? NaN : Math.sqrt(f.v), pct:false}; }
+    let v = primær(), pct = false;
     for(;;){
       spring();
-      if(s[i]==="×"){ i++; v *= potens(); }
-      else if(s[i]==="÷"){ i++; const n = potens(); v = n===0 ? NaN : v/n; }
-      else return v;
+      if(s[i]==="%"){ i++; v = v/100; pct = true; }
+      else if(s[i]==="²"){ i++; v = v*v; pct = false; }
+      else return {v, pct};
     }
   }
   function udtrykP(){
-    let v = led();
+    let v = led().v;
     for(;;){
       spring();
-      if(s[i]==="+"){ i++; v += led(); }
-      else if(s[i]==="−" || s[i]==="-"){ i++; v -= led(); }
+      if(s[i]==="+"){
+        i++; const h = led();
+        v += h.pct ? v * h.v : h.v;
+      }
+      else if(s[i]==="−" || s[i]==="-"){
+        i++; const h = led();
+        v -= h.pct ? v * h.v : h.v;
+      }
       else return v;
     }
   }
@@ -1535,7 +1548,7 @@ function anvendTimeHøjde(wrap, H){
     const fra = parseFloat(b.dataset.fra), til = parseFloat(b.dataset.til);
     b.style.top = (fra*H) + "px";
     b.style.height = ((til-fra)*H - 2) + "px";
-    b.style.fontSize = H < 40 ? "9px" : "10.5px";
+    b.style.fontSize = H < 40 ? "10.5px" : "12.5px";
   });
   wrap.querySelectorAll(".uge-nu").forEach(l=>{
     l.style.top = (parseFloat(l.dataset.tid)*H) + "px";
@@ -2132,6 +2145,13 @@ document.getElementById("knap-tilslut").addEventListener("click", tilslutHusstan
 document.getElementById("knap-logud-tidlig").addEventListener("click", async ()=>{
   try{ await fb.signOut(auth); }catch(e){}
 });
+
+/* Hold indtastningsfeltet synligt når tastaturet åbner */
+for(const id of ["vare-input","opgave-input"]){
+  document.getElementById(id).addEventListener("focus", function(){
+    setTimeout(()=> this.scrollIntoView({block:"center", behavior:"smooth"}), 300);
+  });
+}
 
 /* ================= Start ================= */
 (async ()=>{
