@@ -160,6 +160,15 @@ ul.liste li .farve-knap{
 }
 .aftale-tid{font-size:13px; color:var(--tekst-svag); min-width:86px; flex-shrink:0;}
 .aftale-titel{flex:1; word-break:break-word;}
+.aftale-prik{width:10px; height:10px; border-radius:50%; flex-shrink:0;}
+#kal-kilder{display:flex; flex-wrap:wrap; gap:6px; margin:0 0 10px;}
+.kilde-chip{
+  display:inline-flex; align-items:center; gap:7px; font:inherit; font-size:13px;
+  padding:6px 12px; border:1px solid var(--kant); border-radius:999px;
+  background:var(--kort); color:var(--tekst); cursor:pointer;
+}
+.kilde-chip.fra{opacity:0.4;}
+.kilde-prik{width:9px; height:9px; border-radius:50%; flex-shrink:0;}
 .pil-knap{
   display:inline-block; background:var(--grøn); color:#fff; border:none; font:inherit;
   font-weight:500; font-size:15px; padding:10px 14px; border-radius:12px;
@@ -324,10 +333,20 @@ body.mørk .kontakt span::before{background:#D8D6CC;}
         <button class="pil-knap" id="knap-ny-aftale">+ Ny aftale</button>
         <div class="segment" id="kal-visning">
           <button data-visning="LISTE">Liste</button>
+          <button data-visning="UGE">Uge</button>
           <button data-visning="MÅNED">Måned</button>
         </div>
       </div>
+      <div id="kal-kilder"></div>
       <p class="indstil-note" id="kal-status" style="padding:0 0 6px;"></p>
+      <div id="kal-uge" class="skjult">
+        <div class="kal-nav">
+          <button id="uge-forrige" aria-label="Forrige uge">‹</button>
+          <span id="uge-titel"></span>
+          <button id="uge-næste" aria-label="Næste uge">›</button>
+        </div>
+        <div id="uge-liste"></div>
+      </div>
       <div id="kal-måned" class="skjult">
         <div class="kal-nav">
           <button id="kal-forrige" aria-label="Forrige måned">‹</button>
@@ -399,11 +418,7 @@ body.mørk .kontakt span::before{background:#D8D6CC;}
     </div>
     <div class="indstil-gruppe">
       <h2>Kalender</h2>
-      <label class="indstil-række" style="flex-direction:column; align-items:stretch; gap:8px;">
-        <span>Kalender der vises i appen<small>Tom = din egen hovedkalender · ellers Gmail/kalender-id for en delt kalender · deles med husstanden</small></span>
-        <input id="ind-kalender" type="text" inputmode="email" autocomplete="off" placeholder="navn@gmail.com"
-          style="font:inherit; padding:11px 14px; border:1px solid var(--kant); border-radius:12px; background:var(--bg); color:var(--tekst); outline:none;">
-      </label>
+      <p class="indstil-note">Hvilke kalendere der vises, vælger du øverst i Kalender-fanen ved at trykke på kalender-mærkerne. Valget er personligt og følger dine delinger i Google Kalender.</p>
     </div>
     <div class="indstil-gruppe">
       <h2>Indkøbsliste</h2>
@@ -475,7 +490,10 @@ body.mørk .kontakt span::before{background:#D8D6CC;}
 <div id="aftale-skærm" class="skjult">
   <div style="max-width:380px; width:100%; background:var(--kort); border:1px solid var(--kant); border-radius:18px; padding:20px;">
     <h2 id="aftale-overskrift" style="font-size:20px; font-weight:600; margin:0 0 14px;">Ny aftale</h2>
+    <p class="indstil-note skjult" id="aftale-låst" style="padding:0 0 10px;">Du har kun læseadgang til denne kalender, så aftalen kan ikke ændres herfra.</p>
     <input class="felt" id="aftale-titel" placeholder="Titel" autocomplete="off">
+    <label style="font-size:13.5px; color:var(--tekst-svag);">Kalender</label>
+    <select class="felt" id="aftale-kalender"></select>
     <label class="indstil-række" style="border:none; padding:2px 0 12px;">
       <span>Hele dagen</span>
       <span class="kontakt"><input type="checkbox" id="aftale-heldags"><span></span></span>
@@ -1021,25 +1039,37 @@ document.querySelectorAll(".taster button").forEach(kn=>{
 
 /* ================= Google Kalender (API) ================= */
 const KAL_CLIENT_ID = "452016621766-t6k66avslg64s9dql7fakfkac3a3gq1q.apps.googleusercontent.com";
-const KAL_SCOPE = "https://www.googleapis.com/auth/calendar.events";
+const KAL_SCOPE = "https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.readonly";
+const KAL_BASE = "https://www.googleapis.com/calendar/v3/";
 let kalToken = null, kalUdløb = 0, tokenClient = null;
+let kalListe = [];          // kalendere fra Google: {id, navn, farve, kanRette, valgt}
 let kalBegivenheder = [];
 let kalMåned = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+let kalUge = mandagFør(new Date());
 let valgtDag = null, redigerer = null;
+let kalValg = {};           // personlige til/fra-valg pr. kalender (gemmes lokalt)
+try{ kalValg = JSON.parse(localStorage.getItem("praktik-kal-valg")) || {}; }catch(e){}
 
-function kalId(){ const k = (tilstand.kalender||"").trim(); return k || "primary"; }
+function mandagFør(d){
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  x.setDate(x.getDate() - ((x.getDay()+6)%7));
+  return x;
+}
 function datoNøgle(d){
   return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
 }
 function tokenOk(){ return kalToken && Date.now() < kalUdløb; }
 function gemKalToken(){
-  try{ localStorage.setItem("praktik-kal-token", JSON.stringify({t:kalToken, u:kalUdløb})); }catch(e){}
+  try{ localStorage.setItem("praktik-kal-token2", JSON.stringify({t:kalToken, u:kalUdløb})); }catch(e){}
 }
 function hentKalTokenLokalt(){
   try{
-    const r = JSON.parse(localStorage.getItem("praktik-kal-token"));
+    const r = JSON.parse(localStorage.getItem("praktik-kal-token2"));
     if(r && r.u > Date.now()){ kalToken = r.t; kalUdløb = r.u; }
   }catch(e){}
+}
+function gemKalValg(){
+  try{ localStorage.setItem("praktik-kal-valg", JSON.stringify(kalValg)); }catch(e){}
 }
 function kalStatus(t){ document.getElementById("kal-status").textContent = t; }
 
@@ -1060,12 +1090,13 @@ async function forbindKalender(){
     tokenClient = google.accounts.oauth2.initTokenClient({
       client_id: KAL_CLIENT_ID,
       scope: KAL_SCOPE,
-      callback: r=>{
+      callback: async r=>{
         if(r && r.access_token){
           kalToken = r.access_token;
           kalUdløb = Date.now() + ((r.expires_in||3600) - 120) * 1000;
           gemKalToken();
           visKalUI();
+          await hentKalendere();
           hentBegivenheder();
         } else {
           fejl.textContent = "Adgangen blev ikke givet.";
@@ -1083,54 +1114,110 @@ function visKalUI(){
   if(forbundet) tegnKalender();
 }
 
-async function kalKald(metode, sti, krop){
-  const r = await fetch(
-    "https://www.googleapis.com/calendar/v3/calendars/" + encodeURIComponent(kalId()) + sti,
-    {
-      method: metode,
-      headers: {
-        "Authorization": "Bearer " + kalToken,
-        ...(krop ? {"Content-Type": "application/json"} : {})
-      },
-      body: krop ? JSON.stringify(krop) : undefined
-    }
-  );
-  if(r.status === 401){ kalToken = null; gemKalToken(); visKalUI(); throw "udløbet"; }
+async function kalKald(metode, url, krop){
+  const r = await fetch(url, {
+    method: metode,
+    headers: {
+      "Authorization": "Bearer " + kalToken,
+      ...(krop ? {"Content-Type": "application/json"} : {})
+    },
+    body: krop ? JSON.stringify(krop) : undefined
+  });
+  if(r.status === 401 || r.status === 403){
+    kalToken = null; gemKalToken(); visKalUI();
+    throw "udløbet";
+  }
   if(!r.ok) throw new Error(await r.text());
   if(r.status === 204) return null;
   return r.json();
 }
 
+async function hentKalendere(){
+  try{
+    const data = await kalKald("GET", KAL_BASE + "users/me/calendarList?maxResults=50");
+    kalListe = (data.items||[]).map(k=>({
+      id: k.id,
+      navn: k.summaryOverride || k.summary || k.id,
+      farve: k.backgroundColor || "#3B6D11",
+      kanRette: k.accessRole === "owner" || k.accessRole === "writer",
+      primær: !!k.primary,
+      googleValgt: k.selected === true || !!k.primary
+    }));
+    kalListe.sort((a,b)=> (b.primær?1:0) - (a.primær?1:0) || a.navn.localeCompare(b.navn,"da"));
+  }catch(e){
+    kalListe = [];
+  }
+  tegnKilder();
+}
+function erValgt(k){
+  return kalValg[k.id] !== undefined ? !!kalValg[k.id] : k.googleValgt;
+}
+function valgteKalendere(){ return kalListe.filter(erValgt); }
+
+function tegnKilder(){
+  const el = document.getElementById("kal-kilder");
+  el.innerHTML = "";
+  for(const k of kalListe){
+    const chip = document.createElement("button");
+    chip.className = "kilde-chip" + (erValgt(k) ? "" : " fra");
+    const prik = document.createElement("span");
+    prik.className = "kilde-prik"; prik.style.background = k.farve;
+    const navn = document.createElement("span");
+    navn.textContent = k.primær ? "Min kalender" : k.navn;
+    chip.append(prik, navn);
+    chip.addEventListener("click", ()=>{
+      kalValg[k.id] = !erValgt(k);
+      gemKalValg(); tegnKilder(); hentBegivenheder();
+    });
+    el.appendChild(chip);
+  }
+}
+
 async function hentBegivenheder(){
   if(!tokenOk()) return;
+  if(kalListe.length === 0) await hentKalendere();
   kalStatus("Henter aftaler …");
-  const min = new Date(Math.min(Date.now(), kalMåned.getTime()) - 7*86400000);
-  const månedSlut = new Date(kalMåned.getFullYear(), kalMåned.getMonth()+1, 1);
-  const max = new Date(Math.max(Date.now() + 62*86400000, månedSlut.getTime() + 7*86400000));
+  const grænser = [
+    Date.now(), Date.now() + 62*86400000,
+    kalMåned.getTime(), new Date(kalMåned.getFullYear(), kalMåned.getMonth()+1, 1).getTime(),
+    kalUge.getTime(), kalUge.getTime() + 7*86400000
+  ];
+  const min = new Date(Math.min(...grænser) - 7*86400000);
+  const max = new Date(Math.max(...grænser) + 7*86400000);
+  const forespørgsel = "/events?singleEvents=true&orderBy=startTime&maxResults=250" +
+    "&timeMin=" + encodeURIComponent(min.toISOString()) +
+    "&timeMax=" + encodeURIComponent(max.toISOString());
   try{
-    const data = await kalKald("GET",
-      "/events?singleEvents=true&orderBy=startTime&maxResults=250" +
-      "&timeMin=" + encodeURIComponent(min.toISOString()) +
-      "&timeMax=" + encodeURIComponent(max.toISOString()));
-    kalBegivenheder = (data.items||[])
-      .filter(e => e.status !== "cancelled" && e.start)
-      .map(e=>{
-        const heldags = !!e.start.date;
-        return {
-          id: e.id,
-          titel: e.summary || "(uden titel)",
-          heldags,
-          start: heldags ? new Date(e.start.date+"T00:00:00") : new Date(e.start.dateTime),
-          slut:  heldags ? new Date(e.end.date+"T00:00:00")   : new Date(e.end.dateTime)
-        };
-      });
+    const lister = await Promise.all(valgteKalendere().map(async k=>{
+      try{
+        const data = await kalKald("GET", KAL_BASE + "calendars/" + encodeURIComponent(k.id) + forespørgsel);
+        return (data.items||[])
+          .filter(e => e.status !== "cancelled" && e.start)
+          .map(e=>{
+            const heldags = !!e.start.date;
+            return {
+              id: e.id,
+              kalId: k.id, kalNavn: k.primær ? "Min kalender" : k.navn,
+              farve: k.farve, kanRette: k.kanRette,
+              titel: e.summary || "(uden titel)",
+              heldags,
+              start: heldags ? new Date(e.start.date+"T00:00:00") : new Date(e.start.dateTime),
+              slut:  heldags ? new Date(e.end.date+"T00:00:00")   : new Date(e.end.dateTime)
+            };
+          });
+      }catch(fejl){
+        if(fejl === "udløbet") throw fejl;
+        return [];
+      }
+    }));
+    kalBegivenheder = lister.flat().sort((a,b)=> a.start - b.start);
     kalStatus("");
   }catch(e){
     if(e === "udløbet"){
       document.getElementById("kal-forbind-fejl").textContent = "Forbindelsen er udløbet – forbind igen.";
       return;
     }
-    kalStatus("Kunne ikke hente kalenderen. Tjek kalender-adressen under Indstillinger → Kalender.");
+    kalStatus("Kunne ikke hente kalenderen lige nu.");
     kalBegivenheder = [];
   }
   tegnKalender();
@@ -1149,32 +1236,43 @@ function tidTekst(e){
 function lavAftaleRække(e){
   const r = document.createElement("div");
   r.className = "aftale-række";
+  const prik = document.createElement("span");
+  prik.className = "aftale-prik"; prik.style.background = e.farve;
   const tid = document.createElement("span");
   tid.className = "aftale-tid"; tid.textContent = tidTekst(e);
   const titel = document.createElement("span");
   titel.className = "aftale-titel"; titel.textContent = e.titel;
-  r.append(tid, titel);
+  r.append(prik, tid, titel);
   r.addEventListener("click", ()=> åbnEditor(e));
   return r;
 }
+function dagOverskrift(d, medRelativ){
+  const idag = new Date(); idag.setHours(0,0,0,0);
+  const dage = Math.round((new Date(d.getFullYear(),d.getMonth(),d.getDate()) - idag)/86400000);
+  if(medRelativ && dage === 0) return "I dag";
+  if(medRelativ && dage === 1) return "I morgen";
+  return d.toLocaleDateString("da-DK", {weekday:"long", day:"numeric", month:"long"});
+}
 
 function tegnKalender(){
-  const visning = tilstand.indstillinger.kalVisning === "MÅNED" ? "MÅNED" : "LISTE";
+  let visning = tilstand.indstillinger.kalVisning;
+  if(!["LISTE","UGE","MÅNED"].includes(visning)) visning = "LISTE";
   document.querySelectorAll("#kal-visning button").forEach(b=>{
     b.classList.toggle("aktiv", b.dataset.visning === visning);
   });
-  document.getElementById("kal-måned").classList.toggle("skjult", visning !== "MÅNED");
   document.getElementById("kal-liste").classList.toggle("skjult", visning !== "LISTE");
-  if(visning === "LISTE") tegnListeVisning(); else tegnMånedVisning();
+  document.getElementById("kal-uge").classList.toggle("skjult", visning !== "UGE");
+  document.getElementById("kal-måned").classList.toggle("skjult", visning !== "MÅNED");
+  if(visning === "LISTE") tegnListeVisning();
+  else if(visning === "UGE") tegnUgeVisning();
+  else tegnMånedVisning();
 }
 
 function tegnListeVisning(){
   const el = document.getElementById("kal-liste");
   el.innerHTML = "";
   const idag = new Date(); idag.setHours(0,0,0,0);
-  const kommende = kalBegivenheder
-    .filter(e => e.slut.getTime() > idag.getTime())
-    .sort((a,b)=> a.start - b.start);
+  const kommende = kalBegivenheder.filter(e => e.slut.getTime() > idag.getTime());
   if(kommende.length === 0){
     const p = document.createElement("p");
     p.className = "tom"; p.textContent = "Ingen kommende aftaler.";
@@ -1189,12 +1287,37 @@ function tegnListeVisning(){
       sidsteDag = nøgle;
       const h = document.createElement("div");
       h.className = "kal-hoved";
-      const dage = Math.round((new Date(visDag.getFullYear(),visDag.getMonth(),visDag.getDate()) - idag)/86400000);
-      h.textContent = dage===0 ? "I dag" : dage===1 ? "I morgen" :
-        visDag.toLocaleDateString("da-DK", {weekday:"long", day:"numeric", month:"long"});
+      h.textContent = dagOverskrift(visDag, true);
       el.appendChild(h);
     }
     el.appendChild(lavAftaleRække(e));
+  }
+}
+
+function tegnUgeVisning(){
+  const slut = new Date(kalUge); slut.setDate(slut.getDate()+6);
+  const fmt = d => d.toLocaleDateString("da-DK", {day:"numeric", month:"short"});
+  document.getElementById("uge-titel").textContent = fmt(kalUge) + " \u2013 " + fmt(slut) +
+    (kalUge.getFullYear() !== new Date().getFullYear() ? " " + kalUge.getFullYear() : "");
+  const el = document.getElementById("uge-liste");
+  el.innerHTML = "";
+  const idagNøgle = datoNøgle(new Date());
+  for(let i=0; i<7; i++){
+    const d = new Date(kalUge); d.setDate(kalUge.getDate()+i);
+    const h = document.createElement("div");
+    h.className = "kal-hoved";
+    h.textContent = dagOverskrift(d, false);
+    if(datoNøgle(d) === idagNøgle) h.style.color = "var(--grøn)";
+    el.appendChild(h);
+    const aftaler = aftalerPåDag(d);
+    if(aftaler.length === 0){
+      const p = document.createElement("p");
+      p.style.cssText = "color:var(--tekst-svag); font-size:13.5px; padding:0 4px 2px; margin:0;";
+      p.textContent = "–";
+      el.appendChild(p);
+    } else {
+      for(const e of aftaler) el.appendChild(lavAftaleRække(e));
+    }
   }
 }
 
@@ -1217,8 +1340,11 @@ function tegnMånedVisning(){
     if(nøgle === valgtDag) kn.classList.add("valgt");
     const tal = document.createElement("span"); tal.textContent = d.getDate();
     const prikker = document.createElement("span"); prikker.className = "kal-prikker";
-    const antal = Math.min(3, aftalerPåDag(d).length);
-    for(let p=0; p<antal; p++) prikker.appendChild(document.createElement("i"));
+    for(const e of aftalerPåDag(d).slice(0,3)){
+      const p = document.createElement("i");
+      p.style.background = e.farve;
+      prikker.appendChild(p);
+    }
     kn.append(tal, prikker);
     kn.addEventListener("click", ()=>{ valgtDag = nøgle; tegnMånedVisning(); });
     gitter.appendChild(kn);
@@ -1229,9 +1355,9 @@ function tegnMånedVisning(){
     const d = new Date(valgtDag+"T00:00:00");
     const h = document.createElement("div");
     h.className = "kal-hoved";
-    h.textContent = d.toLocaleDateString("da-DK", {weekday:"long", day:"numeric", month:"long"});
+    h.textContent = dagOverskrift(d, false);
     dagEl.appendChild(h);
-    const aftaler = aftalerPåDag(d).sort((a,b)=> a.start - b.start);
+    const aftaler = aftalerPåDag(d);
     if(aftaler.length === 0){
       const p = document.createElement("p");
       p.style.cssText = "color:var(--tekst-svag); font-size:14.5px; padding:4px;";
@@ -1246,9 +1372,33 @@ function tegnMånedVisning(){
 /* ---- Aftale-editor ---- */
 function åbnEditor(aftale){
   redigerer = aftale || null;
-  document.getElementById("aftale-overskrift").textContent = aftale ? "Ret aftale" : "Ny aftale";
+  const låst = !!(aftale && !aftale.kanRette);
+  document.getElementById("aftale-overskrift").textContent =
+    aftale ? (låst ? "Aftale" : "Ret aftale") : "Ny aftale";
   document.getElementById("aftale-fejl").textContent = "";
-  document.getElementById("aftale-slet").classList.toggle("skjult", !aftale);
+  document.getElementById("aftale-låst").classList.toggle("skjult", !låst);
+  document.getElementById("aftale-slet").classList.toggle("skjult", !aftale || låst);
+  document.getElementById("aftale-gem").classList.toggle("skjult", låst);
+  for(const id of ["aftale-titel","aftale-heldags","aftale-dato","aftale-start","aftale-slut"]){
+    document.getElementById(id).disabled = låst;
+  }
+  const vælger = document.getElementById("aftale-kalender");
+  vælger.innerHTML = "";
+  if(aftale){
+    const o = document.createElement("option");
+    o.textContent = aftale.kalNavn; o.value = aftale.kalId;
+    vælger.appendChild(o);
+    vælger.disabled = true;
+  } else {
+    const skrivbare = kalListe.filter(k=>k.kanRette);
+    for(const k of skrivbare){
+      const o = document.createElement("option");
+      o.value = k.id; o.textContent = k.primær ? "Min kalender" : k.navn;
+      if(k.primær) o.selected = true;
+      vælger.appendChild(o);
+    }
+    vælger.disabled = skrivbare.length <= 1;
+  }
   const tidFmt = t => String(t.getHours()).padStart(2,"0")+":"+String(t.getMinutes()).padStart(2,"0");
   if(aftale){
     document.getElementById("aftale-titel").value = aftale.titel === "(uden titel)" ? "" : aftale.titel;
@@ -1274,12 +1424,16 @@ function opdaterTidsfelter(){
   document.getElementById("aftale-tider").style.display =
     document.getElementById("aftale-heldags").checked ? "none" : "flex";
 }
+function aftaleUrl(kalenderId, sti){
+  return KAL_BASE + "calendars/" + encodeURIComponent(kalenderId) + "/events" + sti;
+}
 async function gemAftale(){
   const fejl = document.getElementById("aftale-fejl");
   fejl.textContent = "";
   const titel = document.getElementById("aftale-titel").value.trim();
   const dato = document.getElementById("aftale-dato").value;
   const heldags = document.getElementById("aftale-heldags").checked;
+  const kalenderId = document.getElementById("aftale-kalender").value;
   if(!titel){ fejl.textContent = "Skriv en titel."; return; }
   if(!dato){ fejl.textContent = "Vælg en dato."; return; }
   let krop;
@@ -1297,8 +1451,8 @@ async function gemAftale(){
     };
   }
   try{
-    if(redigerer) await kalKald("PATCH", "/events/"+encodeURIComponent(redigerer.id), krop);
-    else await kalKald("POST", "/events", krop);
+    if(redigerer) await kalKald("PATCH", aftaleUrl(redigerer.kalId, "/"+encodeURIComponent(redigerer.id)), krop);
+    else await kalKald("POST", aftaleUrl(kalenderId, ""), krop);
     lukEditor();
     hentBegivenheder();
   }catch(e){
@@ -1310,7 +1464,7 @@ async function sletAftale(){
   if(!confirm("Slet aftalen \"" + redigerer.titel + "\"?")) return;
   const fejl = document.getElementById("aftale-fejl");
   try{
-    await kalKald("DELETE", "/events/"+encodeURIComponent(redigerer.id));
+    await kalKald("DELETE", aftaleUrl(redigerer.kalId, "/"+encodeURIComponent(redigerer.id)));
     lukEditor();
     hentBegivenheder();
   }catch(e){
@@ -1337,18 +1491,24 @@ document.getElementById("kal-næste").addEventListener("click", ()=>{
   kalMåned = new Date(kalMåned.getFullYear(), kalMåned.getMonth()+1, 1);
   valgtDag = null; hentBegivenheder(); tegnKalender();
 });
+document.getElementById("uge-forrige").addEventListener("click", ()=>{
+  kalUge.setDate(kalUge.getDate()-7); hentBegivenheder(); tegnKalender();
+});
+document.getElementById("uge-næste").addEventListener("click", ()=>{
+  kalUge.setDate(kalUge.getDate()+7); hentBegivenheder(); tegnKalender();
+});
 document.getElementById("aftale-heldags").addEventListener("change", opdaterTidsfelter);
 document.getElementById("aftale-gem").addEventListener("click", gemAftale);
 document.getElementById("aftale-slet").addEventListener("click", sletAftale);
 document.getElementById("aftale-annuller").addEventListener("click", lukEditor);
 
-function kalStart(){
-  if(!["LISTE","MÅNED"].includes(tilstand.indstillinger.kalVisning)){
-    tilstand.indstillinger.kalVisning = tilstand.indstillinger.kalVisning === "MONTH" ? "MÅNED" : "LISTE";
+async function kalStart(){
+  if(!["LISTE","UGE","MÅNED"].includes(tilstand.indstillinger.kalVisning)){
+    tilstand.indstillinger.kalVisning = "LISTE";
   }
   hentKalTokenLokalt();
   visKalUI();
-  if(tokenOk()) hentBegivenheder();
+  if(tokenOk()){ await hentKalendere(); hentBegivenheder(); }
 }
 
 /* ================= Notifikationer & indstillinger ================= */
@@ -1411,11 +1571,6 @@ for(const [id, felt] of [["ind-notif-varer","notifVarer"],["ind-notif-opgaver","
 }
 document.getElementById("ind-rema").addEventListener("change", function(){
   tilstand.indstillinger.remaSortering = this.checked; tegnVarer(); gem();
-});
-document.getElementById("ind-kalender").addEventListener("change", function(){
-  tilstand.kalender = this.value.trim();
-  if(tokenOk()) hentBegivenheder();
-  gem();
 });
 document.querySelectorAll("#tema-valg button").forEach(kn=>{
   kn.addEventListener("click", ()=>{
@@ -1539,11 +1694,6 @@ function håndterSkyData(d, fremmed){
   tilstand.varer = d.varer || [];
   tilstand.opgaver = d.opgaver || [];
   tilstand.varehistorik = d.varehistorik || {};
-  if(typeof d.kalender === "string" && d.kalender !== tilstand.kalender){
-    tilstand.kalender = d.kalender;
-    document.getElementById("ind-kalender").value = tilstand.kalender;
-    if(tokenOk()) hentBegivenheder();
-  }
   if(tjekFrister()) gemSky();
   tegnVarer(); tegnOpgaver();
   gemData(tilstand);
@@ -1696,7 +1846,6 @@ document.getElementById("knap-logud-tidlig").addEventListener("click", async ()=
     tilstand.springLoginOver = gemt.springLoginOver || false;
     tilstand.kalender = gemt.kalender || "";
   }
-  document.getElementById("ind-kalender").value = tilstand.kalender;
   anvendFaneOrden();
   anvendIndstillinger();
   visSide(tilstand.faneOrden[0]);
