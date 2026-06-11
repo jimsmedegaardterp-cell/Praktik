@@ -1335,7 +1335,7 @@ function tegnListeVisning(){
 }
 
 function tegnUgeVisning(){
-  const TIME_H = 56;
+  const TIME_H = tilstand.indstillinger.kalTimeHøjde || 56;
   const slutDag = new Date(kalUge); slutDag.setDate(slutDag.getDate()+6);
   const fmt = d => d.toLocaleDateString("da-DK", {day:"numeric", month:"short"});
   document.getElementById("uge-titel").textContent = fmt(kalUge) + " \u2013 " + fmt(slutDag) +
@@ -1349,14 +1349,13 @@ function tegnUgeVisning(){
     dage.push(d);
   }
 
-  // Overskrift med ugedage
   const hoved = document.createElement("div");
   hoved.className = "uge-hoved";
   hoved.appendChild(document.createElement("span"));
   for(const d of dage){
     const c = document.createElement("div");
     c.className = "dag" + (datoNøgle(d) === idagNøgle ? " idag" : "");
-    c.innerHTML = d.toLocaleDateString("da-DK", {weekday:"short"}).replace(".","");
+    c.textContent = d.toLocaleDateString("da-DK", {weekday:"short"}).replace(".","");
     const tal = document.createElement("span");
     tal.className = "dagtal"; tal.textContent = d.getDate();
     c.appendChild(tal);
@@ -1364,7 +1363,6 @@ function tegnUgeVisning(){
   }
   el.appendChild(hoved);
 
-  // Heldagsrække
   const heldagsPrDag = dage.map(d => aftalerPåDag(d).filter(e=>e.heldags));
   if(heldagsPrDag.some(l => l.length > 0)){
     const række = document.createElement("div");
@@ -1386,15 +1384,13 @@ function tegnUgeVisning(){
     el.appendChild(række);
   }
 
-  // Tidsgitter
   const wrap = document.createElement("div");
   wrap.className = "uge-wrap";
   const tider = document.createElement("div");
   tider.className = "uge-tider";
-  tider.style.height = (24*TIME_H) + "px";
   for(let t=1; t<24; t++){
     const s = document.createElement("span");
-    s.style.top = (t*TIME_H) + "px";
+    s.dataset.t = t;
     s.textContent = String(t).padStart(2,"0");
     tider.appendChild(s);
   }
@@ -1404,12 +1400,11 @@ function tegnUgeVisning(){
   for(const d of dage){
     const kol = document.createElement("div");
     kol.className = "uge-kolonne";
-    kol.style.height = (24*TIME_H) + "px";
 
-    // tryk på tomt felt -> ny aftale på det tidspunkt
     kol.addEventListener("click", ev=>{
       if(ev.target !== kol) return;
-      const time = Math.max(0, Math.min(23, Math.floor(ev.offsetY / TIME_H)));
+      const H = tilstand.indstillinger.kalTimeHøjde || 56;
+      const time = Math.max(0, Math.min(23, Math.floor(ev.offsetY / H)));
       editorForud = {
         dato: datoNøgle(d),
         fra: String(time).padStart(2,"0")+":00",
@@ -1418,7 +1413,6 @@ function tegnUgeVisning(){
       åbnEditor(null);
     });
 
-    // placer dagens tidsbestemte aftaler (med kolonnedeling ved overlap)
     const dagStart = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
     const aftaler = aftalerPåDag(d).filter(e=>!e.heldags)
       .map(e=>{
@@ -1446,8 +1440,7 @@ function tegnUgeVisning(){
     for(const p of aftaler){
       const b = document.createElement("div");
       b.className = "uge-aftale";
-      b.style.top = (p.fra*TIME_H) + "px";
-      b.style.height = ((p.til-p.fra)*TIME_H - 2) + "px";
+      b.dataset.fra = p.fra; b.dataset.til = p.til;
       b.style.background = p.e.farve;
       b.style.color = tekstFarvePå(p.e.farve);
       const bredde = 100 / p.antal;
@@ -1459,20 +1452,20 @@ function tegnUgeVisning(){
       kol.appendChild(b);
     }
 
-    // nu-linje på dagens kolonne
     if(datoNøgle(d) === idagNøgle){
       const nu = new Date();
       const linje = document.createElement("div");
       linje.className = "uge-nu";
-      linje.style.top = ((nu.getHours() + nu.getMinutes()/60) * TIME_H) + "px";
+      linje.dataset.tid = nu.getHours() + nu.getMinutes()/60;
       kol.appendChild(linje);
     }
     kolonner.appendChild(kol);
   }
   wrap.appendChild(kolonner);
   el.appendChild(wrap);
+  anvendTimeHøjde(wrap, TIME_H);
+  tilknytUgeGestik(wrap);
 
-  // rul hen til morgenen (eller dagens første aftale)
   setTimeout(()=>{
     const hovedEl = document.querySelector("main");
     const idag = dage.find(d=>datoNøgle(d)===idagNøgle);
@@ -1483,6 +1476,76 @@ function tegnUgeVisning(){
     }
     hovedEl.scrollTop = wrap.offsetTop - hovedEl.offsetTop + målTime*TIME_H - 60;
   }, 0);
+}
+
+function anvendTimeHøjde(wrap, H){
+  wrap.querySelector(".uge-tider").style.height = (24*H) + "px";
+  wrap.querySelectorAll(".uge-tider span").forEach(s=>{
+    s.style.top = (parseFloat(s.dataset.t)*H) + "px";
+  });
+  wrap.querySelectorAll(".uge-kolonne").forEach(k=>{
+    k.style.height = (24*H) + "px";
+    k.style.backgroundImage = "repeating-linear-gradient(to bottom, var(--kant), var(--kant) 1px, transparent 1px, transparent " + H + "px)";
+  });
+  wrap.querySelectorAll(".uge-aftale").forEach(b=>{
+    const fra = parseFloat(b.dataset.fra), til = parseFloat(b.dataset.til);
+    b.style.top = (fra*H) + "px";
+    b.style.height = ((til-fra)*H - 2) + "px";
+    b.style.fontSize = H < 40 ? "9px" : "10.5px";
+  });
+  wrap.querySelectorAll(".uge-nu").forEach(l=>{
+    l.style.top = (parseFloat(l.dataset.tid)*H) + "px";
+  });
+}
+
+function tilknytUgeGestik(wrap){
+  let pinchAfstand = 0, pinchH = 56, pinchAktiv = false;
+  let startX = 0, startY = 0, swipeKlar = false;
+  const hovedEl = document.querySelector("main");
+  const afstand = e => Math.hypot(
+    e.touches[0].clientX - e.touches[1].clientX,
+    e.touches[0].clientY - e.touches[1].clientY);
+
+  wrap.addEventListener("touchstart", e=>{
+    if(e.touches.length === 2){
+      pinchAktiv = true; swipeKlar = false;
+      pinchAfstand = afstand(e);
+      pinchH = tilstand.indstillinger.kalTimeHøjde || 56;
+    } else if(e.touches.length === 1){
+      startX = e.touches[0].clientX; startY = e.touches[0].clientY;
+      swipeKlar = true;
+    }
+  }, {passive:true});
+
+  wrap.addEventListener("touchmove", e=>{
+    if(!(pinchAktiv && e.touches.length === 2)) return;
+    e.preventDefault();
+    const H = Math.round(Math.max(28, Math.min(140, pinchH * afstand(e) / pinchAfstand)));
+    if(H === (tilstand.indstillinger.kalTimeHøjde || 56)) return;
+    const midtY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+    const kolonner = wrap.querySelector(".uge-kolonner");
+    const gammelH = tilstand.indstillinger.kalTimeHøjde || 56;
+    const tidIMidt = (midtY - kolonner.getBoundingClientRect().top) / gammelH;
+    tilstand.indstillinger.kalTimeHøjde = H;
+    anvendTimeHøjde(wrap, H);
+    hovedEl.scrollTop += (tidIMidt*H + kolonner.getBoundingClientRect().top) - midtY;
+  }, {passive:false});
+
+  wrap.addEventListener("touchend", e=>{
+    if(pinchAktiv){
+      if(e.touches.length < 2){ pinchAktiv = false; gem(); }
+      return;
+    }
+    if(swipeKlar && e.changedTouches.length === 1){
+      const dx = e.changedTouches[0].clientX - startX;
+      const dy = e.changedTouches[0].clientY - startY;
+      if(Math.abs(dx) > 60 && Math.abs(dx) > 1.6*Math.abs(dy)){
+        kalUge.setDate(kalUge.getDate() + (dx < 0 ? 7 : -7));
+        hentBegivenheder(); tegnKalender();
+      }
+    }
+    swipeKlar = false;
+  });
 }
 
 function tekstFarvePå(hex){
@@ -1664,6 +1727,24 @@ document.getElementById("kal-næste").addEventListener("click", ()=>{
   kalMåned = new Date(kalMåned.getFullYear(), kalMåned.getMonth()+1, 1);
   valgtDag = null; hentBegivenheder(); tegnKalender();
 });
+(function(){ // swipe i månedsvisningen
+  const el = document.getElementById("kal-måned");
+  let sx = 0, sy = 0, klar = false;
+  el.addEventListener("touchstart", e=>{
+    if(e.touches.length === 1){ sx = e.touches[0].clientX; sy = e.touches[0].clientY; klar = true; }
+    else klar = false;
+  }, {passive:true});
+  el.addEventListener("touchend", e=>{
+    if(!klar || e.changedTouches.length !== 1){ klar = false; return; }
+    klar = false;
+    const dx = e.changedTouches[0].clientX - sx;
+    const dy = e.changedTouches[0].clientY - sy;
+    if(Math.abs(dx) > 60 && Math.abs(dx) > 1.6*Math.abs(dy)){
+      kalMåned = new Date(kalMåned.getFullYear(), kalMåned.getMonth() + (dx < 0 ? 1 : -1), 1);
+      valgtDag = null; hentBegivenheder(); tegnKalender();
+    }
+  });
+})();
 document.getElementById("uge-forrige").addEventListener("click", ()=>{
   kalUge.setDate(kalUge.getDate()-7); hentBegivenheder(); tegnKalender();
 });
