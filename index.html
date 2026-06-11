@@ -131,6 +131,10 @@ ul.liste li .farve-knap{
   display:inline-block; background:var(--grøn); color:#fff; text-decoration:none;
   font-weight:500; padding:13px 24px; border-radius:14px;
 }
+#kal-ramme{
+  width:100%; height:calc(100vh - 200px); min-height:420px;
+  border:1px solid var(--kant); border-radius:16px; background:#fff; margin-top:8px;
+}
 
 /* ---------- Lommeregner ---------- */
 .regner{max-width:360px; margin:8px auto 0;}
@@ -273,10 +277,13 @@ body.mørk .kontakt span::before{background:#D8D6CC;}
 
   <!-- KALENDER -->
   <section id="side-kalender" class="skjult">
-    <div class="kal-kort">
-      <p>Kalenderen kobles til jeres Google Kalender i næste trin, så aftaler vises direkte her i appen.<br><br>Indtil da kan du åbne den her:</p>
-      <a href="https://calendar.google.com" target="_blank" rel="noopener">Åbn Google Kalender</a>
+    <div class="kal-kort" id="kal-opsætning">
+      <p>Vis jeres Google Kalender her i appen: skriv den Gmail-adresse, kalenderen hører til (typisk din egen). Bruger I en delt familiekalender, kan dens kalender-id også bruges.</p>
+      <input class="kode-felt" id="kal-input" style="letter-spacing:normal; text-transform:none; font-size:16px;" placeholder="navn@gmail.com" autocomplete="off" inputmode="email">
+      <button class="stor-knap" id="kal-gem">Vis kalenderen</button>
+      <p style="margin-top:16px;"><a href="https://calendar.google.com" target="_blank" rel="noopener" style="background:none; color:var(--tekst-svag); padding:0; text-decoration:underline; font-weight:400;">Eller åbn Google Kalender for sig selv</a></p>
     </div>
+    <iframe id="kal-ramme" class="skjult" title="Google Kalender"></iframe>
   </section>
 
   <!-- LOMMEREGNER -->
@@ -333,6 +340,14 @@ body.mørk .kontakt span::before{background:#D8D6CC;}
         <button class="ryd-knap" id="ind-test" style="margin:0;">Send en testnotifikation</button>
       </div>
       <p class="indstil-note" id="notif-note">Beskeder om andres ændringer (f.eks. nye varer på listen) virker, når delingen kobles på i næste trin.</p>
+    </div>
+    <div class="indstil-gruppe">
+      <h2>Kalender</h2>
+      <label class="indstil-række" style="flex-direction:column; align-items:stretch; gap:8px;">
+        <span>Kalender der vises i appen<small>Gmail-adresse eller kalender-id · deles med husstanden</small></span>
+        <input id="ind-kalender" type="text" inputmode="email" autocomplete="off" placeholder="navn@gmail.com"
+          style="font:inherit; padding:11px 14px; border:1px solid var(--kant); border-radius:12px; background:var(--bg); color:var(--tekst); outline:none;">
+      </label>
     </div>
     <div class="indstil-gruppe">
       <h2>Indkøbsliste</h2>
@@ -434,7 +449,8 @@ let tilstand = {
   opgaver: [],          // {id, tekst, gjort, prioritet, frist}
   faneOrden: ["indkøb","opgaver","kalender","regner"],
   indstillinger: {...standardIndstillinger},
-  springLoginOver: false
+  springLoginOver: false,
+  kalender: ""          // Gmail/kalender-id der vises i Kalender-fanen (deles i husstanden)
 };
 let gemTimer = null;
 function gem(){
@@ -924,6 +940,31 @@ document.querySelectorAll(".taster button").forEach(kn=>{
   kn.addEventListener("click", ()=> trykTast(kn.dataset.k));
 });
 
+/* ================= Kalender ================= */
+function visKalender(){
+  const ramme = document.getElementById("kal-ramme");
+  const opsæt = document.getElementById("kal-opsætning");
+  const id = (tilstand.kalender||"").trim();
+  if(!id){
+    ramme.classList.add("skjult"); ramme.src = "about:blank";
+    opsæt.classList.remove("skjult");
+    return;
+  }
+  const kilder = id.split(",").map(s=>"&src="+encodeURIComponent(s.trim())).join("");
+  const url = "https://calendar.google.com/calendar/embed?mode=AGENDA&hl=da"
+    + "&ctz=Europe%2FCopenhagen&showTitle=0&showPrint=0&showTabs=0&showCalendars=0"
+    + kilder;
+  if(ramme.src !== url) ramme.src = url;
+  ramme.classList.remove("skjult");
+  opsæt.classList.add("skjult");
+}
+document.getElementById("kal-gem").addEventListener("click", ()=>{
+  const v = document.getElementById("kal-input").value.trim();
+  if(!v) return;
+  tilstand.kalender = v;
+  visKalender(); gem();
+});
+
 /* ================= Notifikationer & indstillinger ================= */
 async function bedOmTilladelse(){
   if(!("Notification" in window)) return false;
@@ -984,6 +1025,11 @@ for(const [id, felt] of [["ind-notif-varer","notifVarer"],["ind-notif-opgaver","
 }
 document.getElementById("ind-rema").addEventListener("change", function(){
   tilstand.indstillinger.remaSortering = this.checked; tegnVarer(); gem();
+});
+document.getElementById("ind-kalender").addEventListener("change", function(){
+  tilstand.kalender = this.value.trim();
+  document.getElementById("kal-input").value = tilstand.kalender;
+  visKalender(); gem();
 });
 document.querySelectorAll("#tema-valg button").forEach(kn=>{
   kn.addEventListener("click", ()=>{
@@ -1107,6 +1153,12 @@ function håndterSkyData(d, fremmed){
   tilstand.varer = d.varer || [];
   tilstand.opgaver = d.opgaver || [];
   tilstand.varehistorik = d.varehistorik || {};
+  if(typeof d.kalender === "string" && d.kalender !== tilstand.kalender){
+    tilstand.kalender = d.kalender;
+    document.getElementById("ind-kalender").value = tilstand.kalender;
+    document.getElementById("kal-input").value = tilstand.kalender;
+    visKalender();
+  }
   if(tjekFrister()) gemSky();
   tegnVarer(); tegnOpgaver();
   gemData(tilstand);
@@ -1119,6 +1171,7 @@ function gemSky(){
     varer: tilstand.varer,
     opgaver: tilstand.opgaver,
     varehistorik: tilstand.varehistorik,
+    kalender: tilstand.kalender || "",
     opdateret: Date.now()
   }).catch(()=>{});
 }
@@ -1256,10 +1309,14 @@ document.getElementById("knap-logud-tidlig").addEventListener("click", async ()=
     if(Array.isArray(gemt.faneOrden) && gemt.faneOrden.length===4) tilstand.faneOrden = gemt.faneOrden;
     tilstand.indstillinger = {...standardIndstillinger, ...(gemt.indstillinger || {})};
     tilstand.springLoginOver = gemt.springLoginOver || false;
+    tilstand.kalender = gemt.kalender || "";
   }
+  document.getElementById("ind-kalender").value = tilstand.kalender;
+  document.getElementById("kal-input").value = tilstand.kalender;
   anvendFaneOrden();
   anvendIndstillinger();
   visSide(tilstand.faneOrden[0]);
+  visKalender();
   if(tjekFrister()) gem();
   tegnVarer();
   tegnOpgaver();
