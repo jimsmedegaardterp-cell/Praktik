@@ -163,8 +163,14 @@ ul.liste li .farve-knap{
 .aftale-prik{width:10px; height:10px; border-radius:50%; flex-shrink:0;}
 .uge-hoved{
   display:grid; grid-template-columns:36px repeat(7,1fr);
-  position:sticky; top:0; background:var(--bg); z-index:6; padding:6px 0 4px;
+  position:sticky; top:54px; background:var(--bg); z-index:6; padding:6px 0 4px;
 }
+#kal-uge .kal-nav{
+  position:sticky; top:0; background:var(--bg); z-index:7;
+  margin:0; padding:4px 0 2px;
+}
+#kal-uge .kal-nav button{width:38px; height:38px; font-size:20px;}
+#kal-uge .kal-nav span{font-size:15px;}
 .uge-hoved .dag{text-align:center; font-size:11px; color:var(--tekst-svag); cursor:default;}
 .uge-hoved .dagtal{
   display:block; margin:3px auto 0; width:28px; height:28px; line-height:28px;
@@ -404,16 +410,20 @@ body.mørk .kontakt span::before{background:#D8D6CC;}
         <button class="op" data-k="C">C</button>
         <button class="op" data-k="(">(</button>
         <button class="op" data-k=")">)</button>
-        <button class="op" data-k="÷">÷</button>
+        <button class="op" data-k="⌫">⌫</button>
+        <button class="op" data-k="%">%</button>
+        <button class="op" data-k="√">√</button>
+        <button class="op" data-k="²">x²</button>
+        <button class="op" data-k="^">xʸ</button>
         <button data-k="7">7</button><button data-k="8">8</button><button data-k="9">9</button>
-        <button class="op" data-k="×">×</button>
+        <button class="op" data-k="÷">÷</button>
         <button data-k="4">4</button><button data-k="5">5</button><button data-k="6">6</button>
-        <button class="op" data-k="−">−</button>
+        <button class="op" data-k="×">×</button>
         <button data-k="1">1</button><button data-k="2">2</button><button data-k="3">3</button>
-        <button class="op" data-k="+">+</button>
+        <button class="op" data-k="−">−</button>
         <button data-k="0">0</button>
         <button data-k=",">,</button>
-        <button class="op" data-k="⌫">⌫</button>
+        <button class="op" data-k="+">+</button>
         <button class="lig" data-k="=">=</button>
       </div>
     </div>
@@ -957,8 +967,8 @@ document.getElementById("opgave-ryd").addEventListener("click", ()=>{
 /* ================= Lommeregner ================= */
 const rTal = document.getElementById("r-tal");
 const rHist = document.getElementById("r-historik");
-let udtryk = "";          // det skrevne udtryk, fx "2×(3+4,5)"
-let visteResultat = false; // sidste handling var "="
+let udtryk = "";
+let visteResultat = false;
 
 function formatTal(n){
   if(!isFinite(n)) return "Fejl";
@@ -969,10 +979,13 @@ function visUdtryk(){
   rTal.style.fontSize = udtryk.length > 14 ? "28px" : "38px";
 }
 
-/* Parser: rekursiv nedstigning med korrekt regnerækkefølge.
+/* Parser med korrekt regnerækkefølge:
    udtryk := led (('+'|'−') led)*
-   led    := faktor (('×'|'÷') faktor)*
-   faktor := tal | '(' udtryk ')' | '−' faktor          */
+   led    := potens (('×'|'÷') potens)*
+   potens := faktor ('^' potens)?          (højre-associativ)
+   faktor := '−' faktor | '√' faktor | primær efterled*
+   primær := tal | '(' udtryk ')'
+   efterled := '%' (÷100) | '²' (kvadrat)                  */
 function beregnUdtryk(s){
   let i = 0;
   function spring(){ while(s[i]===" ") i++; }
@@ -983,24 +996,41 @@ function beregnUdtryk(s){
     if(start === i) throw "fejl";
     return parseFloat(s.slice(start, i).replace(",", "."));
   }
-  function faktor(){
+  function primær(){
     spring();
-    if(s[i]==="−" || s[i]==="-"){ i++; return -faktor(); }
     if(s[i]==="("){
       i++;
       const v = udtrykP();
       spring();
-      if(s[i]===")") i++; // tilgiv manglende slutparentes
+      if(s[i]===")") i++;
       return v;
     }
     return tal();
   }
-  function led(){
-    let v = faktor();
+  function faktor(){
+    spring();
+    if(s[i]==="−" || s[i]==="-"){ i++; return -faktor(); }
+    if(s[i]==="√"){ i++; const v = faktor(); if(v < 0) return NaN; return Math.sqrt(v); }
+    let v = primær();
     for(;;){
       spring();
-      if(s[i]==="×"){ i++; v *= faktor(); }
-      else if(s[i]==="÷"){ i++; const n = faktor(); v = n===0 ? NaN : v/n; }
+      if(s[i]==="%"){ i++; v = v/100; }
+      else if(s[i]==="²"){ i++; v = v*v; }
+      else return v;
+    }
+  }
+  function potens(){
+    const v = faktor();
+    spring();
+    if(s[i]==="^"){ i++; return Math.pow(v, potens()); }
+    return v;
+  }
+  function led(){
+    let v = potens();
+    for(;;){
+      spring();
+      if(s[i]==="×"){ i++; v *= potens(); }
+      else if(s[i]==="÷"){ i++; const n = potens(); v = n===0 ? NaN : v/n; }
       else return v;
     }
   }
@@ -1020,48 +1050,54 @@ function beregnUdtryk(s){
 }
 
 function sidsteTegn(){ return udtryk.slice(-1); }
-function erCifferEllerLuk(c){ return (c>="0" && c<="9") || c===")" ; }
+function erVærdiSlut(c){ return (c>="0" && c<="9") || c===")" || c==="%" || c==="²"; }
 
 function trykTast(k){
-  const operatorer = ["+","−","×","÷"];
+  const operatorer = ["+","−","×","÷","^"];
   if(k==="C"){
     udtryk = ""; rHist.textContent = ""; visteResultat = false;
   } else if(k==="⌫"){
     udtryk = udtryk.slice(0,-1); visteResultat = false;
   } else if(k==="="){
     if(udtryk==="") return;
-    // luk automatisk åbne parenteser
     const åbne = (udtryk.match(/\(/g)||[]).length - (udtryk.match(/\)/g)||[]).length;
     let s = udtryk + ")".repeat(Math.max(0, åbne));
     try{
       const res = beregnUdtryk(s);
       rHist.textContent = s + " =";
-      udtryk = isFinite(res) ? formatTal(res).replace(/\./g,"") : "";
-      if(!isFinite(res)){ rTal.textContent = "Fejl"; visteResultat = false; return; }
+      if(!isFinite(res)){ rTal.textContent = "Fejl"; udtryk = ""; visteResultat = false; return; }
+      udtryk = formatTal(res).replace(/\./g,"");
       visteResultat = true;
     }catch(e){
       rTal.textContent = "Fejl"; visteResultat = false; return;
     }
   } else if(operatorer.includes(k)){
     if(visteResultat) visteResultat = false;
-    if(udtryk==="" ){ if(k==="−") udtryk = "−"; }
+    if(udtryk===""){ if(k==="−") udtryk = "−"; }
     else if(operatorer.includes(sidsteTegn())) udtryk = udtryk.slice(0,-1) + k;
-    else if(sidsteTegn()!=="(" || k==="−") udtryk += k;
+    else if(sidsteTegn()!=="(" && sidsteTegn()!=="√") udtryk += k;
+    else if(k==="−") udtryk += k;
+  } else if(k==="%" || k==="²"){
+    if(erVærdiSlut(sidsteTegn())){ udtryk += k; visteResultat = false; }
+  } else if(k==="√"){
+    if(visteResultat){ udtryk = ""; visteResultat = false; }
+    if(erVærdiSlut(sidsteTegn())) udtryk += "×";
+    udtryk += "√";
   } else if(k==="("){
     if(visteResultat){ udtryk = ""; visteResultat = false; }
-    if(erCifferEllerLuk(sidsteTegn())) udtryk += "×"; // 2( betyder 2×(
+    if(erVærdiSlut(sidsteTegn())) udtryk += "×";
     udtryk += "(";
   } else if(k===")"){
     const åbne = (udtryk.match(/\(/g)||[]).length - (udtryk.match(/\)/g)||[]).length;
-    if(åbne > 0 && erCifferEllerLuk(sidsteTegn())) udtryk += ")";
+    if(åbne > 0 && erVærdiSlut(sidsteTegn())) udtryk += ")";
     visteResultat = false;
   } else if(k===","){
     if(visteResultat){ udtryk = ""; visteResultat = false; }
-    const sidsteTal = udtryk.split(/[+−×÷()]/).pop();
+    const sidsteTal = udtryk.split(/[+−×÷()^%²√]/).pop();
     if(!sidsteTal.includes(",")) udtryk += (sidsteTal==="" ? "0," : ",");
   } else { // ciffer
     if(visteResultat){ udtryk = ""; visteResultat = false; }
-    if(sidsteTegn()===")") udtryk += "×"; // (2+3)4 betyder ...×4
+    if(sidsteTegn()===")" || sidsteTegn()==="%" || sidsteTegn()==="²") udtryk += "×";
     udtryk += k;
   }
   visUdtryk();
@@ -1334,11 +1370,19 @@ function tegnListeVisning(){
   }
 }
 
+function isoUge(d){
+  const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const dag = t.getUTCDay() || 7;
+  t.setUTCDate(t.getUTCDate() + 4 - dag);
+  const årStart = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));
+  return Math.ceil(((t - årStart)/86400000 + 1)/7);
+}
 function tegnUgeVisning(){
   const TIME_H = tilstand.indstillinger.kalTimeHøjde || 56;
   const slutDag = new Date(kalUge); slutDag.setDate(slutDag.getDate()+6);
   const fmt = d => d.toLocaleDateString("da-DK", {day:"numeric", month:"short"});
-  document.getElementById("uge-titel").textContent = fmt(kalUge) + " \u2013 " + fmt(slutDag) +
+  document.getElementById("uge-titel").textContent = "Uge " + isoUge(kalUge) + " · " +
+    fmt(kalUge) + " \u2013 " + fmt(slutDag) +
     (kalUge.getFullYear() !== new Date().getFullYear() ? " " + kalUge.getFullYear() : "");
   const el = document.getElementById("uge-liste");
   el.innerHTML = "";
