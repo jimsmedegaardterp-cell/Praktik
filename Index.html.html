@@ -1,0 +1,1264 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Praktik</title>
+<meta name="theme-color" content="#3B6D11">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 76 76'%3E%3Crect x='2' y='2' width='72' height='72' rx='17' fill='%233B6D11'/%3E%3Cpath d='M24 39 L34 49 L52 28' fill='none' stroke='%23EAF3DE' stroke-width='6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 76 76'%3E%3Crect width='76' height='76' fill='%233B6D11'/%3E%3Cpath d='M24 39 L34 49 L52 28' fill='none' stroke='%23EAF3DE' stroke-width='6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<style>
+:root{
+  --grøn:#3B6D11; --grøn-lys:#EAF3DE; --grøn-mørk:#27500A;
+  --bg:#FAFAF7; --kort:#FFFFFF; --kant:#E4E2DA;
+  --tekst:#26261F; --tekst-svag:#8A887D;
+  --rød:#A32D2D;
+}
+*{box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent;}
+html,body{height:100%;}
+body{
+  font-family:-apple-system, system-ui, "Segoe UI", Roboto, sans-serif;
+  background:var(--bg); color:var(--tekst); font-size:17px;
+  display:flex; flex-direction:column; overscroll-behavior:none;
+}
+header{
+  padding:calc(env(safe-area-inset-top, 0px) + 16px) 20px 12px;
+  display:flex; align-items:baseline; justify-content:space-between;
+}
+header h1{font-size:22px; font-weight:600; letter-spacing:-0.3px;}
+header .dato{font-size:14px; color:var(--tekst-svag);}
+main{flex:1; overflow-y:auto; padding:4px 16px 24px;}
+.skjult{display:none !important;}
+
+/* ---------- Bundmenu ---------- */
+nav{
+  display:grid; grid-template-columns:repeat(4,1fr);
+  background:var(--kort); border-top:1px solid var(--kant);
+  padding:8px 4px calc(env(safe-area-inset-bottom, 0px) + 8px);
+}
+nav button{
+  background:none; border:none; font:inherit; cursor:pointer;
+  display:flex; flex-direction:column; align-items:center; gap:3px;
+  color:var(--tekst-svag); font-size:11.5px; font-weight:500; padding:4px 0;
+  user-select:none; -webkit-user-select:none; touch-action:none;
+}
+nav button.aktiv{color:var(--grøn);}
+nav button.trækker{
+  color:var(--grøn); transform:scale(1.15) translateY(-4px);
+  transition:transform 0.1s;
+}
+nav svg{width:24px; height:24px; stroke:currentColor; fill:none; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round;}
+
+/* ---------- Fælles liste-stil ---------- */
+.tilføj-række{display:flex; gap:8px; margin:8px 0 12px;}
+.tilføj-række input{
+  flex:1; font:inherit; padding:13px 16px; border:1px solid var(--kant);
+  border-radius:14px; background:var(--kort); outline:none; min-width:0;
+}
+.tilføj-række input:focus{border-color:var(--grøn);}
+.tilføj-række button{
+  width:50px; border:none; border-radius:14px; background:var(--grøn);
+  color:#fff; font-size:26px; line-height:1; cursor:pointer; flex-shrink:0;
+}
+.tilføj-række button:active{background:var(--grøn-mørk);}
+.forslag{display:flex; flex-wrap:wrap; gap:8px; margin:-4px 0 12px;}
+.forslag button{
+  font:inherit; font-size:15px; padding:8px 14px; border:1px solid var(--kant);
+  border-radius:999px; background:var(--kort); color:var(--tekst); cursor:pointer;
+}
+.forslag button:active{background:var(--grøn-lys); border-color:var(--grøn);}
+ul.liste{list-style:none;}
+ul.liste li.kat{
+  background:none; border:none; padding:12px 4px 2px; margin:0;
+  font-size:12px; font-weight:600; color:var(--tekst-svag);
+  letter-spacing:0.6px; text-transform:uppercase; display:block;
+}
+ul.liste li{
+  display:flex; align-items:center; gap:12px;
+  background:var(--kort); border:1px solid var(--kant); border-radius:14px;
+  padding:13px 14px; margin-bottom:8px;
+}
+ul.liste li .boks{
+  width:26px; height:26px; border:2px solid var(--kant); border-radius:8px;
+  flex-shrink:0; display:flex; align-items:center; justify-content:center;
+  background:var(--kort); cursor:pointer;
+}
+ul.liste li.gjort .boks{background:var(--grøn); border-color:var(--grøn);}
+ul.liste li .boks svg{width:16px; height:16px; stroke:#fff; stroke-width:3.2; fill:none; stroke-linecap:round; stroke-linejoin:round; visibility:hidden;}
+ul.liste li.gjort .boks svg{visibility:visible;}
+ul.liste li .navn{flex:1; word-break:break-word;}
+ul.liste li .navn .frist{display:block; font-size:12.5px; color:var(--tekst-svag); margin-top:2px;}
+ul.liste li .navn .frist.over{color:#E24B4A; font-weight:500;}
+ul.liste li.gjort .navn{color:var(--tekst-svag); text-decoration:line-through;}
+ul.liste li .slet{
+  background:none; border:none; color:var(--tekst-svag); cursor:pointer;
+  padding:4px; flex-shrink:0;
+}
+ul.liste li .slet svg{width:20px; height:20px; stroke:currentColor; stroke-width:1.8; fill:none; stroke-linecap:round;}
+.ryd-knap{
+  display:block; margin:14px auto 0; font:inherit; font-size:15px;
+  background:none; border:1px solid var(--kant); border-radius:999px;
+  padding:9px 18px; color:var(--tekst-svag); cursor:pointer;
+}
+.tom{color:var(--tekst-svag); text-align:center; padding:36px 20px; font-size:15.5px; line-height:1.5;}
+
+/* ---------- Opgavegrupper ---------- */
+.gruppe-hoved{
+  display:flex; align-items:center; gap:8px;
+  font-size:12.5px; font-weight:600; letter-spacing:0.6px; text-transform:uppercase;
+  margin:16px 4px 8px;
+}
+.gruppe-hoved .prik{width:10px; height:10px; border-radius:50%; flex-shrink:0;}
+ul.liste:empty{min-height:6px;}
+ul.liste li .farve-knap{
+  width:24px; height:24px; border-radius:50%; border:none; cursor:pointer;
+  flex-shrink:0; padding:0;
+}
+
+/* ---------- Kalender ---------- */
+.kal-kort{
+  background:var(--kort); border:1px solid var(--kant); border-radius:16px;
+  padding:28px 22px; text-align:center; margin-top:12px;
+}
+.kal-kort p{color:var(--tekst-svag); font-size:15.5px; line-height:1.55; margin-bottom:18px;}
+.kal-kort a{
+  display:inline-block; background:var(--grøn); color:#fff; text-decoration:none;
+  font-weight:500; padding:13px 24px; border-radius:14px;
+}
+
+/* ---------- Lommeregner ---------- */
+.regner{max-width:360px; margin:8px auto 0;}
+.display{
+  background:var(--kort); border:1px solid var(--kant); border-radius:16px;
+  padding:18px 18px; text-align:right; margin-bottom:12px; min-height:84px;
+  display:flex; flex-direction:column; justify-content:flex-end;
+}
+.display .historik{font-size:14px; color:var(--tekst-svag); min-height:18px;}
+.display .tal{font-size:38px; font-weight:500; word-break:break-all; line-height:1.15;}
+.taster{display:grid; grid-template-columns:repeat(4,1fr); gap:8px;}
+.taster button{
+  font:inherit; font-size:23px; padding:16px 0; border:none; border-radius:14px;
+  background:var(--kort); border:1px solid var(--kant); cursor:pointer; color:var(--tekst);
+}
+.taster button:active{background:var(--grøn-lys);}
+.taster .op{background:var(--grøn-lys); color:var(--grøn-mørk); font-weight:500;}
+.taster .lig{background:var(--grøn); color:#fff; border-color:var(--grøn);}
+.taster .lig:active{background:var(--grøn-mørk);}
+
+/* ---------- Indstillinger ---------- */
+.tandhjul{
+  background:none; border:none; color:var(--tekst-svag); cursor:pointer; padding:4px;
+}
+.tandhjul svg{width:24px; height:24px; stroke:currentColor; fill:none; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round;}
+.indstil-gruppe{
+  background:var(--kort); border:1px solid var(--kant); border-radius:16px;
+  padding:4px 16px 4px; margin:12px 0;
+}
+.indstil-gruppe h2{
+  font-size:12.5px; font-weight:600; color:var(--tekst-svag);
+  text-transform:uppercase; letter-spacing:0.6px; padding:14px 0 6px;
+}
+.indstil-række{
+  display:flex; align-items:center; justify-content:space-between; gap:12px;
+  padding:13px 0; border-top:1px solid var(--kant); font-size:16px;
+}
+.indstil-gruppe h2 + .indstil-række, .indstil-gruppe h2 + label{border-top:none;}
+.indstil-række small{display:block; color:var(--tekst-svag); font-size:13px;}
+.indstil-række.dæmpet{opacity:0.4; pointer-events:none;}
+.indstil-note{font-size:13px; color:var(--tekst-svag); padding:10px 0 12px; line-height:1.45;}
+.kontakt{position:relative; width:48px; height:29px; flex-shrink:0;}
+.kontakt input{opacity:0; width:0; height:0; position:absolute;}
+.kontakt span{position:absolute; inset:0; background:var(--kant); border-radius:999px; transition:background 0.15s;}
+.kontakt span::before{
+  content:""; position:absolute; width:23px; height:23px; border-radius:50%;
+  background:#fff; top:3px; left:3px; transition:transform 0.15s;
+}
+.kontakt input:checked + span{background:var(--grøn);}
+.kontakt input:checked + span::before{transform:translateX(19px);}
+.segment{display:flex; border:1px solid var(--kant); border-radius:10px; overflow:hidden;}
+.segment button{font:inherit; font-size:14px; padding:7px 13px; border:none; background:var(--kort); color:var(--tekst-svag); cursor:pointer;}
+.segment button.aktiv{background:var(--grøn); color:#fff;}
+
+/* ---------- Login & husstand ---------- */
+#login-skærm{
+  position:fixed; inset:0; background:var(--bg); z-index:50;
+  display:flex; align-items:center; justify-content:center; padding:24px;
+}
+.login-kort{max-width:340px; width:100%; text-align:center;}
+.login-kort h2{font-size:26px; font-weight:600; margin:14px 0 6px;}
+.login-kort p{color:var(--tekst-svag); font-size:15px; line-height:1.5; margin-bottom:8px;}
+.stor-knap{
+  display:block; width:100%; background:var(--grøn); color:#fff; border:none;
+  border-radius:14px; padding:14px; font:inherit; font-size:16.5px; font-weight:500;
+  cursor:pointer; margin-top:14px;
+}
+.stor-knap:active{background:var(--grøn-mørk);}
+.stor-knap.sekundær{background:var(--kort); color:var(--tekst); border:1px solid var(--kant);}
+.svag-knap{
+  background:none; border:none; color:var(--tekst-svag); font:inherit; font-size:14px;
+  margin-top:18px; cursor:pointer; text-decoration:underline;
+}
+.login-fejl{color:#E24B4A; font-size:14px; margin-top:12px; min-height:18px;}
+.kode-felt{
+  width:100%; font:inherit; font-size:20px; letter-spacing:4px; text-align:center;
+  text-transform:uppercase; padding:13px; border:1px solid var(--kant);
+  border-radius:14px; background:var(--kort); color:var(--tekst); outline:none; margin-top:14px;
+}
+.kode-felt:focus{border-color:var(--grøn);}
+.skille{display:flex; align-items:center; gap:12px; color:var(--tekst-svag); font-size:13px; margin:22px 0 6px;}
+.skille::before, .skille::after{content:""; flex:1; height:1px; background:var(--kant);}
+.kode-visning{
+  font-size:24px; font-weight:600; letter-spacing:5px; text-align:center;
+  background:var(--grøn-lys); color:var(--grøn-mørk); border-radius:12px;
+  padding:12px; margin:8px 0;
+}
+
+/* ---------- Mørkt tema ---------- */
+body.mørk{
+  --bg:#151512; --kort:#211F1A; --kant:#3B3A32;
+  --tekst:#EBE9E0; --tekst-svag:#9C9A8D;
+  --grøn-lys:#2C3D15; --grøn-mørk:#BFE39A;
+}
+body.mørk ul.liste li .boks{background:var(--kort);}
+body.mørk .kontakt span::before{background:#D8D6CC;}
+</style>
+</head>
+<body>
+
+<header>
+  <h1 id="titel">Indkøb</h1>
+  <div style="display:flex; align-items:center; gap:12px;">
+    <span class="dato" id="dato"></span>
+    <button class="tandhjul" id="tandhjul" aria-label="Indstillinger">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 13.5a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V20a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1.12-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1.03H4a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.56-1.12 1.7 1.7 0 0 0-.34-1.87l-.06-.06A2 2 0 1 1 8.08 3.1l.06.06a1.7 1.7 0 0 0 1.87.34h.08a1.7 1.7 0 0 0 1.03-1.56V2a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.08a1.7 1.7 0 0 0 1.56 1.03H22a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.56 1.03z"/></svg>
+    </button>
+  </div>
+</header>
+
+<main>
+  <!-- INDKØB -->
+  <section id="side-indkøb">
+    <div class="tilføj-række">
+      <input id="vare-input" type="text" placeholder="Tilføj vare …" autocomplete="off" enterkeyhint="done">
+      <button id="vare-tilføj" aria-label="Tilføj vare">+</button>
+    </div>
+    <div class="forslag" id="vare-forslag"></div>
+    <ul class="liste" id="vare-liste"></ul>
+    <p class="tom skjult" id="vare-tom">Listen er tom.<br>Skriv en vare ovenfor – appen husker, hvad I plejer at købe, og foreslår det fra første bogstav.</p>
+    <button class="ryd-knap skjult" id="vare-ryd">Fjern afkrydsede varer</button>
+  </section>
+
+  <!-- OPGAVER -->
+  <section id="side-opgaver" class="skjult">
+    <div class="tilføj-række">
+      <input id="opgave-input" type="text" placeholder="Tilføj opgave …" autocomplete="off" enterkeyhint="done">
+      <button id="opgave-tilføj" aria-label="Tilføj opgave">+</button>
+    </div>
+    <div class="gruppe-hoved" style="color:#A32D2D;"><span class="prik" style="background:#A32D2D;"></span>Haster</div>
+    <ul class="liste" id="liste-rød"></ul>
+    <div class="gruppe-hoved" style="color:#BA7517;"><span class="prik" style="background:#BA7517;"></span>Snart</div>
+    <ul class="liste" id="liste-gul"></ul>
+    <div class="gruppe-hoved" style="color:#3B6D11;"><span class="prik" style="background:#3B6D11;"></span>Kan vente</div>
+    <ul class="liste" id="liste-grøn"></ul>
+    <p class="tom skjult" id="opgave-tom">Ingen opgaver endnu.<br>Nye opgaver lander i Snart – tryk på farveprikken for at flytte dem, og tryk på opgavens navn for at sætte en frist.</p>
+    <button class="ryd-knap skjult" id="opgave-ryd">Fjern udførte opgaver</button>
+    <input type="date" id="frist-input" style="position:absolute; opacity:0; pointer-events:none; width:0; height:0;">
+  </section>
+
+  <!-- KALENDER -->
+  <section id="side-kalender" class="skjult">
+    <div class="kal-kort">
+      <p>Kalenderen kobles til jeres Google Kalender i næste trin, så aftaler vises direkte her i appen.<br><br>Indtil da kan du åbne den her:</p>
+      <a href="https://calendar.google.com" target="_blank" rel="noopener">Åbn Google Kalender</a>
+    </div>
+  </section>
+
+  <!-- LOMMEREGNER -->
+  <section id="side-regner" class="skjult">
+    <div class="regner">
+      <div class="display">
+        <div class="historik" id="r-historik"></div>
+        <div class="tal" id="r-tal">0</div>
+      </div>
+      <div class="taster">
+        <button class="op" data-k="C">C</button>
+        <button class="op" data-k="(">(</button>
+        <button class="op" data-k=")">)</button>
+        <button class="op" data-k="÷">÷</button>
+        <button data-k="7">7</button><button data-k="8">8</button><button data-k="9">9</button>
+        <button class="op" data-k="×">×</button>
+        <button data-k="4">4</button><button data-k="5">5</button><button data-k="6">6</button>
+        <button class="op" data-k="−">−</button>
+        <button data-k="1">1</button><button data-k="2">2</button><button data-k="3">3</button>
+        <button class="op" data-k="+">+</button>
+        <button data-k="0">0</button>
+        <button data-k=",">,</button>
+        <button class="op" data-k="⌫">⌫</button>
+        <button class="lig" data-k="=">=</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- INDSTILLINGER -->
+  <section id="side-indstillinger" class="skjult">
+    <div class="indstil-gruppe">
+      <h2>Husstand & konto</h2>
+      <div id="konto-indhold"><p class="indstil-note">Indlæser …</p></div>
+    </div>
+    <div class="indstil-gruppe">
+      <h2>Notifikationer</h2>
+      <label class="indstil-række">
+        <span>Notifikationer</span>
+        <span class="kontakt"><input type="checkbox" id="ind-notif"><span></span></span>
+      </label>
+      <label class="indstil-række under-notif">
+        <span>Nye varer på indkøbslisten</span>
+        <span class="kontakt"><input type="checkbox" id="ind-notif-varer"><span></span></span>
+      </label>
+      <label class="indstil-række under-notif">
+        <span>Nye opgaver</span>
+        <span class="kontakt"><input type="checkbox" id="ind-notif-opgaver"><span></span></span>
+      </label>
+      <label class="indstil-række under-notif">
+        <span>Opgave flyttet til Haster</span>
+        <span class="kontakt"><input type="checkbox" id="ind-notif-haster"><span></span></span>
+      </label>
+      <div class="indstil-række under-notif" style="justify-content:center;">
+        <button class="ryd-knap" id="ind-test" style="margin:0;">Send en testnotifikation</button>
+      </div>
+      <p class="indstil-note" id="notif-note">Beskeder om andres ændringer (f.eks. nye varer på listen) virker, når delingen kobles på i næste trin.</p>
+    </div>
+    <div class="indstil-gruppe">
+      <h2>Indkøbsliste</h2>
+      <label class="indstil-række">
+        <span>Sortér efter butikkens rækkefølge<small>Rema 1000</small></span>
+        <span class="kontakt"><input type="checkbox" id="ind-rema"><span></span></span>
+      </label>
+    </div>
+    <div class="indstil-gruppe">
+      <h2>Udseende</h2>
+      <div class="indstil-række">
+        <span>Tema</span>
+        <div class="segment" id="tema-valg">
+          <button data-tema="auto">Auto</button>
+          <button data-tema="lys">Lys</button>
+          <button data-tema="mørk">Mørk</button>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<nav>
+  <button data-side="indkøb" class="aktiv">
+    <svg viewBox="0 0 24 24"><circle cx="9" cy="20" r="1.6"/><circle cx="18" cy="20" r="1.6"/><path d="M3 4h2l2.4 11.2A1.5 1.5 0 0 0 8.9 16.4h8.6a1.5 1.5 0 0 0 1.46-1.16L21 8H6"/></svg>
+    Indkøb
+  </button>
+  <button data-side="opgaver">
+    <svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M9 12.5l2.2 2.2L15.5 10"/></svg>
+    Opgaver
+  </button>
+  <button data-side="kalender">
+    <svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="3"/><path d="M8 3v4M16 3v4M4 10h16"/></svg>
+    Kalender
+  </button>
+  <button data-side="regner">
+    <svg viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="3"/><path d="M8.5 7h7M8.5 11.5h.01M12 11.5h.01M15.5 11.5h.01M8.5 15h.01M12 15h.01M15.5 15h.01M8.5 18h.01M12 18h.01M15.5 18h.01"/></svg>
+    Regner
+  </button>
+</nav>
+
+<div id="login-skærm" class="skjult">
+  <div class="login-kort">
+    <div id="login-trin" class="skjult">
+      <svg width="76" height="76" viewBox="0 0 76 76" aria-hidden="true"><rect x="2" y="2" width="72" height="72" rx="17" fill="#3B6D11"/><path d="M24 39 L34 49 L52 28" fill="none" stroke="#EAF3DE" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <h2>Praktik</h2>
+      <p>Log ind, så indkøb og opgaver deles med resten af husstanden.</p>
+      <button class="stor-knap" id="knap-login">Log ind med Google</button>
+      <button class="svag-knap" id="knap-spring">Spring over – brug kun på denne telefon</button>
+      <p class="login-fejl" id="login-fejl"></p>
+    </div>
+    <div id="husstand-trin" class="skjult">
+      <h2>Velkommen<span id="velkomst-navn"></span></h2>
+      <p>Er I de første? Opret husstanden. Har en anden allerede oprettet den, så tast jeres kode.</p>
+      <button class="stor-knap" id="knap-opret">Opret ny husstand</button>
+      <div class="skille">eller tilslut med kode</div>
+      <input class="kode-felt" id="kode-input" maxlength="6" placeholder="ABC123" autocomplete="off">
+      <button class="stor-knap sekundær" id="knap-tilslut">Tilslut husstand</button>
+      <p class="login-fejl" id="husstand-fejl"></p>
+      <button class="svag-knap" id="knap-logud-tidlig">Log ud</button>
+    </div>
+    <div id="venter-trin" class="skjult">
+      <h2>Et øjeblik …</h2>
+      <p>Logger ind og henter jeres data.</p>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ================= Datalagring =================
+   Prøver i rækkefølge:
+   1) window.storage  (Claude-artifact lagring)
+   2) localStorage    (egen hosting / hjemmeskærm)
+   3) hukommelse      (mister data ved genindlæsning)        */
+const NØGLE = "praktik-data";
+let hukommelse = null;
+
+async function gemData(data){
+  const json = JSON.stringify(data);
+  try{ if(window.storage){ await window.storage.set(NØGLE, json); return; } }catch(e){}
+  try{ localStorage.setItem(NØGLE, json); return; }catch(e){}
+  hukommelse = json;
+}
+async function hentData(){
+  try{ if(window.storage){ const r = await window.storage.get(NØGLE); if(r && r.value) return JSON.parse(r.value); } }catch(e){}
+  try{ const r = localStorage.getItem(NØGLE); if(r) return JSON.parse(r); }catch(e){}
+  if(hukommelse) return JSON.parse(hukommelse);
+  return null;
+}
+
+/* ================= Tilstand ================= */
+const standardIndstillinger = {
+  notifMaster:false, notifVarer:true, notifOpgaver:true, notifHaster:true,
+  remaSortering:true, tema:"auto"
+};
+let tilstand = {
+  varer: [],            // {id, navn, gjort}
+  varehistorik: {},     // navn -> antal gange købt
+  opgaver: [],          // {id, tekst, gjort, prioritet, frist}
+  faneOrden: ["indkøb","opgaver","kalender","regner"],
+  indstillinger: {...standardIndstillinger},
+  springLoginOver: false
+};
+let gemTimer = null;
+function gem(){
+  clearTimeout(gemTimer);
+  gemTimer = setTimeout(()=>{ gemData(tilstand); gemSky(); }, 300);
+}
+function nytId(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
+function pænt(s){ s = s.trim(); return s.charAt(0).toUpperCase() + s.slice(1); }
+
+/* ================= Navigation ================= */
+const titler = {indkøb:"Indkøb", opgaver:"Opgaver", kalender:"Kalender", regner:"Lommeregner", indstillinger:"Indstillinger"};
+const alleSider = ["indkøb","opgaver","kalender","regner","indstillinger"];
+let aktuelSide = "indkøb", sideFørIndstillinger = "indkøb";
+
+function visSide(side){
+  aktuelSide = side;
+  alleSider.forEach(s=>{
+    document.getElementById("side-"+s).classList.toggle("skjult", s!==side);
+  });
+  document.getElementById("titel").textContent = titler[side];
+  document.querySelectorAll("nav button").forEach(b=>{
+    b.classList.toggle("aktiv", b.dataset.side===side);
+  });
+}
+document.querySelectorAll("nav button").forEach(kn=>{
+  kn.addEventListener("click", ()=>{
+    if(ligeTrukket){ ligeTrukket = false; return; }
+    visSide(kn.dataset.side);
+  });
+});
+document.getElementById("tandhjul").addEventListener("click", ()=>{
+  if(aktuelSide === "indstillinger"){
+    visSide(sideFørIndstillinger);
+  } else {
+    sideFørIndstillinger = aktuelSide;
+    visSide("indstillinger");
+  }
+});
+document.getElementById("dato").textContent =
+  new Date().toLocaleDateString("da-DK", {weekday:"long", day:"numeric", month:"long"});
+
+/* ---- Træk fanerne i ny rækkefølge (hold fingeren på i ½ sekund) ---- */
+const navEl = document.querySelector("nav");
+navEl.addEventListener("contextmenu", e=>e.preventDefault());
+let presTimer = null, trækKnap = null, ligeTrukket = false, startX = 0, startY = 0;
+
+function anvendFaneOrden(){
+  for(const s of tilstand.faneOrden){
+    const kn = navEl.querySelector('[data-side="'+s+'"]');
+    if(kn) navEl.appendChild(kn);
+  }
+}
+navEl.querySelectorAll("button").forEach(kn=>{
+  kn.addEventListener("pointerdown", e=>{
+    startX = e.clientX; startY = e.clientY;
+    presTimer = setTimeout(()=>{
+      trækKnap = kn;
+      kn.classList.add("trækker");
+      try{ kn.setPointerCapture(e.pointerId); }catch(err){}
+      if(navigator.vibrate) navigator.vibrate(25);
+    }, 450);
+  });
+  kn.addEventListener("pointermove", e=>{
+    if(!trækKnap){
+      if(Math.hypot(e.clientX-startX, e.clientY-startY) > 12){
+        clearTimeout(presTimer);
+      }
+      return;
+    }
+    const andre = [...navEl.children].filter(b=>b!==trækKnap);
+    let placeret = false;
+    for(const b of andre){
+      const r = b.getBoundingClientRect();
+      if(e.clientX < r.left + r.width/2){
+        navEl.insertBefore(trækKnap, b); placeret = true; break;
+      }
+    }
+    if(!placeret) navEl.appendChild(trækKnap);
+  });
+  function slip(){
+    clearTimeout(presTimer);
+    if(trækKnap){
+      trækKnap.classList.remove("trækker");
+      trækKnap = null;
+      ligeTrukket = true;
+      tilstand.faneOrden = [...navEl.children].map(b=>b.dataset.side);
+      gem();
+    }
+  }
+  kn.addEventListener("pointerup", slip);
+  kn.addEventListener("pointercancel", slip);
+});
+
+/* ================= Genbrugelige ikoner ================= */
+const fluebenSVG = '<svg viewBox="0 0 24 24"><path d="M5 13l4.5 4.5L19 7"/></svg>';
+const krydsSVG = '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+
+/* ================= Rema 1000-sortering =================
+   Afdelinger i den rækkefølge man typisk går gennem butikken. */
+const afdelinger = [
+  "Frugt & grønt","Brød & bager","Kød & fisk","Pålæg & mejeri",
+  "Kolonial","Drikkevarer","Slik & snacks","Frost","Husholdning","Andet"
+];
+/* Søgeord → afdeling. Mest specifikke står først. */
+const vareOrdbog = [
+  ["tomatpuré","Kolonial"],["flåede","Kolonial"],["dåsetomat","Kolonial"],
+  ["peberfrug","Frugt & grønt"],["æble","Frugt & grønt"],["banan","Frugt & grønt"],["pære","Frugt & grønt"],
+  ["appelsin","Frugt & grønt"],["citron","Frugt & grønt"],["lime","Frugt & grønt"],["vindru","Frugt & grønt"],
+  ["melon","Frugt & grønt"],["jordbær","Frugt & grønt"],["blåbær","Frugt & grønt"],["hindbær","Frugt & grønt"],
+  ["avocado","Frugt & grønt"],["tomat","Frugt & grønt"],["agurk","Frugt & grønt"],["salat","Frugt & grønt"],
+  ["løg","Frugt & grønt"],["hvidløg","Frugt & grønt"],["kartof","Frugt & grønt"],["gulerod","Frugt & grønt"],
+  ["gulerød","Frugt & grønt"],["broccoli","Frugt & grønt"],["blomkål","Frugt & grønt"],["squash","Frugt & grønt"],
+  ["champignon","Frugt & grønt"],["svamp","Frugt & grønt"],["spinat","Frugt & grønt"],["porre","Frugt & grønt"],
+  ["selleri","Frugt & grønt"],["ingefær","Frugt & grønt"],["chili","Frugt & grønt"],["persille","Frugt & grønt"],
+  ["dild","Frugt & grønt"],["basilikum","Frugt & grønt"],["koriander","Frugt & grønt"],["kål","Frugt & grønt"],
+  ["majs","Frugt & grønt"],["citrusfrugt","Frugt & grønt"],["frugt","Frugt & grønt"],["grønt","Frugt & grønt"],
+
+  ["rugbrød","Brød & bager"],["brød","Brød & bager"],["bolle","Brød & bager"],["boller","Brød & bager"],
+  ["toast","Brød & bager"],["croissant","Brød & bager"],["knækbrød","Brød & bager"],["wienerbrød","Brød & bager"],
+  ["tortilla","Brød & bager"],["pita","Brød & bager"],["kage","Brød & bager"],["bagel","Brød & bager"],
+
+  ["hakket","Kød & fisk"],["oksekød","Kød & fisk"],["svinekød","Kød & fisk"],["kylling","Kød & fisk"],
+  ["bacon","Kød & fisk"],["pølse","Kød & fisk"],["frikadelle","Kød & fisk"],["kotelet","Kød & fisk"],
+  ["mørbrad","Kød & fisk"],["flæsk","Kød & fisk"],["kalkun","Kød & fisk"],["and","Kød & fisk"],
+  ["lam","Kød & fisk"],["laks","Kød & fisk"],["torsk","Kød & fisk"],["rejer","Kød & fisk"],
+  ["fisk","Kød & fisk"],["kød","Kød & fisk"],
+
+  ["mælk","Pålæg & mejeri"],["yoghurt","Pålæg & mejeri"],["skyr","Pålæg & mejeri"],["fløde","Pålæg & mejeri"],
+  ["creme fraiche","Pålæg & mejeri"],["cremefraiche","Pålæg & mejeri"],["smør","Pålæg & mejeri"],
+  ["ost","Pålæg & mejeri"],["æg","Pålæg & mejeri"],["pålæg","Pålæg & mejeri"],["leverpostej","Pålæg & mejeri"],
+  ["skinke","Pålæg & mejeri"],["spegepølse","Pålæg & mejeri"],["hytteost","Pålæg & mejeri"],
+  ["kærgården","Pålæg & mejeri"],["margarine","Pålæg & mejeri"],
+
+  ["mel","Kolonial"],["sukker","Kolonial"],["salt","Kolonial"],["peber","Kolonial"],["ris","Kolonial"],
+  ["pasta","Kolonial"],["spaghetti","Kolonial"],["havregryn","Kolonial"],["müsli","Kolonial"],
+  ["cornflakes","Kolonial"],["kaffe","Kolonial"],["te","Kolonial"],["kakao","Kolonial"],["honning","Kolonial"],
+  ["marmelade","Kolonial"],["nutella","Kolonial"],["ketchup","Kolonial"],["sennep","Kolonial"],
+  ["mayonnaise","Kolonial"],["remoulade","Kolonial"],["olie","Kolonial"],["eddike","Kolonial"],
+  ["bouillon","Kolonial"],["krydderi","Kolonial"],["tomatpuré","Kolonial"],["flåede","Kolonial"],
+  ["kokosmælk","Kolonial"],["linser","Kolonial"],["kikærter","Kolonial"],["bønner","Kolonial"],
+  ["tun","Kolonial"],["makrel","Kolonial"],["nødder","Kolonial"],["rosiner","Kolonial"],
+  ["gær","Kolonial"],["bagepulver","Kolonial"],["vanilje","Kolonial"],["sirup","Kolonial"],["dåse","Kolonial"],
+
+  ["sodavand","Drikkevarer"],["cola","Drikkevarer"],["juice","Drikkevarer"],["saft","Drikkevarer"],
+  ["øl","Drikkevarer"],["vin","Drikkevarer"],["kildevand","Drikkevarer"],["danskvand","Drikkevarer"],
+  ["vand","Drikkevarer"],["energidrik","Drikkevarer"],
+
+  ["slik","Slik & snacks"],["chips","Slik & snacks"],["chokolade","Slik & snacks"],["lakrids","Slik & snacks"],
+  ["vingummi","Slik & snacks"],["popcorn","Slik & snacks"],["kiks","Slik & snacks"],["snacks","Slik & snacks"],
+  ["peanuts","Slik & snacks"],
+
+  ["frost","Frost"],["frosne","Frost"],["frossen","Frost"],["is","Frost"],["pizza","Frost"],
+  ["pommes","Frost"],["ærter","Frost"],
+
+  ["toiletpapir","Husholdning"],["køkkenrulle","Husholdning"],["opvask","Husholdning"],
+  ["vaskepulver","Husholdning"],["vaskemiddel","Husholdning"],["sæbe","Husholdning"],["shampoo","Husholdning"],
+  ["tandpasta","Husholdning"],["tandbørste","Husholdning"],["deodorant","Husholdning"],
+  ["rengøring","Husholdning"],["affaldspose","Husholdning"],["stanniol","Husholdning"],
+  ["sølvpapir","Husholdning"],["bagepapir","Husholdning"],["batteri","Husholdning"],
+  ["serviet","Husholdning"],["ble","Husholdning"],["bleer","Husholdning"]
+];
+function findAfdeling(navn){
+  const ord = navn.toLowerCase().split(/[\s,.\-\/]+/).filter(Boolean);
+  for(const [kw, afd] of vareOrdbog){
+    for(const o of ord){
+      if(o === kw) return afd;
+      if(kw.length > 3 && o.startsWith(kw)) return afd;
+    }
+  }
+  for(const [kw, afd] of vareOrdbog){       // 2. pas: letmælk, rødløg, grisekød …
+    for(const o of ord){
+      if(o.endsWith(kw)) return afd;
+    }
+  }
+  for(const [kw, afd] of vareOrdbog){       // 3. pas: cherrytomater, kyllingefilet …
+    for(const o of ord){
+      if(kw.length > 3 && o.includes(kw)) return afd;
+    }
+  }
+  return "Andet";
+}
+
+/* ================= Indkøb ================= */
+const vareInput = document.getElementById("vare-input");
+const vareForslag = document.getElementById("vare-forslag");
+
+function lavVareLi(v){
+  const li = document.createElement("li");
+  if(v.gjort) li.classList.add("gjort");
+  const boks = document.createElement("button");
+  boks.className = "boks"; boks.innerHTML = fluebenSVG;
+  boks.setAttribute("aria-label", v.gjort ? "Fjern flueben" : "Sæt flueben");
+  boks.addEventListener("click", ()=>{ v.gjort = !v.gjort; tegnVarer(); gem(); });
+  const navn = document.createElement("span");
+  navn.className = "navn"; navn.textContent = v.navn;
+  const slet = document.createElement("button");
+  slet.className = "slet"; slet.innerHTML = krydsSVG;
+  slet.setAttribute("aria-label","Slet");
+  slet.addEventListener("click", ()=>{
+    const i = tilstand.varer.indexOf(v);
+    if(i>-1) tilstand.varer.splice(i,1);
+    tegnVarer(); gem();
+  });
+  li.append(boks, navn, slet);
+  return li;
+}
+function tegnVarer(){
+  const ul = document.getElementById("vare-liste");
+  ul.innerHTML = "";
+  const aktive = tilstand.varer.filter(v=>!v.gjort);
+  const færdige = tilstand.varer.filter(v=>v.gjort);
+  if(tilstand.indstillinger.remaSortering){
+    const orden = v => afdelinger.indexOf(findAfdeling(v.navn));
+    for(const v of [...aktive].sort((a,b)=> orden(a) - orden(b))){
+      ul.appendChild(lavVareLi(v));
+    }
+  } else {
+    for(const v of aktive) ul.appendChild(lavVareLi(v));
+  }
+  if(færdige.length > 0){
+    const hoved = document.createElement("li");
+    hoved.className = "kat"; hoved.textContent = "I kurven";
+    ul.appendChild(hoved);
+    for(const v of færdige) ul.appendChild(lavVareLi(v));
+  }
+  document.getElementById("vare-tom").classList.toggle("skjult", tilstand.varer.length>0);
+  document.getElementById("vare-ryd").classList.toggle("skjult", færdige.length===0);
+}
+function tilføjVare(navn){
+  navn = pænt(navn);
+  if(!navn) return;
+  const findes = tilstand.varer.find(v=>v.navn.toLowerCase()===navn.toLowerCase() && !v.gjort);
+  if(!findes) tilstand.varer.push({id:nytId(), navn, gjort:false});
+  tilstand.varehistorik[navn] = (tilstand.varehistorik[navn]||0) + 1;
+  vareInput.value = ""; visForslag();
+  tegnVarer(); gem();
+}
+function visForslag(){
+  const s = vareInput.value.trim().toLowerCase();
+  vareForslag.innerHTML = "";
+  if(!s) return;
+  const påListen = new Set(tilstand.varer.filter(v=>!v.gjort).map(v=>v.navn.toLowerCase()));
+  const hits = Object.entries(tilstand.varehistorik)
+    .filter(([navn])=> navn.toLowerCase().startsWith(s) && !påListen.has(navn.toLowerCase()))
+    .sort((a,b)=> b[1]-a[1])
+    .slice(0,6);
+  for(const [navn] of hits){
+    const kn = document.createElement("button");
+    kn.textContent = navn;
+    kn.addEventListener("click", ()=> tilføjVare(navn));
+    vareForslag.appendChild(kn);
+  }
+}
+vareInput.addEventListener("input", visForslag);
+vareInput.addEventListener("keydown", e=>{ if(e.key==="Enter") tilføjVare(vareInput.value); });
+document.getElementById("vare-tilføj").addEventListener("click", ()=> tilføjVare(vareInput.value));
+document.getElementById("vare-ryd").addEventListener("click", ()=>{
+  tilstand.varer = tilstand.varer.filter(v=>!v.gjort); tegnVarer(); gem();
+});
+
+/* ================= Opgaver ================= */
+const opgaveInput = document.getElementById("opgave-input");
+const prioriteter = ["rød","gul","grøn"];
+const priFarve = {rød:"#A32D2D", gul:"#BA7517", grøn:"#3B6D11"};
+
+function dageTilFrist(frist){
+  const idag = new Date(); idag.setHours(0,0,0,0);
+  const f = new Date(frist + "T00:00:00");
+  return Math.round((f - idag) / 86400000);
+}
+function tjekFrister(){
+  let ændret = false;
+  for(const o of tilstand.opgaver){
+    if(o.gjort || !o.frist) continue;
+    if(dageTilFrist(o.frist) <= 2 && (o.prioritet||"gul") !== "rød"){
+      o.prioritet = "rød"; ændret = true;
+    }
+  }
+  return ændret;
+}
+const fristInput = document.getElementById("frist-input");
+let fristOpgave = null;
+fristInput.addEventListener("change", ()=>{
+  if(!fristOpgave) return;
+  if(fristInput.value) fristOpgave.frist = fristInput.value;
+  else delete fristOpgave.frist;
+  fristOpgave = null;
+  tjekFrister();
+  tegnOpgaver(); gem();
+});
+
+function tegnOpgaver(){
+  for(const pri of prioriteter){
+    const ul = document.getElementById("liste-"+pri);
+    ul.innerHTML = "";
+    const poster = tilstand.opgaver
+      .filter(o => (o.prioritet||"gul") === pri)
+      .sort((a,b)=> (a.gjort?1:0) - (b.gjort?1:0));
+    for(const o of poster){
+      const li = document.createElement("li");
+      if(o.gjort) li.classList.add("gjort");
+      li.style.borderLeft = "4px solid " + priFarve[pri];
+
+      const boks = document.createElement("button");
+      boks.className = "boks"; boks.innerHTML = fluebenSVG;
+      boks.setAttribute("aria-label", o.gjort ? "Fjern flueben" : "Sæt flueben");
+      boks.addEventListener("click", ()=>{ o.gjort = !o.gjort; tegnOpgaver(); gem(); });
+
+      const navn = document.createElement("span");
+      navn.className = "navn";
+      const tekst = document.createElement("span");
+      tekst.textContent = o.tekst;
+      navn.appendChild(tekst);
+      if(o.frist){
+        const frist = document.createElement("span");
+        frist.className = "frist";
+        const dage = dageTilFrist(o.frist);
+        const datoTekst = new Date(o.frist+"T00:00:00")
+          .toLocaleDateString("da-DK", {day:"numeric", month:"short"});
+        if(dage < 0){ frist.textContent = "Frist overskredet · " + datoTekst; frist.classList.add("over"); }
+        else if(dage === 0){ frist.textContent = "Frist i dag"; frist.classList.add("over"); }
+        else if(dage === 1){ frist.textContent = "Frist i morgen"; }
+        else { frist.textContent = "Frist " + datoTekst; }
+        navn.appendChild(frist);
+      }
+      navn.addEventListener("click", ()=>{
+        fristOpgave = o;
+        fristInput.value = o.frist || "";
+        try{ fristInput.showPicker(); }catch(e){ fristInput.click(); }
+      });
+
+      const farve = document.createElement("button");
+      farve.className = "farve-knap";
+      farve.style.background = priFarve[pri];
+      farve.setAttribute("aria-label","Flyt til næste gruppe");
+      farve.addEventListener("click", ()=>{
+        const i = prioriteter.indexOf(pri);
+        o.prioritet = prioriteter[(i+1) % prioriteter.length];
+        if(o.prioritet === "rød" && tilstand.indstillinger.notifHaster){
+          sendNotif("Hasteopgave", o.tekst);
+        }
+        tegnOpgaver(); gem();
+      });
+
+      const slet = document.createElement("button");
+      slet.className = "slet"; slet.innerHTML = krydsSVG;
+      slet.setAttribute("aria-label","Slet");
+      slet.addEventListener("click", ()=>{
+        const i = tilstand.opgaver.indexOf(o);
+        if(i>-1) tilstand.opgaver.splice(i,1);
+        tegnOpgaver(); gem();
+      });
+
+      li.append(boks, navn, farve, slet);
+      ul.appendChild(li);
+    }
+  }
+  document.getElementById("opgave-tom").classList.toggle("skjult", tilstand.opgaver.length>0);
+  document.getElementById("opgave-ryd").classList.toggle("skjult", !tilstand.opgaver.some(o=>o.gjort));
+}
+function tilføjOpgave(){
+  const t = pænt(opgaveInput.value);
+  if(!t) return;
+  tilstand.opgaver.push({id:nytId(), tekst:t, gjort:false, prioritet:"gul"});
+  opgaveInput.value = "";
+  tegnOpgaver(); gem();
+}
+opgaveInput.addEventListener("keydown", e=>{ if(e.key==="Enter") tilføjOpgave(); });
+document.getElementById("opgave-tilføj").addEventListener("click", tilføjOpgave);
+document.getElementById("opgave-ryd").addEventListener("click", ()=>{
+  tilstand.opgaver = tilstand.opgaver.filter(o=>!o.gjort); tegnOpgaver(); gem();
+});
+
+/* ================= Lommeregner ================= */
+const rTal = document.getElementById("r-tal");
+const rHist = document.getElementById("r-historik");
+let udtryk = "";          // det skrevne udtryk, fx "2×(3+4,5)"
+let visteResultat = false; // sidste handling var "="
+
+function formatTal(n){
+  if(!isFinite(n)) return "Fejl";
+  return parseFloat(n.toPrecision(12)).toLocaleString("da-DK", {maximumFractionDigits:10});
+}
+function visUdtryk(){
+  rTal.textContent = udtryk === "" ? "0" : udtryk;
+  rTal.style.fontSize = udtryk.length > 14 ? "28px" : "38px";
+}
+
+/* Parser: rekursiv nedstigning med korrekt regnerækkefølge.
+   udtryk := led (('+'|'−') led)*
+   led    := faktor (('×'|'÷') faktor)*
+   faktor := tal | '(' udtryk ')' | '−' faktor          */
+function beregnUdtryk(s){
+  let i = 0;
+  function spring(){ while(s[i]===" ") i++; }
+  function tal(){
+    spring();
+    let start = i;
+    while(i < s.length && (s[i]>="0" && s[i]<="9" || s[i]===",")) i++;
+    if(start === i) throw "fejl";
+    return parseFloat(s.slice(start, i).replace(",", "."));
+  }
+  function faktor(){
+    spring();
+    if(s[i]==="−" || s[i]==="-"){ i++; return -faktor(); }
+    if(s[i]==="("){
+      i++;
+      const v = udtrykP();
+      spring();
+      if(s[i]===")") i++; // tilgiv manglende slutparentes
+      return v;
+    }
+    return tal();
+  }
+  function led(){
+    let v = faktor();
+    for(;;){
+      spring();
+      if(s[i]==="×"){ i++; v *= faktor(); }
+      else if(s[i]==="÷"){ i++; const n = faktor(); v = n===0 ? NaN : v/n; }
+      else return v;
+    }
+  }
+  function udtrykP(){
+    let v = led();
+    for(;;){
+      spring();
+      if(s[i]==="+"){ i++; v += led(); }
+      else if(s[i]==="−" || s[i]==="-"){ i++; v -= led(); }
+      else return v;
+    }
+  }
+  const res = udtrykP();
+  spring();
+  if(i < s.length) throw "fejl";
+  return res;
+}
+
+function sidsteTegn(){ return udtryk.slice(-1); }
+function erCifferEllerLuk(c){ return (c>="0" && c<="9") || c===")" ; }
+
+function trykTast(k){
+  const operatorer = ["+","−","×","÷"];
+  if(k==="C"){
+    udtryk = ""; rHist.textContent = ""; visteResultat = false;
+  } else if(k==="⌫"){
+    udtryk = udtryk.slice(0,-1); visteResultat = false;
+  } else if(k==="="){
+    if(udtryk==="") return;
+    // luk automatisk åbne parenteser
+    const åbne = (udtryk.match(/\(/g)||[]).length - (udtryk.match(/\)/g)||[]).length;
+    let s = udtryk + ")".repeat(Math.max(0, åbne));
+    try{
+      const res = beregnUdtryk(s);
+      rHist.textContent = s + " =";
+      udtryk = isFinite(res) ? formatTal(res).replace(/\./g,"") : "";
+      if(!isFinite(res)){ rTal.textContent = "Fejl"; visteResultat = false; return; }
+      visteResultat = true;
+    }catch(e){
+      rTal.textContent = "Fejl"; visteResultat = false; return;
+    }
+  } else if(operatorer.includes(k)){
+    if(visteResultat) visteResultat = false;
+    if(udtryk==="" ){ if(k==="−") udtryk = "−"; }
+    else if(operatorer.includes(sidsteTegn())) udtryk = udtryk.slice(0,-1) + k;
+    else if(sidsteTegn()!=="(" || k==="−") udtryk += k;
+  } else if(k==="("){
+    if(visteResultat){ udtryk = ""; visteResultat = false; }
+    if(erCifferEllerLuk(sidsteTegn())) udtryk += "×"; // 2( betyder 2×(
+    udtryk += "(";
+  } else if(k===")"){
+    const åbne = (udtryk.match(/\(/g)||[]).length - (udtryk.match(/\)/g)||[]).length;
+    if(åbne > 0 && erCifferEllerLuk(sidsteTegn())) udtryk += ")";
+    visteResultat = false;
+  } else if(k===","){
+    if(visteResultat){ udtryk = ""; visteResultat = false; }
+    const sidsteTal = udtryk.split(/[+−×÷()]/).pop();
+    if(!sidsteTal.includes(",")) udtryk += (sidsteTal==="" ? "0," : ",");
+  } else { // ciffer
+    if(visteResultat){ udtryk = ""; visteResultat = false; }
+    if(sidsteTegn()===")") udtryk += "×"; // (2+3)4 betyder ...×4
+    udtryk += k;
+  }
+  visUdtryk();
+}
+document.querySelectorAll(".taster button").forEach(kn=>{
+  kn.addEventListener("click", ()=> trykTast(kn.dataset.k));
+});
+
+/* ================= Notifikationer & indstillinger ================= */
+async function bedOmTilladelse(){
+  if(!("Notification" in window)) return false;
+  if(Notification.permission === "granted") return true;
+  if(Notification.permission === "denied") return false;
+  return (await Notification.requestPermission()) === "granted";
+}
+function sendNotif(titel, tekst){
+  if(!tilstand.indstillinger.notifMaster) return;
+  if(!("Notification" in window) || Notification.permission !== "granted") return;
+  try{ new Notification(titel, {body: tekst}); }catch(e){}
+}
+function anvendTema(){
+  const valg = tilstand.indstillinger.tema;
+  const mørk = valg === "mørk" ||
+    (valg === "auto" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  document.body.classList.toggle("mørk", mørk);
+  document.querySelectorAll("#tema-valg button").forEach(b=>{
+    b.classList.toggle("aktiv", b.dataset.tema === valg);
+  });
+}
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", ()=>{
+  if(tilstand.indstillinger.tema === "auto") anvendTema();
+});
+function opdaterNotifRækker(){
+  document.querySelectorAll(".under-notif").forEach(r=>{
+    r.classList.toggle("dæmpet", !tilstand.indstillinger.notifMaster);
+  });
+}
+function anvendIndstillinger(){
+  const i = tilstand.indstillinger;
+  document.getElementById("ind-notif").checked = i.notifMaster;
+  document.getElementById("ind-notif-varer").checked = i.notifVarer;
+  document.getElementById("ind-notif-opgaver").checked = i.notifOpgaver;
+  document.getElementById("ind-notif-haster").checked = i.notifHaster;
+  document.getElementById("ind-rema").checked = i.remaSortering;
+  opdaterNotifRækker();
+  anvendTema();
+}
+document.getElementById("ind-notif").addEventListener("change", async function(){
+  const note = document.getElementById("notif-note");
+  if(this.checked){
+    const ok = await bedOmTilladelse();
+    if(!ok){
+      this.checked = false;
+      note.textContent = "Browseren afviste tilladelsen. Slå notifikationer til for siden i telefonens browser-indstillinger og prøv igen.";
+      return;
+    }
+    note.textContent = "Beskeder om andres ændringer (f.eks. nye varer på listen) virker, når delingen kobles på i næste trin.";
+  }
+  tilstand.indstillinger.notifMaster = this.checked;
+  opdaterNotifRækker(); gem();
+});
+for(const [id, felt] of [["ind-notif-varer","notifVarer"],["ind-notif-opgaver","notifOpgaver"],["ind-notif-haster","notifHaster"]]){
+  document.getElementById(id).addEventListener("change", function(){
+    tilstand.indstillinger[felt] = this.checked; gem();
+  });
+}
+document.getElementById("ind-rema").addEventListener("change", function(){
+  tilstand.indstillinger.remaSortering = this.checked; tegnVarer(); gem();
+});
+document.querySelectorAll("#tema-valg button").forEach(kn=>{
+  kn.addEventListener("click", ()=>{
+    tilstand.indstillinger.tema = kn.dataset.tema; anvendTema(); gem();
+  });
+});
+document.getElementById("ind-test").addEventListener("click", async ()=>{
+  const note = document.getElementById("notif-note");
+  if(!tilstand.indstillinger.notifMaster){
+    note.textContent = "Slå notifikationer til først, så kan du sende en test.";
+    return;
+  }
+  if(await bedOmTilladelse()){
+    sendNotif("Praktik", "Sådan ser en notifikation ud.");
+  } else {
+    note.textContent = "Browseren afviste tilladelsen. Slå notifikationer til for siden i telefonens browser-indstillinger.";
+  }
+});
+
+/* ================= Skyen: Firebase, login & deling ================= */
+const firebaseConfig = {
+  apiKey: "AIzaSyCxLLNp6BIYfQkmSW6QflgpSwTwo4Cz_to",
+  authDomain: "praktik-d756c.firebaseapp.com",
+  projectId: "praktik-d756c",
+  storageBucket: "praktik-d756c.firebasestorage.app",
+  messagingSenderId: "452016621766",
+  appId: "1:452016621766:web:2f88b0181d64d5c81a2fc7"
+};
+
+let fb = null, auth = null, db = null;
+let bruger = null, husstandId = null, husstandRef = null, stopLyt = null;
+let sidsteLokaleSkriv = 0;
+
+async function startSky(){
+  try{
+    const V = "https://www.gstatic.com/firebasejs/10.12.2/";
+    const [mApp, mAuth, mFs] = await Promise.all([
+      import(V + "firebase-app.js"),
+      import(V + "firebase-auth.js"),
+      import(V + "firebase-firestore.js")
+    ]);
+    fb = {...mApp, ...mAuth, ...mFs};
+    const app = fb.initializeApp(firebaseConfig);
+    auth = fb.getAuth(app);
+    try{
+      db = fb.initializeFirestore(app, {
+        localCache: fb.persistentLocalCache({tabManager: fb.persistentMultipleTabManager()})
+      });
+    }catch(e){ db = fb.getFirestore(app); }
+    fb.onAuthStateChanged(auth, vedLoginSkift);
+  }catch(e){
+    fb = null;
+    opdaterKontoUI();
+  }
+}
+
+function visLogin(trin){ // "login" | "husstand" | "venter" | null (skjul)
+  document.getElementById("login-skærm").classList.toggle("skjult", !trin);
+  for(const t of ["login","husstand","venter"]){
+    document.getElementById(t+"-trin").classList.toggle("skjult", t!==trin);
+  }
+}
+
+async function vedLoginSkift(u){
+  bruger = u;
+  if(stopLyt){ stopLyt(); stopLyt = null; }
+  husstandId = null; husstandRef = null;
+  if(!u){
+    visLogin(tilstand.springLoginOver ? null : "login");
+    opdaterKontoUI();
+    return;
+  }
+  visLogin("venter");
+  let hid = null;
+  try{
+    const bSnap = await fb.getDoc(fb.doc(db, "brugere", u.uid));
+    if(bSnap.exists()) hid = bSnap.data().husstandId || null;
+  }catch(e){}
+  if(hid){
+    åbnHusstand(hid);
+  } else {
+    document.getElementById("velkomst-navn").textContent =
+      u.displayName ? ", " + u.displayName.split(" ")[0] : "";
+    visLogin("husstand");
+  }
+  opdaterKontoUI();
+}
+
+function åbnHusstand(id){
+  husstandId = id;
+  husstandRef = fb.doc(db, "husstande", id);
+  if(stopLyt) stopLyt();
+  stopLyt = fb.onSnapshot(husstandRef, snap=>{
+    if(!snap.exists()) return;
+    const fremmed = !snap.metadata.hasPendingWrites &&
+                    (Date.now() - sidsteLokaleSkriv > 2500);
+    håndterSkyData(snap.data(), fremmed);
+  }, err=>{});
+  visLogin(null);
+  opdaterKontoUI();
+}
+
+function håndterSkyData(d, fremmed){
+  if(fremmed && tilstand.indstillinger.notifMaster){
+    const i = tilstand.indstillinger;
+    const gamleVarer = new Set(tilstand.varer.map(v=>v.id));
+    if(i.notifVarer){
+      for(const v of (d.varer||[])){
+        if(!gamleVarer.has(v.id) && !v.gjort) sendNotif("Ny vare på listen", v.navn);
+      }
+    }
+    const gamleOpgaver = new Map(tilstand.opgaver.map(o=>[o.id, o]));
+    for(const o of (d.opgaver||[])){
+      const g = gamleOpgaver.get(o.id);
+      if(!g && i.notifOpgaver && !o.gjort) sendNotif("Ny opgave", o.tekst);
+      else if(g && (g.prioritet||"gul")!=="rød" && o.prioritet==="rød" && !o.gjort && i.notifHaster){
+        sendNotif("Hasteopgave", o.tekst);
+      }
+    }
+  }
+  tilstand.varer = d.varer || [];
+  tilstand.opgaver = d.opgaver || [];
+  tilstand.varehistorik = d.varehistorik || {};
+  if(tjekFrister()) gemSky();
+  tegnVarer(); tegnOpgaver();
+  gemData(tilstand);
+}
+
+function gemSky(){
+  if(!husstandRef || !fb) return;
+  sidsteLokaleSkriv = Date.now();
+  fb.updateDoc(husstandRef, {
+    varer: tilstand.varer,
+    opgaver: tilstand.opgaver,
+    varehistorik: tilstand.varehistorik,
+    opdateret: Date.now()
+  }).catch(()=>{});
+}
+
+function lavKode(){
+  const tegn = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let k = "";
+  for(let i=0; i<6; i++) k += tegn[Math.floor(Math.random()*tegn.length)];
+  return k;
+}
+
+async function logInd(){
+  const fejl = document.getElementById("login-fejl");
+  fejl.textContent = "";
+  if(!fb){ fejl.textContent = "Skyen kunne ikke indlæses – tjek internetforbindelsen."; return; }
+  const udbyder = new fb.GoogleAuthProvider();
+  try{
+    await fb.signInWithPopup(auth, udbyder);
+  }catch(e){
+    try{ await fb.signInWithRedirect(auth, udbyder); }
+    catch(e2){ fejl.textContent = "Login mislykkedes. Prøv igen."; }
+  }
+}
+
+async function opretHusstand(){
+  const fejl = document.getElementById("husstand-fejl");
+  fejl.textContent = "";
+  try{
+    const kode = lavKode();
+    await fb.setDoc(fb.doc(db, "husstande", kode), {
+      medlemmer: [bruger.uid],
+      varer: tilstand.varer,
+      opgaver: tilstand.opgaver,
+      varehistorik: tilstand.varehistorik,
+      oprettet: Date.now(), opdateret: Date.now()
+    });
+    await fb.setDoc(fb.doc(db, "brugere", bruger.uid),
+      {husstandId: kode, navn: bruger.displayName||"", mail: bruger.email||""});
+    åbnHusstand(kode);
+  }catch(e){
+    fejl.textContent = "Kunne ikke oprette husstanden. Prøv igen.";
+  }
+}
+
+async function tilslutHusstand(){
+  const fejl = document.getElementById("husstand-fejl");
+  fejl.textContent = "";
+  const kode = document.getElementById("kode-input").value.trim().toUpperCase();
+  if(kode.length !== 6){ fejl.textContent = "Koden er på 6 tegn."; return; }
+  try{
+    const ref = fb.doc(db, "husstande", kode);
+    const snap = await fb.getDoc(ref);
+    if(!snap.exists()){ fejl.textContent = "Koden findes ikke – tjek den igen."; return; }
+    await fb.updateDoc(ref, {medlemmer: fb.arrayUnion(bruger.uid)});
+    // flet denne telefons data ind uden dubletter
+    const d = snap.data();
+    const navne = new Set((d.varer||[]).map(v=>v.navn.toLowerCase()));
+    const nyeVarer = tilstand.varer.filter(v=>!navne.has(v.navn.toLowerCase()));
+    const tekster = new Set((d.opgaver||[]).map(o=>o.tekst.toLowerCase()));
+    const nyeOpgaver = tilstand.opgaver.filter(o=>!tekster.has(o.tekst.toLowerCase()));
+    const hist = {...(d.varehistorik||{})};
+    for(const [k,v] of Object.entries(tilstand.varehistorik)) hist[k] = (hist[k]||0) + v;
+    await fb.updateDoc(ref, {
+      varer: [...(d.varer||[]), ...nyeVarer],
+      opgaver: [...(d.opgaver||[]), ...nyeOpgaver],
+      varehistorik: hist, opdateret: Date.now()
+    });
+    await fb.setDoc(fb.doc(db, "brugere", bruger.uid),
+      {husstandId: kode, navn: bruger.displayName||"", mail: bruger.email||""});
+    åbnHusstand(kode);
+  }catch(e){
+    fejl.textContent = "Kunne ikke tilslutte. Tjek koden og internetforbindelsen.";
+  }
+}
+
+function opdaterKontoUI(){
+  const el = document.getElementById("konto-indhold");
+  el.innerHTML = "";
+  function knap(tekst, sekundær, klik){
+    const k = document.createElement("button");
+    k.className = "stor-knap" + (sekundær ? " sekundær" : "");
+    k.style.margin = "8px 0 12px";
+    k.textContent = tekst;
+    k.addEventListener("click", klik);
+    return k;
+  }
+  function note(t){
+    const p = document.createElement("p");
+    p.className = "indstil-note"; p.textContent = t;
+    return p;
+  }
+  if(!fb){
+    el.appendChild(note("Skyforbindelsen kunne ikke indlæses. Deling og login kræver internetforbindelse og at appen åbnes fra sin rigtige adresse."));
+    return;
+  }
+  if(!bruger){
+    el.appendChild(note("Du er ikke logget ind – data ligger kun på denne telefon."));
+    el.appendChild(knap("Log ind med Google", false, ()=>{
+      tilstand.springLoginOver = false; gemData(tilstand);
+      visLogin("login"); logInd();
+    }));
+    return;
+  }
+  el.appendChild(note((bruger.displayName||"") + " · " + (bruger.email||"")));
+  if(husstandId){
+    const kode = document.createElement("div");
+    kode.className = "kode-visning"; kode.textContent = husstandId;
+    el.appendChild(kode);
+    el.appendChild(note("Husstandskode. Familien logger ind i appen, vælger \"Tilslut husstand\" og taster koden – så deles alt."));
+  }
+  el.appendChild(knap("Log ud", true, async ()=>{
+    tilstand.springLoginOver = false; gemData(tilstand);
+    try{ await fb.signOut(auth); }catch(e){}
+  }));
+}
+
+document.getElementById("knap-login").addEventListener("click", logInd);
+document.getElementById("knap-spring").addEventListener("click", ()=>{
+  tilstand.springLoginOver = true; gemData(tilstand);
+  visLogin(null); opdaterKontoUI();
+});
+document.getElementById("knap-opret").addEventListener("click", opretHusstand);
+document.getElementById("knap-tilslut").addEventListener("click", tilslutHusstand);
+document.getElementById("knap-logud-tidlig").addEventListener("click", async ()=>{
+  try{ await fb.signOut(auth); }catch(e){}
+});
+
+/* ================= Start ================= */
+(async ()=>{
+  const gemt = await hentData();
+  if(gemt){
+    tilstand.varer = gemt.varer || [];
+    tilstand.varehistorik = gemt.varehistorik || {};
+    tilstand.opgaver = gemt.opgaver || [];
+    if(Array.isArray(gemt.faneOrden) && gemt.faneOrden.length===4) tilstand.faneOrden = gemt.faneOrden;
+    tilstand.indstillinger = {...standardIndstillinger, ...(gemt.indstillinger || {})};
+    tilstand.springLoginOver = gemt.springLoginOver || false;
+  }
+  anvendFaneOrden();
+  anvendIndstillinger();
+  visSide(tilstand.faneOrden[0]);
+  if(tjekFrister()) gem();
+  tegnVarer();
+  tegnOpgaver();
+  startSky();
+})();
+</script>
+</body>
+</html>
