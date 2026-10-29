@@ -1,0 +1,10 @@
+{% load static %}<!doctype html><html lang="da"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Log ind · {{ company_name }}</title><link rel="stylesheet" href="{% static 'drift/app.css' %}"></head>
+<body><form class="login" method="post">{% csrf_token %}
+<h1>Log ind</h1>
+{% if form.errors %}<p class="msg error">Forkert brugernavn eller adgangskode.</p>{% endif %}
+<label>Brugernavn</label><input name="username" autofocus autocomplete="username">
+<label>Adgangskode</label><input name="password" type="password" autocomplete="current-password">
+<button class="btn">Log ind</button>
+{% if demo_mode %}<p class="svag">Demo: <code>admin</code> / <code>medarbejder1</code> / <code>medarbejder2</code> – adgangskode <code>demo-adgang-2026</code></p>{% endif %}
+</form></body></html>

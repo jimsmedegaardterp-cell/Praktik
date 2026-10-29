@@ -1,0 +1,6 @@
+{% extends "drift/base.html" %}{% block title %}Log{% endblock %}
+{% block content %}
+<h1>Revisionslog</h1><p class="svag">Seneste 200 hændelser. Indeholder handlinger og ID'er, ikke beskedtekster.</p>
+<table><tr><th>Tid</th><th>Hvem</th><th>Handling</th><th>Objekt</th><th>Detaljer</th></tr>
+{% for e in events %}<tr><td>{{ e.created_at|date:"d.m.Y H:i:s" }}</td><td>{{ e.actor|default:"system" }}</td><td>{{ e.action }}</td><td>{{ e.object_type }} {{ e.object_id|truncatechars:12 }}</td><td class="svag">{% for k, v in e.data.items %}{{ k }}={{ v }} {% endfor %}</td></tr>{% endfor %}</table>
+{% endblock %}

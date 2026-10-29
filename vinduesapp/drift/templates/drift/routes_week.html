@@ -1,0 +1,18 @@
+{% extends "drift/base.html" %}{% block title %}Ruter{% endblock %}
+{% block content %}
+<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+<h1 style="margin:0">Ruter – uge {{ week_no }}</h1>
+<a class="btn sek lille" href="?uge={{ prev|date:'Y-m-d' }}">← Forrige</a><a class="btn sek lille" href="?uge={{ today|date:'Y-m-d' }}">I dag</a><a class="btn sek lille" href="?uge={{ next|date:'Y-m-d' }}">Næste →</a>
+<form method="post" action="{% url 'plan_ahead' %}" class="inline">{% csrf_token %}<input type="hidden" name="next" value="{{ request.get_full_path }}"><button class="btn lille">Planlæg 26 uger frem</button></form>
+</div>
+<p class="svag">Klik på et besøg for at flytte det. Stiplet kant = flyttet fra grundrytmen.</p>
+<div class="uge">
+<div></div>{% for d in days %}<div class="hd {% if d == today %}idag{% endif %}">{{ d|date:"D j.n" }}</div>{% endfor %}
+{% for row in grid %}
+<div class="rute">{{ row.route.name }}<div class="svag">{{ row.route.employee }}<br>{{ row.total|floatformat:0 }} kr.</div></div>
+{% for cell in row.cells %}<div class="celle">{% for v in cell %}
+<a class="stop {% if v.is_final %}final{% elif v.status == 'udsat' %}udsat{% endif %} {% if v.planned_date != v.rhythm_date %}flyttet{% endif %}" href="{% url 'visit_detail' v.pk %}" title="{{ v.get_status_display }}">{{ v.agreement.customer.name }}<br><span class="svag">{{ v.agreement.address.street }}</span></a>
+{% endfor %}</div>{% endfor %}
+{% endfor %}
+</div>
+{% endblock %}

@@ -1,0 +1,21 @@
+{% extends "drift/base.html" %}{% block title %}Beskeder{% endblock %}
+{% block content %}
+<h1>Beskeder</h1>
+<div class="to"><div>
+<h2>Ukendt afsender ({{ unknown|length }})</h2>
+{% for m in unknown %}<div class="card" style="margin-bottom:8px"><b>{{ m.phone }}</b> <span class="svag">{{ m.created_at|date:"d.m H:i" }}</span><p>{{ m.body }}</p>
+<form method="post">{% csrf_token %}<input type="hidden" name="message" value="{{ m.pk }}"><input type="hidden" name="action" value="assign">
+<select name="customer">{% for c in customers %}<option value="{{ c.pk }}">{{ c.name }}</option>{% endfor %}</select> <button class="btn lille">Knyt til kunde</button></form></div>
+{% empty %}<p class="svag">Ingen.</p>{% endfor %}
+<h2>Ubehandlede svar ({{ unhandled|length }})</h2>
+{% for m in unhandled %}<div class="card" style="margin-bottom:8px"><a href="{% url 'customer_detail' m.customer_id %}"><b>{{ m.customer }}</b></a> <span class="svag">{{ m.created_at|date:"d.m H:i" }}</span><p>{{ m.body }}</p>
+<form method="post">{% csrf_token %}<input type="hidden" name="message" value="{{ m.pk }}"><button class="btn lille sek">Markér behandlet</button></form></div>
+{% empty %}<p class="svag">Ingen.</p>{% endfor %}
+{% if demo_mode %}<h2>Simulér indgående SMS</h2><form method="post" action="{% url 'sms_simulate' %}" class="card">{% csrf_token %}
+<input name="phone" value="+4599990000" placeholder="+45…"> <input name="body" value="Hvem er det der skriver?"> <button class="btn lille">Modtag</button>
+<p class="svag">Går gennem samme signerede webhook-logik som en rigtig gateway.</p></form>{% endif %}
+</div><div>
+<h2>Seneste</h2><table><tr><th>Tid</th><th></th><th>Kunde/nr.</th><th>Tekst</th><th>Status</th></tr>
+{% for m in recent %}<tr><td>{{ m.created_at|date:"d.m H:i" }}</td><td>{% if m.direction == 'ud' %}→{% else %}←{% endif %}</td><td>{{ m.customer|default:m.phone }}</td><td>{{ m.body|truncatechars:50 }}</td><td><span class="pill s-{{ m.status }}">{{ m.get_status_display }}</span></td></tr>
+{% empty %}<tr><td colspan="5" class="svag">Ingen.</td></tr>{% endfor %}</table></div></div>
+{% endblock %}

@@ -1,0 +1,21 @@
+{% extends "drift/base.html" %}{% block title %}Besøg{% endblock %}
+{% block content %}
+<h1>Besøg: {{ visit.agreement.customer }}</h1>
+<div class="to"><div class="card">
+<p><b>{{ visit.agreement.address }}</b><br>{{ visit.agreement.service }} · {{ visit.price|floatformat:2 }} kr. ekskl. moms</p>
+<p>Status: <span class="pill s-{{ visit.status }}">{{ visit.get_status_display }}</span></p>
+<p>Planlagt: <b>{{ visit.planned_date|date:"l d.m.Y" }}</b><br>Grundrytme: {{ visit.rhythm_date|date:"d.m.Y" }}{% if visit.completed_date %}<br>Udført: {{ visit.completed_date|date:"d.m.Y" }}{% endif %}</p>
+{% if visit.note %}<p>Bemærkning: {{ visit.note }}</p>{% endif %}
+<p class="svag">Næste i serien: {% for f in following %}{{ f.planned_date|date:"d.m.Y" }}{% if not forloop.last %}, {% endif %}{% empty %}ingen planlagt{% endfor %}</p>
+</div>
+<div class="card">{% if visit.is_final %}<p>Besøget er afsluttet og kan ikke flyttes. Rettelser af fakturerede besøg håndteres med kreditnota i e-conomic.</p>
+{% else %}<h2 style="margin-top:0">Flyt besøg</h2>
+<form method="post">{% csrf_token %}
+<p><label>Ny dato<br><input type="date" name="new_date" value="{{ visit.planned_date|date:'Y-m-d' }}" required></label></p>
+<p><label><input type="radio" name="mode" value="behold" checked> <b>Behold grundrytmen</b> – kun dette besøg flyttes</label><br>
+<label><input type="radio" name="mode" value="forskyd"> <b>Forskyd hele serien</b> – alle senere besøg rykkes lige så meget</label></p>
+<button class="btn">Flyt</button></form>{% endif %}</div></div>
+<h2>Registreringer</h2><table><tr><th>Tid</th><th>Medarbejder</th><th>Status</th><th>Bemærkning</th><th class="num">Prisforslag</th></tr>
+{% for w in worklogs %}<tr><td>{{ w.created_at|date:"d.m.Y H:i" }}</td><td>{{ w.employee }}</td><td>{{ w.get_outcome_display }}</td><td>{{ w.note }}</td><td class="num">{{ w.proposed_price|default:"" }}</td></tr>
+{% empty %}<tr><td colspan="5" class="svag">Ingen endnu.</td></tr>{% endfor %}</table>
+{% endblock %}

@@ -1,0 +1,31 @@
+{% extends "drift/base.html" %}{% block title %}{{ customer.name }}{% endblock %}
+{% block content %}
+<h1>{{ customer.name }}</h1>
+<p>{% if customer.phone %}📞 <a href="tel:{{ customer.phone }}">{{ customer.phone }}</a> · {% endif %}{% if customer.email %}{{ customer.email }} · {% endif %}e-conomic kundenr.: {{ customer.economic_customer_number|default:"ikke oprettet endnu" }}</p>
+{% if customer.notes %}<p class="card">{{ customer.notes }}</p>{% endif %}
+<h2>Aftaler</h2>
+<table><tr><th>Adresse</th><th>Ydelse</th><th>Rute</th><th>Interval</th><th>Sæson</th><th class="num">Pris</th></tr>
+{% for a in agreements %}<tr><td>{{ a.address }}{% if a.address.access_notes %}<br><span class="svag">🔑 {{ a.address.access_notes }}</span>{% endif %}</td>
+<td>{{ a.service }}</td><td>{{ a.route }}</td><td>hver {{ a.interval_weeks }}. uge</td><td>md. {{ a.season_start_month }}–{{ a.season_end_month }}</td><td class="num">{{ a.price|floatformat:2 }}</td></tr>{% endfor %}</table>
+<div class="to">
+<div><h2>Kommende besøg</h2><table>
+{% for v in upcoming %}<tr><td><a href="{% url 'visit_detail' v.pk %}">{{ v.planned_date|date:"D d.m.Y" }}</a>{% if v.planned_date != v.rhythm_date %} <span class="pill s-udsat">flyttet</span>{% endif %}</td><td>{{ v.agreement.address.street }}</td></tr>
+{% empty %}<tr><td class="svag">Ingen planlagte.</td></tr>{% endfor %}</table>
+<h2>Historik</h2><table>
+{% for v in history %}<tr><td>{{ v.planned_date|date:"d.m.Y" }}</td><td>{{ v.agreement.address.street }}</td><td><span class="pill s-{{ v.status }}">{{ v.get_status_display }}</span></td><td>{{ v.note }}</td></tr>
+{% empty %}<tr><td class="svag">Ingen endnu.</td></tr>{% endfor %}</table>
+<h2>Fakturaer (fra e-conomic)</h2><table>
+{% for d in drafts %}<tr><td>Kladde {{ d.economic_draft_number|default:"–" }}</td><td>Faktura {{ d.economic_invoice_number|default:"–" }}</td><td><span class="pill s-{{ d.status }}">{{ d.get_status_display }}</span></td></tr>
+{% empty %}<tr><td class="svag">Ingen.</td></tr>{% endfor %}</table></div>
+<div><h2>SMS-samtale</h2><div class="card">
+{% for m in sms %}<div class="sms {{ m.direction }}">{{ m.body }}<div class="svag">{{ m.created_at|date:"d.m H:i" }} · {{ m.get_status_display }}</div></div>
+{% empty %}<p class="svag">Ingen beskeder.</p>{% endfor %}
+{% if customer.phone %}<form method="post" action="{% url 'sms_send' customer.pk %}">{% csrf_token %}
+<input type="hidden" name="key" value="{{ customer.pk }}-{% now 'U' %}">
+<textarea name="body" rows="2" style="width:100%" placeholder="Skriv svar…">Hej {{ customer.name }}. Mvh {{ company_name }}</textarea>
+<button class="btn lille">Send{% if demo_mode %} (simuleret){% endif %}</button></form>
+{% if demo_mode %}<form method="post" action="{% url 'sms_simulate' %}" style="margin-top:8px">{% csrf_token %}
+<input type="hidden" name="phone" value="{{ customer.phone }}"><input type="hidden" name="next" value="{% url 'customer_detail' customer.pk %}">
+<input name="body" value="Det passer fint, porten er åben." style="width:70%"> <button class="btn lille sek">Simulér svar fra kunden</button></form>{% endif %}
+{% endif %}</div></div></div>
+{% endblock %}

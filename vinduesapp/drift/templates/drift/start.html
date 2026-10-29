@@ -1,0 +1,22 @@
+{% extends "drift/base.html" %}{% block title %}Overblik{% endblock %}
+{% block content %}
+<h1>Overblik {{ today|date:"l j. F" }}</h1>
+<div class="grid">
+  <a class="card" href="{% url 'invoices' %}" style="text-decoration:none;color:inherit"><div class="tal">{{ queue_ready.n }}</div><div class="lbl">linjer i fakturakø ({{ queue_ready.s|default:0|floatformat:2 }} kr. ekskl. moms)</div></a>
+  <a class="card" href="{% url 'invoices' %}" style="text-decoration:none;color:inherit"><div class="tal">{{ drafts_error }}</div><div class="lbl">e-conomic-fejl der skal genforsøges</div></a>
+  <a class="card" href="{% url 'sms_inbox' %}" style="text-decoration:none;color:inherit"><div class="tal">{{ unhandled_sms }}</div><div class="lbl">ubehandlede SMS-svar ({{ unknown_sms }} fra ukendt nummer)</div></a>
+  <div class="card"><div class="tal">{{ postponed|length }}</div><div class="lbl">udsatte besøg der skal have ny dato</div></div>
+</div>
+<div class="to">
+<div><h2>Dagens ruter</h2>
+{% if todays_routes %}<table><tr><th>Rute</th><th>Medarbejder</th><th class="num">Færdige</th></tr>
+{% for r in todays_routes %}<tr><td>{{ r.name }}</td><td>{{ r.employee }}</td><td class="num">{{ r.done }} / {{ r.total }}</td></tr>{% endfor %}</table>
+{% else %}<p class="svag">Ingen besøg i dag.</p>{% endif %}
+<h2>Denne uge</h2>
+<p>{% for status, label, n in week_counts %}<span class="pill s-{{ status }}">{{ n }} {{ label }}</span> {% empty %}<span class="svag">Ingen besøg.</span>{% endfor %}</p>
+</div>
+<div><h2>Udsatte besøg</h2>
+{% if postponed %}<table>{% for v in postponed %}<tr><td><a href="{% url 'visit_detail' v.pk %}">{{ v.agreement.customer }}</a></td><td>{{ v.planned_date|date:"d.m" }}</td><td><a class="btn lille sek" href="{% url 'visit_detail' v.pk %}">Ny dato</a></td></tr>{% endfor %}</table>
+{% else %}<p class="svag">Ingen.</p>{% endif %}
+</div></div>
+{% endblock %}

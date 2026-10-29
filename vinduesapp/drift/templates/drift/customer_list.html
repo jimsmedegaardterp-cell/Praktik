@@ -1,0 +1,10 @@
+{% extends "drift/base.html" %}{% block title %}Kunder{% endblock %}
+{% block content %}
+<h1>Kunder</h1>
+<form style="display:flex;gap:8px;margin-bottom:12px"><input name="q" value="{{ q }}" placeholder="Søg navn, telefon eller adresse" style="flex:1"><button class="btn sek">Søg</button><a class="btn" href="{% url 'customer_create' %}">+ Ny kunde</a></form>
+<table><tr><th>Navn</th><th>Adresse(r)</th><th>Telefon</th><th>e-conomic nr.</th></tr>
+{% for c in customers %}<tr><td><a href="{% url 'customer_detail' c.pk %}">{{ c.name }}</a></td>
+<td>{% for a in c.addresses.all %}{{ a }}{% if not forloop.last %}<br>{% endif %}{% endfor %}</td>
+<td>{{ c.phone }}</td><td>{{ c.economic_customer_number|default:"–" }}</td></tr>
+{% empty %}<tr><td colspan="4" class="svag">Ingen kunder fundet.</td></tr>{% endfor %}</table>
+{% endblock %}

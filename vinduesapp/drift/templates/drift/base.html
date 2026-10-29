@@ -1,0 +1,23 @@
+{% load static %}<!doctype html>
+<html lang="da"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{% block title %}Drift{% endblock %} · {{ company_name }}</title>
+<link rel="stylesheet" href="{% static 'drift/app.css' %}"></head>
+<body>
+<header class="top"><b>{{ company_name }}</b>
+{% with u=request.resolver_match.url_name %}
+<nav>
+<a href="{% url 'start' %}" class="{% if u == 'start' %}on{% endif %}">Overblik</a>
+<a href="{% url 'routes_week' %}" class="{% if u == 'routes_week' or u == 'visit_detail' %}on{% endif %}">Ruter</a>
+<a href="{% url 'customer_list' %}" class="{% if 'customer' in u %}on{% endif %}">Kunder</a>
+<a href="{% url 'invoices' %}" class="{% if u == 'invoices' %}on{% endif %}">Fakturering</a>
+<a href="{% url 'sms_inbox' %}" class="{% if u == 'sms_inbox' %}on{% endif %}">Beskeder</a>
+<a href="{% url 'audit_log' %}" class="{% if u == 'audit_log' %}on{% endif %}">Log</a>
+<a href="{% url 'mobile_day' %}">Mobilvisning ↗</a>
+</nav>{% endwith %}
+<form method="post" action="{% url 'logout' %}">{% csrf_token %}<button>Log ud ({{ me }})</button></form>
+</header>
+{% if demo_mode %}<div class="demo">DEMO – testdata. e-conomic og SMS er simuleret; intet sendes ud af huset.</div>{% endif %}
+<main>
+{% for m in messages %}<div class="msg {{ m.tags }}">{{ m }}</div>{% endfor %}
+{% block content %}{% endblock %}
+</main></body></html>

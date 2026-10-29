@@ -1,0 +1,8 @@
+{% extends "drift/base.html" %}{% block title %}Ny kunde{% endblock %}
+{% block content %}
+<h1>Ny kunde</h1>
+<p class="svag">Kunde, adresse og første aftale oprettes samlet. Besøg planlægges automatisk efter intervallet.</p>
+<form method="post" class="card">{% csrf_token %}{{ form.non_field_errors }}
+<div class="felter">{% for f in form %}<div><label for="{{ f.id_for_label }}">{{ f.label }}</label>{{ f }}{{ f.errors }}</div>{% endfor %}</div>
+<p><button class="btn">Opret kunde</button></p></form>
+{% endblock %}

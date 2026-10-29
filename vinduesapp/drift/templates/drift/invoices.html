@@ -1,0 +1,29 @@
+{% extends "drift/base.html" %}{% block title %}Fakturering{% endblock %}
+{% block content %}
+<h1>Fakturering</h1>
+<p class="svag">Flow: udført besøg → <b>1. godkend</b> → <b>2. opret kladder i e-conomic</b> (én pr. kunde) → bogfør og send <i>i e-conomic</i> → <b>3. hent status</b>. Appen bogfører aldrig selv.</p>
+<h2>1. Klar til godkendelse ({{ queue|length }})</h2>
+<form method="post">{% csrf_token %}<input type="hidden" name="action" value="approve">
+<table><tr><th><input type="checkbox" onclick="document.querySelectorAll('.vaelg').forEach(c=>c.checked=this.checked)"></th><th>Kunde</th><th>Linje</th><th>Udført af</th><th>Status</th><th class="num">Beløb</th></tr>
+{% for i in queue %}<tr><td><input type="checkbox" class="vaelg" name="items" value="{{ i.pk }}"></td><td>{{ i.customer }}</td><td>{{ i.description }}{% if i.visit.note %}<br><span class="svag">{{ i.visit.note }}</span>{% endif %}</td><td>{{ i.visit.employee }}</td>
+<td><span class="pill s-{{ i.status }}">{{ i.get_status_display }}</span>{% if i.amount != i.visit.price %}<br><span class="svag">aftalt {{ i.visit.price|floatformat:2 }}</span>{% endif %}</td><td class="num">{{ i.amount|floatformat:2 }}</td></tr>
+{% empty %}<tr><td colspan="6" class="svag">Køen er tom. Registrér besøg som udført i mobilvisningen.</td></tr>{% endfor %}</table>
+{% if queue %}<p><button class="btn">Godkend valgte</button></p>{% endif %}</form>
+
+<h2>2. Godkendt – klar til e-conomic ({{ approved|length }} linjer, {{ approved_sum|floatformat:2 }} kr. ekskl. moms)</h2>
+{% if approved %}<table><tr><th>Kunde</th><th>Linje</th><th class="num">Beløb</th></tr>
+{% for i in approved %}<tr><td>{{ i.customer }}</td><td>{{ i.description }}</td><td class="num">{{ i.amount|floatformat:2 }}</td></tr>{% endfor %}</table>
+<form method="post" style="margin-top:10px">{% csrf_token %}<input type="hidden" name="action" value="send">
+<button class="btn">Opret fakturakladder i e-conomic{% if is_mock %} (simuleret){% endif %}</button></form>
+{% else %}<p class="svag">Intet godkendt.</p>{% endif %}
+
+<h2>3. Kladder og fakturaer</h2>
+<form method="post" style="margin-bottom:8px">{% csrf_token %}<input type="hidden" name="action" value="sync"><button class="btn sek lille">Hent status fra e-conomic</button></form>
+<table><tr><th>Kunde</th><th>Linjer</th><th class="num">Beløb</th><th>Kladde nr.</th><th>Faktura nr.</th><th>Status</th><th></th></tr>
+{% for d in drafts %}<tr><td>{{ d.customer }}</td><td>{{ d.lines }}</td><td class="num">{{ d.total|floatformat:2 }}</td><td>{{ d.economic_draft_number|default:"–" }}</td><td>{{ d.economic_invoice_number|default:"–" }}</td>
+<td><span class="pill s-{{ d.status }}">{{ d.get_status_display }}</span>{% if d.last_error %}<br><span class="svag">{{ d.last_error }} (forsøg {{ d.attempts }})</span>{% endif %}</td>
+<td>{% if d.status == 'fejl' or d.status == 'afventer' %}<form method="post" class="inline">{% csrf_token %}<input type="hidden" name="action" value="retry"><input type="hidden" name="draft" value="{{ d.pk }}"><button class="btn lille">Prøv igen</button></form>{% endif %}
+{% if is_mock and d.status == 'kladde' %}<form method="post" class="inline">{% csrf_token %}<input type="hidden" name="action" value="sim_book"><input type="hidden" name="draft" value="{{ d.pk }}"><button class="btn lille sek" title="Det gør du normalt inde i e-conomic">Simulér bogføring</button></form>{% endif %}
+{% if is_mock and d.status == 'bogfoert' %}<form method="post" class="inline">{% csrf_token %}<input type="hidden" name="action" value="sim_paid"><input type="hidden" name="draft" value="{{ d.pk }}"><button class="btn lille sek">Simulér betaling</button></form>{% endif %}</td></tr>
+{% empty %}<tr><td colspan="7" class="svag">Ingen endnu.</td></tr>{% endfor %}</table>
+{% endblock %}

@@ -1,0 +1,36 @@
+{% load static %}<!doctype html><html lang="da"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#16324f"><meta name="csrf" content="{{ csrf_token }}"><title>Dagens rute</title><link rel="stylesheet" href="{% static 'drift/app.css' %}"></head>
+<body class="m">
+<header><a href="?dato={{ prev|date:'Y-m-d' }}" aria-label="Forrige dag">‹</a>
+<div style="text-align:center"><b>{{ day|date:"l j. F" }}</b><div style="font-size:13px;opacity:.8">{{ me }} · <span id="taeller">{{ done }}</span>/{{ stops|length }} færdige</div></div>
+<a href="?dato={{ next|date:'Y-m-d' }}" aria-label="Næste dag">›</a></header>
+<div id="net" class="net"></div>
+{% if demo_mode %}<div class="demo">DEMO – testdata{% if me.is_admin %} · <a href="{% url 'start' %}">til administration</a>{% endif %}</div>{% endif %}
+<main>
+{% for m in messages %}<div class="msg">{{ m }}</div>{% endfor %}
+{% for s in stops %}
+<div class="stopkort {% if s.is_final %}final{% endif %}" id="k-{{ s.pk }}">
+<div style="display:flex;justify-content:space-between;gap:8px"><h3>{{ forloop.counter }}. {{ s.agreement.customer.name }}</h3><span class="pill s-{{ s.status }}" data-status>{{ s.get_status_display }}</span></div>
+<div class="adr">{{ s.agreement.address }}</div>
+<div class="svag">{{ s.agreement.service }}{% if me.is_admin %} · {{ s.price|floatformat:0 }} kr.{% endif %}</div>
+{% if s.agreement.address.access_notes %}<div class="note">🔑 {{ s.agreement.address.access_notes }}</div>{% endif %}
+<div class="rk">
+<a href="https://www.google.com/maps/dir/?api=1&destination={{ s.agreement.address.maps_query|urlencode }}" target="_blank" rel="noopener">🧭 Vej</a>
+{% if s.agreement.customer.phone %}<a href="tel:{{ s.agreement.customer.phone }}">📞 Ring</a>{% else %}<a aria-disabled="true" style="opacity:.4">📞 –</a>{% endif %}
+{% if not s.is_final %}
+<form method="post" action="{% url 'mobile_register' s.pk %}" class="reg" style="display:contents">{% csrf_token %}
+<input type="hidden" name="event_id" value="">
+<button name="outcome" value="udfoert" class="udfoert">✓ Udført</button>
+<button name="outcome" value="delvist">Delvist</button>
+<button name="outcome" value="forgaeves">Forgæves</button>
+<button name="outcome" value="udsat">Udsat</button>
+<button name="outcome" value="aflyst">Aflyst</button>
+<details style="grid-column:1/-1"><summary>Bemærkning / anden pris</summary>
+<textarea name="note" rows="2" placeholder="Fx: kun forsiden, kunden var ikke hjemme…"></textarea>
+<input name="price" inputmode="decimal" placeholder="Anden pris (kræver godkendelse)"></details>
+</form>{% endif %}
+</div></div>
+{% empty %}<p class="svag" style="text-align:center;margin-top:40px">Ingen besøg denne dag.</p>{% endfor %}
+</main>
+<script src="{% static 'drift/mobil.js' %}"></script>
+</body></html>
