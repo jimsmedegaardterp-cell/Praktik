@@ -8,7 +8,7 @@ import * as G from './gdpr.js';
 import * as SD from './stamdata.js';
 import * as RS from './rutesedel.js';
 
-export const VERSION = '2026-11-01 #19';
+export const VERSION = '2026-11-01 #20';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = load();
@@ -99,7 +99,7 @@ function overblik() {
   </div>
   ${errs ? `<div class="warnbox">⚠️ ${errs} integrationsfejl – se Fakturering/Beskeder.</div>` : ''}
   ${dbl.length ? `<div class="warnbox">⚠️ ${dbl.length} mulige dobbeltbookinger (samme adresse samme dag – samme opgave to gange eller to forskellige ruter). <button data-act="showDbl">Vis</button></div>` : ''}
-  ${(() => { const n = dataCheck().slice(0, 3).reduce((s, [, it]) => s + it.length, 0); return n ? `<div class="warnbox">📋 ${n} ting at tjekke i kunde- og rutedata (mulige dubletter, kunder uden kundenr. …). <button data-act="showCheck">Vis</button></div>` : ''; })()}
+  ${(() => { const n = dataCheck().slice(0, 2).reduce((s, [, it]) => s + it.length, 0); return n ? `<div class="warnbox">📋 ${n} ting at tjekke i kunde- og rutedata (kunder uden kundenr., ruter uden dato …). <button data-act="showCheck">Vis</button></div>` : ''; })()}
   ${overdue.length ? `<div class="warnbox">⚠️ ${overdue.length} besøg i fortiden er ikke registreret. <button data-act="showOverdue">Vis</button></div>` : ''}
   ${varselCard()}
   <div class="card"><h2>Dagens ruter – ${fmt(t)}</h2>${dayTable(today)}</div>
@@ -340,19 +340,19 @@ function dataCheck() {
   const byAddr = new Map(); for (const a of db.addresses) { const c = cust(a.customerId); if (!c || c.deleted) continue; const k = norm(a.street); byAddr.set(k, [...(byAddr.get(k) || []), c]); }
   const dupes = [...byAddr.values()].map((cs) => [...new Set(cs)]).filter((cs) => cs.length > 1);
   return [
-    ['Mulige dubletkunder (samme adresse)', dupes.map((cs) => ({ c: cs[0], txt: cs.map((x) => `${x.name}${x.customerNo ? ' #' + x.customerNo : ' (uden kundenr.)'}`).join('  ·  '), others: cs.slice(1) }))],
     ['Kunder uden kundenr. (kun fundet i ruteoversigt)', live.filter((c) => !c.customerNo).map((c) => ({ c, txt: db.addresses.find((a) => a.customerId === c.id)?.street || '' }))],
     ['Ruter uden kendt dato', db.routes.filter((r) => r.anchorUnknown).map((r) => ({ r, txt: r.name }))],
     ['Kunder uden aftaler', live.filter((c) => !agOf(c).length).map((c) => ({ c, txt: db.addresses.find((a) => a.customerId === c.id)?.street || '' }))],
     ['Faktureres via anden konto – betaler ikke fundet', live.filter((c) => c.billingSkvizId && !c.billTo).map((c) => ({ c, txt: `SkvizBiz betaler-id ${c.billingSkvizId}` }))],
     ['Kunder uden telefon og e-mail', live.filter((c) => !c.phone && !c.email).map((c) => ({ c, txt: '' }))],
+    ['ℹ️ Flere kunder på samme adresse (kun til orientering)', dupes.map((cs) => ({ c: cs[0], txt: cs.map((x) => `${x.name}${x.customerNo ? ' #' + x.customerNo : ' (uden kundenr.)'}`).join('  ·  '), others: cs.slice(1) }))],
     ['ℹ️ Faste aftaler uden rute (planlægges på deres egen dato – kun til orientering)', live.flatMap((c) => agOf(c).filter((g) => g.intervalWeeks && !g.routeId).map((g) => ({ c, txt: `${g.service} · hver ${g.intervalWeeks}. uge · ${kr(g.price)}` })))],
   ];
 }
 function checkDialog() {
   const sec = dataCheck();
   openDlg(`<h2>Datakontrol</h2><p class="small mute">Klik på en kunde for at rette. Listen opdateres, når du åbner den igen.</p>
-    ${sec.map(([title, items], i) => `<details ${i < 2 && items.length ? 'open' : ''}><summary><b>${title}</b> (${items.length})</summary>${items.length ? `<table>${items.slice(0, 300).map((x) => `<tr class="small"><td>${x.c ? `<a href="#" data-cust="${x.c.id}">${esc(x.c.name)}</a>` : `<a href="#" data-route="${x.r.id}">${esc(x.r.name)}</a>`}${(x.others || []).map((o) => ` · <a href="#" data-cust="${o.id}">${esc(o.name)}</a>`).join('')}</td><td>${esc(x.txt)}</td></tr>`).join('')}</table>` : '<p class="small mute">Ingen 👍</p>'}</details>`).join('')}
+    ${sec.map(([title, items], i) => `<details ${i < 2 && items.length && !title.startsWith('ℹ️') ? 'open' : ''}><summary><b>${title}</b> (${items.length})</summary>${items.length ? `<table>${items.slice(0, 300).map((x) => `<tr class="small"><td>${x.c ? `<a href="#" data-cust="${x.c.id}">${esc(x.c.name)}</a>` : `<a href="#" data-route="${x.r.id}">${esc(x.r.name)}</a>`}${(x.others || []).map((o) => ` · <a href="#" data-cust="${o.id}">${esc(o.name)}</a>`).join('')}</td><td>${esc(x.txt)}</td></tr>`).join('')}</table>` : '<p class="small mute">Ingen 👍</p>'}</details>`).join('')}
     ${(db.imports || []).some((b) => b.issues?.length) ? '<p><button type="button" data-act="showIssues">Vis advarsler fra importen</button></p>' : ''}`, null, 'Luk');
 }
 function dblDialog() {
