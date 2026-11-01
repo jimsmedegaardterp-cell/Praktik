@@ -127,3 +127,9 @@ test('reparation: tomme ruter fra tidligere import får rytme, dato og kunder; r
   assert.equal(db.routes[0].order.length, 3);
   assert.equal(db.agreements.filter((g) => g.routeId === 'old').length, 4); // Karin 1 + Hans 1 + ny rutekunde 2
 });
+
+test('kunde uden telefon: e-mail havner ikke i telefonfeltet', () => {
+  const it = [t(1, 763, L, 'Kundenr. 00000010 - Testfirma'), t(1, 750, L, 'Leveringsadresse:'), t(1, 750, R, 'Faktureringsadresse:'), t(1, 739, L, 'Testfirma'), t(1, 728, L, 'Vej 1'), t(1, 717, L, '9800 Hjørring'),
+    t(1, 694, L, 'Tlf.: post@example.dk'), t(1, 694, R, 'Betalingsbetingelser: d.d. + 8 dage')];
+  const [c] = SD.parseStamdataItems(it); assert.equal(c.phone, ''); assert.equal(c.email, 'post@example.dk');
+});

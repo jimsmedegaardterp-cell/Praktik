@@ -50,3 +50,4 @@
 | 47 | 2026-11-01 | Tomme ruter (fx fra import med gammel version) får rytme og dato ved ny import af ruteoversigter; reserve-match på adresse + postnr. når navn afviger; ukendt rutedato vises som "ukendt"; versionsnummer i topbjælken; "Slet ruter uden kunder" | Ejers import blev kørt med cachet gammel version |
 | 48 | 2026-11-01 | Cache-busting: import map i index.html giver alle JS-moduler `?v=N`; ved hver udgivelse hæves N og VERSION i app.js | Browseren kørte gammel kode efter opdatering (GitHub Pages cacher 10 min) |
 | 49 | 2026-11-01 | Admin → Ruter: "Genberegn rytme og dato ud fra kunderne" | Reparation af ruter uden at importere igen |
+| 50 | 2026-11-01 | Stamdata: e-mail i telefonfeltet (kunder uden tlf.) flyttes til e-mail; fejl vises før advarsler; preview viser hvor mange rutekunder der blev fundet i stamdata | Set i ejerens forhåndsvisning |
