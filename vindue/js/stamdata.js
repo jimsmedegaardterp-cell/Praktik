@@ -56,6 +56,10 @@ export function parseStamdataItems(items) {
       else c.agreements.push({ service: (row.service || 'Vinduesvask').trim(), interval: row.interval || '', next: row.next || '', price: row.price || '', dur: row.dur || '' });
     }
   }
+  for (const c of out) { // e-mail havnet i telefonfeltet (kunder uden telefon) – og omvendt
+    if (c.phone.includes('@')) { if (!c.email) c.email = c.phone; c.phone = ''; }
+    if (c.email && !c.email.includes('@') && /^[\d\s+]{8,}$/.test(c.email)) { if (!c.phone) c.phone = c.email; c.email = ''; }
+  }
   return out;
 }
 
@@ -205,6 +209,7 @@ export function addRouteOverviews(plan, overviews, db, { today }) {
       if (emptyExisting) (plan.resetRoutes ||= []).push(info); else plan.newRoutes.push(info);
     }
   }
+  plan.routeStats = { rows: overviews.reduce((s, o) => s + o.rows.length, 0), matched: plan.newRoutes.concat(plan.resetRoutes || []).reduce((s, r) => s + r.matched, 0) + plan.routeUpdates.length };
   plan.errors = plan.issues.filter((i) => !i.warn).length;
   return plan;
 }
