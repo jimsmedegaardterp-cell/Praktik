@@ -5,6 +5,7 @@ import { MockEconomic, MockSms, mapsDirections, mapsRoute, smsLink, suggestOrder
 import { seedDb } from './seed.js';
 import * as I from './import.js';
 import * as G from './gdpr.js';
+import * as SD from './stamdata.js';
 
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
@@ -491,7 +492,7 @@ function beskeder() {
 
 /* ---------------- Import fra SkvizBiz ---------------- */
 const loadScript = (src) => new Promise((res, rej) => { const sc = document.createElement('script'); sc.src = src; sc.onload = res; sc.onerror = () => rej(new Error('Kunne ikke hente ' + src.split('/').pop())); document.head.append(sc); });
-async function readPdf(f) {
+async function pdfItems(f) {
   const V = 'vendor/pdfjs-3.11.174/'; // pdf.js (Apache-2.0) ligger lokalt – ingen ekstern afhængighed
   if (!window.pdfjsLib) await loadScript(V + 'pdf.min.js');
   window.pdfjsLib.GlobalWorkerOptions.workerSrc = V + 'pdf.worker.min.js';
@@ -501,8 +502,10 @@ async function readPdf(f) {
     const tc = await (await pdf.getPage(p)).getTextContent();
     for (const it of tc.items) items.push({ str: it.str, x: it.transform[4], y: it.transform[5], w: it.width, page: p });
   }
-  return I.pdfItemsToTable(items);
+  return items;
 }
+const isStamdata = (items) => items.some((i) => /^Kundenr\.\s*\d+\s*-/.test(i.str)) && items.some((i) => /^Leveringsadresse/.test(i.str));
+async function readPdf(f) { return I.pdfItemsToTable(await pdfItems(f)); }
 async function readTable(f) {
   if (/\.pdf$/i.test(f.name)) return readPdf(f);
   return I.parseCsv(await readFile(f));
@@ -520,9 +523,21 @@ function importView() {
   const st = ui.imp;
   const batches = (db.imports || []).slice().reverse();
   let html = `<div class="card"><h2>Import fra SkvizBiz</h2>
-    <p class="small"><b>Bedst:</b> vælg hele GDPR-udtrækket fra SkvizBiz (zip-filen). Ellers: 1) Gem kundekartoteket som PDF (eller Excel/CSV). 2) Vælg filen. 3) Tjek at kolonnerne passer. 4) Se forhåndsvisningen. 5) Importér. Intet gemmes før trin 5, og importen kan fortrydes. Filen læses kun i din browser – den sendes ingen steder hen.</p>
-    <div class="row"><label class="btn pri">📦 GDPR-udtræk (zip)<input type="file" id="impZip" accept=".zip" hidden></label><label class="btn">📁 Udpakket GDPR-mappe<input type="file" id="impDir" webkitdirectory multiple hidden></label><span class="small mute">eller PDF/Excel/CSV:</span><input type="file" id="impFile" accept=".pdf,.csv,.txt,.xlsx,.xls"><a class="btn" href="docs/eksempel-import.csv" download>Hent eksempelfil</a></div></div>`;
-  if (st?.gdpr) {
+    <p class="small"><b>Fra SkvizBiz:</b> Kunder → filtrér på <b>Rute</b> → vælg alle → <b>Stamdata for valgte kunder</b> (gem PDF). Gentag pr. rute. Vælg PDF'erne her og angiv ruten for hver. Tilføj gerne <b>GDPR-udtrækket (zip)</b> – så kommer fakturatype, EAN, SMS-indstillinger og kort-koordinater med. Andre formater: 1) Gem kundekartoteket som PDF (eller Excel/CSV). 2) Vælg filen. 3) Tjek at kolonnerne passer. 4) Se forhåndsvisningen. 5) Importér. Intet gemmes før trin 5, og importen kan fortrydes. Filen læses kun i din browser – den sendes ingen steder hen.</p>
+    <div class="row"><label class="btn pri">📄 Stamdata-PDF<input type="file" id="impStam" accept=".pdf" multiple hidden></label><label class="btn pri">📦 GDPR-udtræk (zip)<input type="file" id="impZip" accept=".zip" hidden></label><label class="btn">📁 Udpakket GDPR-mappe<input type="file" id="impDir" webkitdirectory multiple hidden></label><span class="small mute">eller PDF/Excel/CSV:</span><input type="file" id="impFile" accept=".pdf,.csv,.txt,.xlsx,.xls"><a class="btn" href="docs/eksempel-import.csv" download>Hent eksempelfil</a></div></div>`;
+  if (st?.skviz) {
+    const plan = SD.buildSkvizPlan(st.stams, st.gdprMap, db, { today: todayIso() }); st.plan = plan;
+    const nAgr = plan.customers.reduce((s, c) => s + c.addresses[0].agreements.length, 0);
+    html += `<div class="card"><h2>Filer</h2><table><tr><th>Stamdata-PDF</th><th>Kunder</th><th>Rute for kunderne i filen</th><th></th></tr>${st.stams.map((f, i) => `<tr><td>${esc(f.fileName)}</td><td>${f.customers.length}</td>
+      <td><select data-stroute="${i}"><option value="">Ingen – tildel senere</option>${db.routes.map((r) => `<option value="${r.id}" ${r.id === f.routeId ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}<option value="__new">+ Opret ny rute …</option></select></td><td><button data-act="stRemove" data-i="${i}">Fjern</button></td></tr>`).join('')}</table>
+      <p class="small">GDPR-udtræk: ${st.gdprMap ? `<b>${Object.keys(st.gdprMap).length} kunder</b> (${esc(st.gdprName)})` : '<span class="mute">ikke tilføjet – valgfrit</span>'}</p></div>
+    <div class="card"><h2>Forhåndsvisning</h2><p><b>${plan.customers.length}</b> kunder · <b>${nAgr}</b> aftaler${plan.skipped ? ` · ${plan.skipped} slettede sprunget over` : ''}</p>
+      ${plan.duplicates.length ? `<div class="warnbox">${plan.duplicates.length} findes allerede (samme kundenr.) og springes over. <label><input type="checkbox" id="impDup" ${st.includeDup ? 'checked' : ''}> Importér dem alligevel</label></div>` : ''}
+      ${plan.issues.length ? `<details ${plan.errors ? 'open' : ''}><summary>${plan.errors} fejl, ${plan.issues.length - plan.errors} advarsler</summary><table>${plan.issues.slice(0, 300).map((i) => `<tr class="small"><td>${esc(i.line)}</td><td style="color:var(${i.warn ? '--warn' : '--bad'})">${esc(i.msg)}</td></tr>`).join('')}</table></details>` : '<p class="pill ok">Ingen problemer fundet</p>'}
+      <div style="max-height:420px;overflow:auto;margin-top:10px"><table><tr><th>Kundenr.</th><th>Navn</th><th>Adresse</th><th>Tlf.</th><th>Husk hver gang</th><th>Aftaler</th><th>Faktura</th></tr>${plan.customers.slice(0, 600).map((c) => `<tr class="small" style="${c.dupeOf ? 'opacity:.5' : ''}"><td>${esc(c.extId)}</td><td>${esc(c.name)}</td><td>${esc(c.addresses[0].street)}</td><td>${esc(c.phone)}</td><td>${esc(c.addresses[0].access)}</td>
+        <td>${c.addresses[0].agreements.map((g) => `${esc(g.service)} · ${kr(g.price)} · ${agrDesc(g)}${g.intervalWeeks ? ' · ' + fmt(g.anchorDate) : ''} · ${g.durationMin} min${g.routeId ? ' · ' + esc(route(g.routeId)?.name) : ''}`).join('<br>') || '<span class="mute">–</span>'}</td><td>${esc(INVTYPE[c.extra.invoiceType])}${c.paymentMethod === 'kontant' ? ' 💰' : ''}</td></tr>`).join('')}</table></div>
+      <div class="row" style="margin-top:10px"><button class="pri" data-act="impApply">Importér ${plan.customers.filter((c) => st.includeDup || !c.dupeOf).length} kunder</button><button data-act="impCancel">Annuller</button></div></div>`;
+  } else if (st?.gdpr) {
     const plan = G.buildGdprPlan(st.files, db, { today: todayIso() }); st.plan = plan;
     const nAgr = plan.customers.reduce((s, c) => s + c.addresses[0].agreements.length, 0); const noAgr = plan.customers.filter((c) => !c.addresses[0].agreements.length).length;
     html += `<div class="card"><h2>Forhåndsvisning – ${esc(st.fileName)}</h2>
@@ -553,8 +568,21 @@ function importView() {
   document.getElementById('impFile').onchange = async (e) => { const f = e.target.files[0]; if (!f) return;
     try { toast('Læser fil …'); const parsed = await readTable(f); if (!parsed.headers.length) throw new Error('Filen er tom'); ui.imp = { fileName: f.name, parsed, mapping: I.guessMapping(parsed.headers), route: db.routes[0].id }; render(); } catch (err) { toast(err.message); } };
   const loadGdpr = async (files, fileName) => { if (!files.length) throw new Error('Ingen data.json fundet – er det SkvizBiz\' GDPR-udtræk?'); ui.imp = { gdpr: true, fileName, files }; toast(`${files.length} kunder læst`); render(); };
+  document.getElementById('impStam').onchange = async (e) => { const fs = [...e.target.files]; if (!fs.length) return;
+    try { toast('Læser PDF …'); let cur = ui.imp?.skviz ? ui.imp : { skviz: true, stams: [], gdprMap: null };
+      if (ui.imp?.gdpr) { const map = {}; for (const x of ui.imp.files) { try { const o = G.normalize(JSON.parse(x.json)); if (o.number != null) map[String(o.number).padStart(8, '0')] = o; } catch {} } cur.gdprMap = map; cur.gdprName = ui.imp.fileName; }
+      for (const f of fs) { const items = await pdfItems(f); if (!isStamdata(items)) throw new Error(`${f.name} ligner ikke en stamdata-PDF fra SkvizBiz`); const customers = SD.parseStamdataItems(items);
+        const guess = db.routes.find((r) => f.name.toLowerCase().includes(r.name.toLowerCase())); cur.stams.push({ fileName: f.name, routeId: guess?.id || '', customers }); }
+      ui.imp = cur; toast(`${cur.stams.reduce((s, x) => s + x.customers.length, 0)} kunder læst`); render(); } catch (err) { toast(err.message); } };
+  $view.querySelectorAll('[data-stroute]').forEach((sl) => (sl.onchange = () => { const f = st.stams[+sl.dataset.stroute];
+    if (sl.value === '__new') { const name = prompt('Navn på ny rute (som i SkvizBiz):', f.fileName.replace(/\.pdf$/i, '')); if (!name) return render(); const r = { id: S.uid('r'), name: name.trim(), employeeId: db.employees[0].id, intervalWeeks: 4, anchorDate: D.nextWorkday(todayIso()) };
+      const firstAg = f.customers.flatMap((c) => c.agreements).map((a) => I.parseDate(a.next)).filter((d) => d && !Number.isNaN(d)).sort()[0]; if (firstAg) r.anchorDate = firstAg;
+      db.routes.push(r); f.routeId = r.id; S.audit(db, ui.user.id, 'route.create', r.id, { name: r.name }); toast(`Rute "${r.name}" oprettet – ret rytme/medarbejder under Admin`); }
+    else f.routeId = sl.value; render(); }));
   document.getElementById('impZip').onchange = async (e) => { const f = e.target.files[0]; if (!f) return;
-    try { toast('Læser zip …'); const ents = await G.unzip(await f.arrayBuffer(), (n) => /(^|\/)data\.json$/i.test(n)); await loadGdpr(ents.map((x) => ({ name: x.name.split('/').slice(-2, -1)[0] || x.name, json: new TextDecoder('utf-8').decode(x.bytes) })), f.name); } catch (err) { toast(err.message); } };
+    try { toast('Læser zip …'); const ents = await G.unzip(await f.arrayBuffer(), (n) => /(^|\/)data\.json$/i.test(n));
+      if (ui.imp?.skviz) { const map = {}; for (const x of ents) { try { const o = G.normalize(JSON.parse(new TextDecoder('utf-8').decode(x.bytes))); if (o.number != null) map[String(o.number).padStart(8, '0')] = o; } catch {} } ui.imp.gdprMap = map; ui.imp.gdprName = f.name; toast(`GDPR: ${Object.keys(map).length} kunder koblet på`); return render(); }
+      await loadGdpr(ents.map((x) => ({ name: x.name.split('/').slice(-2, -1)[0] || x.name, json: new TextDecoder('utf-8').decode(x.bytes) })), f.name); } catch (err) { toast(err.message); } };
   document.getElementById('impDir').onchange = async (e) => { const fs = [...e.target.files].filter((f) => /^data\.json$/i.test(f.name));
     try { await loadGdpr(await Promise.all(fs.map(async (f) => ({ name: (f.webkitRelativePath || f.name).split('/').slice(-2, -1)[0] || f.name, json: await f.text() }))), 'mappe'); } catch (err) { toast(err.message); } };
   $view.querySelectorAll('[data-map]').forEach((sl) => (sl.onchange = () => { if (sl.value === '') delete st.mapping[sl.dataset.map]; else st.mapping[sl.dataset.map] = +sl.value; render(); }));
@@ -657,6 +685,7 @@ document.addEventListener('click', async (e) => {
         const csv = [...rows, [], ...detail].map((r) => r.map((c) => `"${String(c ?? '').replace(/"/g, '""')}"`).join(';')).join('\r\n');
         const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv' })); a.download = `loengrundlag-${mon}.csv`; a.click(); S.audit(db, ui.user.id, 'commission.export', mon); return; }
       case 'impCancel': ui.imp = null; break;
+      case 'stRemove': ui.imp.stams.splice(+b.dataset.i, 1); if (!ui.imp.stams.length) ui.imp = null; break;
       case 'impMakeRoutes': { const pl = ui.imp.plan; let n = 0;
         for (const name of pl.unmatchedRoutes.keys()) { const ags = pl.customers.flatMap((c) => c.addresses[0].agreements).filter((g) => g.routeRaw === name && g.intervalWeeks);
           const iv = ags.length ? Math.min(...ags.map((g) => g.intervalWeeks)) : 4; const anchor = ags.map((g) => g.anchorDate).sort()[0] || D.nextWorkday(todayIso());

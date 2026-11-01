@@ -39,3 +39,6 @@
 | 36 | 2026-11-01 | Felter som `portal_password`, `cache_*` og lignende læses aldrig | Dataminimering/sikkerhed |
 | 37 | 2026-11-01 | Aftaler findes ved at lede efter lister med interval/pris/næste/rute – feltnavne SKAL VERIFICERES; forhåndsvisningen viser ukendte felter og hvor aftaler blev fundet | Kun ét eksempel set |
 | 38 | 2026-11-01 | Ruter fra udtrækket, der ikke findes i appen, kan oprettes med ét klik (rytme = mindste interval, dato = tidligste næste gang) | Hurtig start |
+| 39 | 2026-11-01 | Primær import = SkvizBiz' "Stamdata for valgte kunder"-PDF (én pr. rute, filtreret på rute i kundelisten) + valgfrit GDPR-zip koblet på kundenr. | Stamdata har aftaler (interval, næste gang, pris, tid), telefon og noter; GDPR har fakturatype, EAN, SMS-indstillinger, koordinater |
+| 40 | 2026-11-01 | "Noter" i stamdata → "Husk hver gang" på adressen (udskrives på ruten) | Samme tekst som "Husk hver gang" i kundekortet |
+| 41 | 2026-11-01 | Flere aftaler på samme kunde lægges på leveringsadressen med advarsel | PDF'en angiver ikke adresse pr. aftale |
