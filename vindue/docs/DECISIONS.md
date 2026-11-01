@@ -81,3 +81,7 @@
 | 78 | 2026-11-01 | Ferie/fridag: også "flyt og forskyd alle fremtidige aftaler" | Ejers ønske |
 | 79 | 2026-11-01 | Flyt dele af en rute kun denne gang: Ctrl+klik kunder og træk, eller rutemenu "Flyt nogle kunder"; plads i ruten og rytme uændret. Hele ruten kan trækkes i overskrift eller kant | Ejers ønske |
 | 80 | 2026-11-01 | A4-fakturaer i udskrift slået fra (settings.printInvoices) indtil e-conomic leverer fakturanumre; appen bruges kun til test indtil alt er integreret | Ejers svar |
+| 81 | 2026-11-01 | Fælles database: Supabase (EU), én tabel `records` (kind/id/jsonb) + `orgs`, `members`, `invites`; Row Level Security: medlemmer læser, admin skriver alt, medarbejder kun visit/vdraft/sms/audit; sletning = deleted-flag | Enkel model der passer til appens lokale data; testet mod lokal PostgreSQL 16 |
+| 82 | 2026-11-01 | Lokalt-først synk: ændringer findes via hash pr. post, skubbes i bidder, hentes med 60 s overlap; sidste skrivning vinder pr. post | Virker med dårlig dækning; få samtidige brugere |
+| 83 | 2026-11-01 | Login med e-mail/kodeord (Supabase Auth); første bruger opretter firma og bliver admin; øvrige kommer ind med invitationskode (8 tegn, 14 dage, én gang) knyttet til en medarbejder | Ingen server-nøgle i browseren |
+| 84 | 2026-11-01 | Supabase-klient 2.45.4 (MIT) ligger lokalt i vendor/; konfiguration i js/config.js (offentlig anon-nøgle) eller pr. browser under Admin; "memory" = testdatabase i browseren | Stabil drift, testbar uden server |
