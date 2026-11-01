@@ -8,7 +8,7 @@ import * as G from './gdpr.js';
 import * as SD from './stamdata.js';
 import * as RS from './rutesedel.js';
 
-export const VERSION = '2026-11-01 #16';
+export const VERSION = '2026-11-01 #17';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = load();

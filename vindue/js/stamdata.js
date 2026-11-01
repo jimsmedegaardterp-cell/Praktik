@@ -200,9 +200,21 @@ export function addRouteOverviews(plan, overviews, db, { today }) {
   const planByName = new Map(); for (const c of plan.customers) { const k = normS(c.name); planByName.set(k, [...(planByName.get(k) || []), c]); }
   const owner = new Map(); for (const c of plan.customers) for (const a of c.addresses) for (const g of a.agreements) owner.set(g, c);
   const byKey = new Map(plan.customers.map((c) => [keyOf(c.name, c.keyStreet ?? c.addresses[0].street.split(',')[0]), c]));
+  // SkvizBiz forkorter lange navne med "..." – match på begyndelsen; ellers adresse + postnr. hvis entydigt
+  const truncated = (name) => /(\.\.\.|…)\s*$/.test(String(name));
+  const namePrefix = (name) => normS(String(name).replace(/(\.\.\.|…)\s*$/, ''));
+  const nameFits = (cName, rowName) => (truncated(rowName) ? normS(cName).startsWith(namePrefix(rowName)) : normS(cName) === normS(rowName));
+  const planFallback = (row) => {
+    if (planByName.get(normS(row.name))?.length) return [];
+    const byPrefix = truncated(row.name) ? plan.customers.filter((c) => nameFits(c.name, row.name)) : [];
+    if (byPrefix.length) return byPrefix;
+    const st = normS(row.street.split(',')[0]); const zip = zipOf(row); if (!st) return [];
+    const at = plan.customers.filter((c) => c.addresses.some((a) => normS(a.street).startsWith(st) && (!zip || a.street.includes(zip))));
+    return new Set(at.map((c) => normS(c.name))).size === 1 ? at : [];
+  };
   const findExisting = (row) => {
     const n = normS(row.name), st = normS(row.street); if (!st) return null;
-    const same = db.customers.filter((c) => !c.deleted && normS(c.name) === n);
+    const same = db.customers.filter((c) => !c.deleted && nameFits(c.name, row.name));
     for (const c of same) { const a = db.addresses.find((x) => x.customerId === c.id && normS(x.street).startsWith(st)); if (a) return { fam: same, a }; }
     if (same.length) return { fam: same, a: null };
     const zip = zipOf(row);
@@ -220,7 +232,7 @@ export function addRouteOverviews(plan, overviews, db, { today }) {
     routes.push({ ref, name, existing, rows: ov.rows.length, matched: 0 }); plan.routeOrder[ref] = [];
     for (const row of ov.rows) {
       stats.rows++; const line = `${name} nr. ${row.nr}`; const rAgs = rowAgreements(row);
-      const hit = byKey.get(keyOf(row.name, row.street)); const fam = [...new Set([hit, ...(planByName.get(normS(row.name)) || [])].filter(Boolean))];
+      const hit = byKey.get(keyOf(row.name, row.street)); const fam = [...new Set([hit, ...(planByName.get(normS(row.name)) || []), ...planFallback(row)].filter(Boolean))];
       if (fam.length) { apps.push({ ref, nr: row.nr, line, row, kind: 'plan', c: hit || fam[0], fam, cands: matchAgreements(fam.flatMap((c) => c.addresses.flatMap((a) => a.agreements)), rAgs) }); stats.matched++; routes.at(-1).matched++; continue; }
       const ex = findExisting(row);
       if (ex) { if (ex.byAddress) plan.issues.push({ line, msg: `"${row.name}" koblet til "${ex.fam[0].name}" på adressen`, warn: true });
