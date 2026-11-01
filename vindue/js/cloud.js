@@ -64,7 +64,7 @@ export class MemoryCloud {
     const u = { id: 'u' + Math.random().toString(36).slice(2, 10), email: email.toLowerCase(), pw: password }; s.users.push(u); this.put(s); localStorage.setItem('vindue-memuser', u.id); this.fire('SIGNED_IN'); return { needsConfirm: false }; }
   async signOut() { localStorage.removeItem('vindue-memuser'); this.fire('SIGNED_OUT'); }
   async resetPassword() { throw new Error('Ikke muligt i testdatabasen'); }
-  async updatePassword() {}
+  async updatePassword(pw) { const s = this.st(); s.users.find((u) => u.id === this.uid()).pw = pw; this.put(s); }
   async membership() { const s = this.st(); const m = s.members.find((x) => x.user_id === this.uid()); if (!m) return null; this.myRole = m.role; this.myEmp = m.employee_id;
     return { orgId: m.org_id, role: m.role, employeeId: m.employee_id, email: m.email, orgName: s.orgs.find((o) => o.id === m.org_id)?.name }; }
   async createOrg(name) { const s = this.st(); if (s.members.some((x) => x.user_id === this.uid())) throw new Error('Du er allerede med i et firma');
