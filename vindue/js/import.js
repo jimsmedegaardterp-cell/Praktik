@@ -144,7 +144,7 @@ export function applyImportPlan(db, plan, { batchId, uid, includeDuplicates = fa
       }
     }
   }
-  (db.imports ||= []).push({ batchId, at: new Date().toISOString(), counts });
+  (db.imports ||= []).push({ batchId, at: new Date().toISOString(), counts, issues: (plan.issues || []).filter((i) => i.warn || true).slice(0, 2000).map((i) => ({ line: i.line, msg: i.msg, warn: !!i.warn, done: false })) });
   return counts;
 }
 

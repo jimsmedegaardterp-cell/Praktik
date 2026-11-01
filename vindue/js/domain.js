@@ -143,10 +143,15 @@ export function moveVisit(visits, agreement, visitId, newDate, mode, { by, at },
 }
 
 /** Dobbeltbooking: samme adresse planlagt mere end én gang samme dag. */
+/**
+ * Mistænkelige dobbeltbookinger: samme adresse samme dag, hvor enten opgaven er den samme to gange,
+ * eller besøgene ligger på forskellige ruter. Flere forskellige opgaver på samme rute (fx vinduer + orangeri) er normalt.
+ */
 export function findDoubleBookings(visits) {
   const m = new Map();
-  for (const v of visits) { if (v.status === 'aflyst') continue; const k = `${v.addressId}|${v.plannedDate}`; m.set(k, [...(m.get(k) || []), v.id]); }
-  return [...m.values()].filter((ids) => ids.length > 1);
+  for (const v of visits) { if (v.status === 'aflyst' || v.status === 'forgaeves') continue; const k = `${v.addressId}|${v.plannedDate}`; m.set(k, [...(m.get(k) || []), v]); }
+  const norm = (x) => String(x || '').toLowerCase().trim();
+  return [...m.values()].filter((vs) => vs.length > 1 && (new Set(vs.map((v) => norm(v.service))).size < vs.length || new Set(vs.map((v) => v.routeId || '')).size > 1)).map((vs) => vs.map((v) => v.id));
 }
 
 /* ---------------- Faktureringskø ---------------- */
