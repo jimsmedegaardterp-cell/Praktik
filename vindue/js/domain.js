@@ -200,7 +200,7 @@ export function matchInbound(phone, customers) {
 
 /* ---------------- Provision ---------------- */
 /** Grundlag er konfigurerbart; standard: udført beløb ekskl. moms pr. udførende medarbejder. */
-export function commission(visits, { rate = 0.35, from, to, inclVat = false, vatRate = 0.25 } = {}) {
+export function commission(visits, { rate = 0.35, rates = {}, from, to, inclVat = false, vatRate = 0.25 } = {}) {
   const per = {};
   for (const v of visits) {
     if (!isBillable(v) || !v.completion) continue;
@@ -210,6 +210,6 @@ export function commission(visits, { rate = 0.35, from, to, inclVat = false, vat
     const e = (per[v.completion.by] ||= { base: 0, visits: 0 });
     e.base += base; e.visits += 1;
   }
-  for (const k in per) per[k].commission = Math.round(per[k].base * rate * 100) / 100;
+  for (const k in per) { per[k].rate = rates[k] ?? rate; per[k].commission = Math.round(per[k].base * per[k].rate * 100) / 100; }
   return per;
 }

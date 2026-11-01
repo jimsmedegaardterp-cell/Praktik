@@ -122,8 +122,9 @@ function kundekort(c) {
     <div class="card"><h2>SMS</h2><div class="msgs">${msgs.map(msgHtml).join('') || '<p class="mute">Ingen beskeder</p>'}</div>
       <div class="row" style="margin-top:8px"><select id="tpl"><option value="">Skabelon…</option>${Object.keys(db.templates).map((k) => `<option>${k}</option>`).join('')}</select></div>
       <textarea id="smsText" placeholder="Skriv besked …"></textarea><div class="row"><span id="smsInfo" class="small mute"></span><span class="sp"></span>
-      <a class="btn" id="smsOwn" href="#" title="Gratis: åbner din telefons SMS-app. Svar lander på telefonen, ikke her.">Send fra egen telefon</a>
-      <button class="pri" data-act="sendSms" data-id="${c.id}">Send (mock-gateway)</button></div></div>
+      <button data-act="sendSms" data-id="${c.id}" title="Kun test – kræver SMS-gateway">Gateway (test)</button>
+      <a class="btn pri" id="smsOwn" href="#">📱 Send fra min telefon</a></div>
+      <p class="small mute">Gratis: åbner telefonens SMS-app med teksten. Beskeden logges her; kundens svar kommer på din telefon.</p></div>
     <div class="card"><h2>Besøg</h2><div style="max-height:380px;overflow:auto"><table><tr><th>Dato</th><th>Ydelse</th><th>Pris</th><th>Status</th></tr>
       ${vs.map((v) => `<tr style="${v.plannedDate === t ? 'font-weight:600' : ''}"><td>${fmt(v.plannedDate)} ${v.plannedDate.slice(0, 4)}${v.plannedDate !== v.rhythmDate ? ' <span class="small mute" title="Grundrytme">(' + fmt(v.rhythmDate) + ')</span>' : ''}</td><td class="small">${esc(v.service)}<br><span class="mute">${esc(addr(v.addressId)?.street)}</span>${v.completion?.note ? `<br>💬 ${esc(v.completion.note)}` : ''}</td><td>${kr(v.price)}</td><td>${pill(v.status)} ${v.status === 'planlagt' || v.status === 'udsat' ? `<button class="small" data-act="visit" data-id="${v.id}">…</button>` : ''}</td></tr>`).join('')}
     </table></div>
@@ -132,6 +133,9 @@ function kundekort(c) {
   const tx = document.getElementById('smsText'), info = document.getElementById('smsInfo'), own = document.getElementById('smsOwn');
   const upd = () => { const p = D.smsParts(tx.value); info.textContent = tx.value ? `${p.chars} tegn · ${p.parts} SMS · ${p.encoding}` : ''; own.href = smsLink(D.normalizePhone(c.phone) || '', tx.value); };
   tx.oninput = upd; upd();
+  own.onclick = (e) => { if (!tx.value.trim()) { e.preventDefault(); return toast('Skriv en besked først'); }
+    db.smsMessages.push({ id: S.uid('m'), dir: 'ud', customerId: c.id, phone: D.normalizePhone(c.phone), text: tx.value.trim(), kind: 'service', status: 'sendt fra telefon', at: new Date().toISOString(), by: ui.user.id, ...D.smsParts(tx.value) });
+    S.audit(db, ui.user.id, 'sms.manual', c.id); save(); setTimeout(render, 300); };
   document.getElementById('tpl').onchange = (e) => { const tpl = db.templates[e.target.value]; if (!tpl) return; const nv = vs.filter((v) => v.status === 'planlagt' && v.plannedDate >= t).sort((a, b) => a.plannedDate.localeCompare(b.plannedDate))[0];
     tx.value = D.renderTemplate(tpl, { navn: c.name.split(' ')[0], dato: nv ? fmt(nv.plannedDate) : '', tid: '', nydato: '' }); upd(); };
 }
@@ -326,13 +330,19 @@ function beskeder() {
 
 /* ---------------- Admin ---------------- */
 function admin() {
-  const t = todayIso(); const from = t.slice(0, 7) + '-01';
-  const com = D.commission(db.visits, { rate: db.settings.commissionRate, from });
-  const perRoute = db.routes.map((r) => { const vs = db.visits.filter((v) => v.routeId === r.id && D.isBillable(v) && v.completion?.at >= from); return [r, vs.length, vs.reduce((s, v) => s + v.price, 0)]; });
+  const t = todayIso(); const mon = ui.comMonth || t.slice(0, 7); const from = mon + '-01'; const to = D.addDays(D.addDays(from, 32).slice(0, 7) + '-01', -1);
+  const rates = Object.fromEntries(db.employees.map((e) => [e.id, e.commissionRate ?? db.settings.commissionRate]));
+  const com = D.commission(db.visits, { rates, from, to, inclVat: !!db.settings.commissionInclVat });
+  ui._com = { com, mon };
+  const perRoute = db.routes.map((r) => { const vs = db.visits.filter((v) => v.routeId === r.id && D.isBillable(v) && v.completion?.at.slice(0, 10) >= from && v.completion?.at.slice(0, 10) <= to); return [r, vs.length, vs.reduce((s, v) => s + v.price, 0)]; });
   $view.innerHTML = `<div class="grid">
-    <div class="card"><h2>Provisionsgrundlag (denne måned)</h2><table><tr><th>Medarbejder</th><th>Besøg</th><th>Grundlag</th><th>${Math.round(db.settings.commissionRate * 100)} %</th></tr>${Object.entries(com).map(([e, x]) => `<tr><td>${esc(emp(e)?.name ?? e)}</td><td>${x.visits}</td><td>${kr(x.base)}</td><td>${kr(x.commission)}</td></tr>`).join('') || '<tr><td colspan=4 class="mute">Ingen udførte besøg</td></tr>'}</table>
-      <p class="small mute">Grundlag: udført beløb ekskl. moms, udførelsesdato. Feriepenge mv. beregnes i lønsystemet. <b>SKAL VERIFICERES</b> (rabatter, kreditnotaer, faktura- vs. udførelsesdato).</p></div>
-    <div class="card"><h2>Omsætning pr. rute (denne måned)</h2><table>${perRoute.map(([r, n, s]) => `<tr><td>${esc(r.name)}</td><td>${n}</td><td>${kr(s)}</td></tr>`).join('')}</table></div>
+    <div class="card"><div class="row"><h2 class="sp">Provision</h2><input type="month" id="comMonth" value="${mon}"></div>
+      <table><tr><th>Medarbejder</th><th>Sats %</th><th>Besøg</th><th>Grundlag</th><th>Provision</th></tr>${db.employees.map((e) => { const x = com[e.id] || { visits: 0, base: 0, commission: 0 };
+        return `<tr><td>${esc(e.name)}</td><td><input type="number" min="0" max="100" step="0.5" data-rate="${e.id}" value="${Math.round(rates[e.id] * 1000) / 10}" style="width:70px"></td><td>${x.visits}</td><td>${kr(x.base)}</td><td><b>${kr(x.commission)}</b></td></tr>`; }).join('')}</table>
+      <label class="small"><input type="checkbox" id="comVat" ${db.settings.commissionInclVat ? 'checked' : ''}> Beregn af beløb inkl. moms</label>
+      <div class="row" style="margin-top:8px"><button data-act="comCsv">Eksportér løngrundlag (CSV)</button></div>
+      <p class="small mute">Grundlag: udførte/delvist udførte besøg i måneden (udførelsesdato), ekskl. moms. Feriepenge mv. beregnes i lønsystemet. Rabatter/kreditnotaer trækkes ikke fra endnu.</p></div>
+    <div class="card"><h2>Omsætning pr. rute (${mon})</h2><table>${perRoute.map(([r, n, s]) => `<tr><td>${esc(r.name)}</td><td>${n}</td><td>${kr(s)}</td></tr>`).join('')}</table></div>
     <div class="card"><h2>Integrationer</h2>
       <div>e-conomic: <span class="pill warn">Mock</span></div><div>SMS-gateway: <span class="pill warn">Mock</span></div><div>Google Maps: <span class="pill ok">Links (gratis)</span></div>
       <p class="small mute">Rigtige integrationer kræver en server (nøgler må ikke ligge i browseren). Se docs/PLAN.md.</p></div>
@@ -342,6 +352,9 @@ function admin() {
   <div class="card"><h2>SMS-skabeloner</h2>${Object.entries(db.templates).map(([k, v]) => `<label><span>${esc(k)} – felter: {navn} {dato} {tid} {nydato}</span><textarea data-tpl="${k}">${esc(v)}</textarea></label>`).join('')}</div>
   <div class="card"><h2>Lukkedage (ferie mv.)</h2><p class="small mute">Helligdage beregnes automatisk. Besøg på lukkedage flyttes til næste arbejdsdag ved planlægning.</p><div class="row"><input type="date" id="cd"><button data-act="addClosed">Tilføj</button></div><div class="small">${db.closedDays.map((d) => `<span class="pill">${d} <a href="#" data-act="rmClosed" data-d="${d}">×</a></span>`).join(' ')}</div></div>
   <div class="card"><h2>Auditlog</h2><div style="max-height:320px;overflow:auto"><table><tr><th>Tid</th><th>Bruger</th><th>Handling</th><th>Ref</th></tr>${db.audit.slice(0, 200).map((a) => `<tr class="small"><td>${fmtTs(a.at)}</td><td>${esc(USERS.find((u) => u.id === a.by)?.name ?? a.by)}</td><td>${esc(a.action)}</td><td class="mute">${esc(a.ref)} ${esc(JSON.stringify(a.detail).slice(0, 80))}</td></tr>`).join('')}</table></div></div>`;
+  document.getElementById('comMonth').onchange = (e) => { ui.comMonth = e.target.value; render(); };
+  document.getElementById('comVat').onchange = (e) => { db.settings.commissionInclVat = e.target.checked; S.audit(db, ui.user.id, 'commission.vat', '-', { inclVat: e.target.checked }); render(); };
+  $view.querySelectorAll('[data-rate]').forEach((i) => (i.onchange = () => { const v = Number(i.value); if (!(v >= 0 && v <= 100)) return toast('Ugyldig sats'); const e = emp(i.dataset.rate); e.commissionRate = v / 100; S.audit(db, ui.user.id, 'commission.rate', e.id, { rate: v }); render(); }));
   $view.querySelectorAll('[data-tpl]').forEach((t) => (t.onchange = () => { db.templates[t.dataset.tpl] = t.value; save(); toast('Skabelon gemt'); }));
   document.getElementById('restore').onchange = async (e) => { const f = e.target.files[0]; if (!f) return; try { const d = JSON.parse(await f.text()); if (!Array.isArray(d.customers) || !Array.isArray(d.visits)) throw new Error('Ugyldig backup'); if (!confirm(`Gendan ${d.customers.length} kunder? Nuværende data overskrives.`)) return; db = d; save(); location.reload(); } catch (err) { toast(err.message); } };
 }
@@ -397,6 +410,11 @@ document.addEventListener('click', async (e) => {
       case 'pay': eco.simulatePayment(db.invoiceLinks.find((l) => l.id === id).invoiceNumber); await S.syncPayments(db, eco); break;
       case 'syncPay': await S.syncPayments(db, eco); toast('Betalingsstatus hentet'); break;
       case 'fakeInbound': return openDlg(`<h2>Simulér indgående SMS</h2><label><span>Fra nummer</span><select name="from">${db.customers.filter((c) => !c.deleted).map((c) => `<option value="${esc(c.phone)}">${esc(c.name)} (${esc(c.phone)})</option>`).join('')}<option value="+4599887766">Ukendt: +45 99 88 77 66</option></select></label><label><span>Tekst</span><input name="text" value="Det passer fint, tak!" required></label>`, (f) => { S.receiveSms(db, { providerId: S.uid('in'), from: f.from, text: f.text }); });
+      case 'comCsv': { const { com, mon } = ui._com; const rows = [['Måned', 'Medarbejder', 'Besøg', 'Grundlag', 'Sats', 'Provision']];
+        for (const e of db.employees) { const x = com[e.id]; if (x) rows.push([mon, e.name, x.visits, x.base.toFixed(2).replace('.', ','), String(x.rate * 100).replace('.', ',') + ' %', x.commission.toFixed(2).replace('.', ',')]); }
+        const detail = [['Dato', 'Medarbejder', 'Kunde', 'Ydelse', 'Status', 'Pris']]; for (const v of db.visits) { if (!D.isBillable(v) || !v.completion || v.completion.at.slice(0, 7) !== mon) continue; detail.push([v.completion.at.slice(0, 10), emp(v.completion.by)?.name ?? v.completion.by, cust(v.customerId)?.name, v.service, D.RESULTS[v.status], v.price.toFixed(2).replace('.', ',')]); }
+        const csv = [...rows, [], ...detail].map((r) => r.map((c) => `"${String(c ?? '').replace(/"/g, '""')}"`).join(';')).join('\r\n');
+        const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv' })); a.download = `loengrundlag-${mon}.csv`; a.click(); S.audit(db, ui.user.id, 'commission.export', mon); return; }
       case 'backup': download(`vinduesdrift-backup-${todayIso()}.json`, db); S.audit(db, ui.user.id, 'backup.export', '-'); break;
       case 'planMore': toast(`${S.planAhead(db, D.addDays(todayIso(), 183))} nye besøg planlagt`); break;
       case 'reset': if (!confirm('Slet alle demodata og start forfra?')) return; localStorage.removeItem(KEY); localStorage.removeItem(KEY + '-ui'); location.reload(); return;

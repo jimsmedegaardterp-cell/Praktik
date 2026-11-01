@@ -161,3 +161,9 @@ test('GDPR-sletning bevarer fakturalinks men fjerner persondata', async () => {
   assert.equal(c.name, 'Slettet kunde'); assert.equal(c.phone, '');
   assert.ok(!db.visits.some((v) => v.customerId === c.id && v.status === 'planlagt'));
 });
+
+test('provision med individuel sats og periode', () => {
+  const v = [{ status: 'udfoert', price: 400, completion: { by: 'e1', at: '2026-11-02T10:00:00Z' } }, { status: 'delvis', price: 200, completion: { by: 'e2', at: '2026-11-03T10:00:00Z' } }, { status: 'udfoert', price: 999, completion: { by: 'e2', at: '2026-12-01T10:00:00Z' } }];
+  const r = D.commission(v, { rates: { e2: 0.4 }, from: '2026-11-01', to: '2026-11-30' });
+  assert.equal(r.e1.commission, 140); assert.equal(r.e2.commission, 80);
+});
