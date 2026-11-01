@@ -223,3 +223,18 @@ test('to kunder med samme navn (leveringskonto + betaler): aftaler på hver sin 
   assert.equal(lev.billTo, bet.id);
   const b2 = db.routes.find((r) => r.name === 'Bindslev 2'); assert.equal(db.addresses.find((a) => a.id === b2.order[1]).customerId, lev.id, 'Bindslev 2 viser leveringsadressen');
 });
+
+test('ruteoversigt med forkortede navne ("Andelsboligforeningen Museu...") kobles til rette kunde og rute', () => {
+  const db = seedDb('2026-11-02'); db.customers = []; db.addresses = []; db.agreements = []; db.visits = []; db.routes = [];
+  const STAM4 = [...kunde(1, 763, '00000018', 'Andelsboligforeningen Museumsgade/Akseltorv V/ Kirsten Dalsgaard', ['Museumsgade 6, st.', '9800 Hjørring'], [],
+      [['Tagrenderens Museumsgade 4', 'Hver 52. uge', '27/09-2027', 'kr. 496,00', '0:30'], ['Tagrenderens Museumsgade 6', 'Hver 52. uge', '27/09-2027', 'kr. 675,00', '0:30']]),
+    ...kunde(1, 560, '00000020', 'C/O Ejerforeningen Esben Veng-Christensen', ['Kongensgade 6', '9800 Hjørring'], [], [['Tagrenderens', 'Hver 52. uge', '27/09-2027', 'kr. 898,00', '1:00']])];
+  const OV = ovT('Tagrenderens', [{ nr: 1, name: 'Andelsboligforeningen Museu...', street: 'Museumsgade 6, st.', zip: '9800 Hjørring', agr: [['Tagrenderens Museumsgade 4', 'Hver 52. uge', '496,00', '00:30'], ['Tagrenderens Museumsgade 6', 'Hver 52. uge', '675,00', '00:30']] },
+    { nr: 2, name: 'C/O Ejerforeningen Esben Ve...', street: 'Kongensgade 6', zip: '9800 Hjørring', agr: [['Tagrenderens', 'Hver 52. uge', '898,00', '01:00']] }]);
+  const plan = SD.buildSkvizPlan([{ fileName: 'alle.pdf', routeId: '', customers: SD.parseStamdataItems(STAM4) }], null, db, { today: '2026-11-02' });
+  SD.addRouteOverviews(plan, [OV], db, { today: '2026-11-02' });
+  assert.equal(plan.customers.length, 2, 'ingen dubletter fra forkortede navne');
+  const ids = SD.materializeRoutes(db, plan, { uid, today: '2026-11-02', employeeId: 'e1', batchId: 'x' });
+  I.applyImportPlan(db, plan, { batchId: 'x', uid, horizon: '2028-01-01', today: '2026-11-02' });
+  assert.ok(db.agreements.every((g) => db.routes.find((r) => r.id === g.routeId)?.name === 'Tagrenderens'));
+});
