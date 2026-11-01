@@ -39,7 +39,11 @@ Tager ca. 10 minutter. Du kan bruge samme Supabase-konto som til andre apps, men
 - Gratis-planen kan sætte projekter på pause efter en periode uden aktivitet og har begrænset backup. Tjek gældende vilkår; overvej betalt plan før rigtig drift.
 - Tag stadig jævnligt **Admin → Download backup**.
 
+## Opdateringer af skemaet
+Når `schema.sql` ændres (står i ændringsbeskrivelsen), så kør hele filen igen i **SQL Editor** – **før** den nye version af appen tages i brug. Data slettes ikke.
+
 ## Hvordan det virker
 - Appen gemmer lokalt og synkroniserer hvert 30. sekund, når du gemmer, og når appen åbnes. Status ses øverst til højre ("✓ Synk 12:03"). Klik på den for at synkronisere nu.
-- Adgang styres i databasen (Row Level Security): kun brugere i firmaet ser data; medarbejdere kan kun ændre besøg, kladder, SMS-log og auditlog.
+- Adgang styres i databasen (Row Level Security): kun brugere i firmaet ser data. Medarbejdere ser kun kunder, aftaler og besøg på **egne ruter** (plus rutenavne og fælles indstillinger) og kan kun ændre besøg, kladder, SMS-log og egne logposter. Flyttes en rute til en anden medarbejder, forsvinder kunderne fra den gamles telefon næste gang appen åbnes.
+- Data på enheden ligger i browserens IndexedDB, adskilt pr. bruger.
 - Test af reglerne: `vindue/supabase/test/run.sh` (kræver lokal PostgreSQL).
