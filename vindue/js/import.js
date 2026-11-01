@@ -161,3 +161,50 @@ export function rollbackImport(db, batchId) {
   db.customers = db.customers.filter((c) => c.importBatch !== batchId);
   const b = db.imports.find((x) => x.batchId === batchId); if (b) b.rolledBack = new Date().toISOString();
 }
+
+/* ---------------- PDF-import ----------------
+ * SkvizBiz kan kun eksportere kundekartoteket som PDF. pdf.js giver tekststykker med position;
+ * her samles de til rækker (y) og kolonner (x ud fra overskriftsrækken). Kører i browseren – intet sendes ud.
+ * items: [{ str, x, y, w, page }]  (y = PDF-koordinat, stiger opad)
+ */
+const HEADER_WORDS = /kunde.?n|navn|adresse|post.?n|interval|mobil|telefon|tlf|e-?mail|rute|pris|næste/i;
+export function pdfItemsToTable(items, { yTol = 2.5, gap = 4 } = {}) {
+  const clean = items.filter((i) => i.str && i.str.trim());
+  // 1) linjer pr. side
+  const lines = [];
+  for (const it of [...clean].sort((a, b) => a.page - b.page || b.y - a.y || a.x - b.x)) {
+    const l = lines.find((L) => L.page === it.page && Math.abs(L.y - it.y) <= yTol);
+    if (l) l.items.push(it); else lines.push({ page: it.page, y: it.y, items: [it] });
+  }
+  lines.sort((a, b) => a.page - b.page || b.y - a.y);
+  // 2) slå tætliggende stykker sammen til celler
+  const cellsOf = (l) => {
+    const its = [...l.items].sort((a, b) => a.x - b.x); const cells = [];
+    for (const it of its) {
+      const c = cells[cells.length - 1];
+      if (c && it.x - c.end < gap) { c.str += (it.x - c.end > 0.8 ? ' ' : '') + it.str; c.end = it.x + (it.w || it.str.length * 4); }
+      else cells.push({ x: it.x, end: it.x + (it.w || it.str.length * 4), str: it.str });
+    }
+    return cells.map((c) => ({ ...c, str: c.str.replace(/\s+/g, ' ').trim() })).filter((c) => c.str);
+  };
+  // 3) find overskrift
+  const hi = lines.findIndex((l) => cellsOf(l).filter((c) => HEADER_WORDS.test(c.str)).length >= 3);
+  if (hi < 0) throw new Error('Kunne ikke finde en overskriftsrække (fx "Kundenr. / Navn / Adresse") i PDF\'en');
+  const head = cellsOf(lines[hi]); const headers = head.map((c) => c.str); const headerKey = headers.join('|');
+  const colOf = (x) => { let k = 0; for (let i = 0; i < head.length; i++) if (head[i].x <= x + 3) k = i; return k; };
+  // 4) rækker
+  const rows = []; const firstIsId = /kunde.?n|^nr/i.test(headers[0]);
+  // gentagne overskrifter: alt over overskriften på en side (titel, dato) springes over
+  const headY = new Map(); lines.forEach((l) => { if (cellsOf(l).map((c) => c.str).join('|') === headerKey && !headY.has(l.page)) headY.set(l.page, l.y); });
+  for (const l of lines.slice(hi + 1)) {
+    if (headY.has(l.page) && l.y >= headY.get(l.page) - 0.5) continue;
+    const cells = cellsOf(l);
+    if (cells.length === 1 && /^(side|page)?\s*\d+(\s*(af|\/|of)\s*\d+)?$/i.test(cells[0].str)) continue; // sidetal
+    const row = Array(headers.length).fill('');
+    for (const c of cells) { const k = colOf(c.x); row[k] = row[k] ? row[k] + ' ' + c.str : c.str; }
+    const startsNew = firstIsId ? /\d/.test(row[0]) : row[0] !== '';
+    if (!startsNew && rows.length) { const prev = rows[rows.length - 1]; row.forEach((v, k) => { if (v) prev[k] = prev[k] ? prev[k] + ' ' + v : v; }); }
+    else if (row.some(Boolean)) rows.push(row);
+  }
+  return { headers, rows };
+}

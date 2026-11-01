@@ -12,6 +12,6 @@
 - [ ] Flere medarbejdere på samme dag, kapacitet, tidsvinduer
 - [ ] Push-notifikation ved indgående SMS (ikke besluttet)
 - [ ] Print/eksport af ruteark; løngrundlag-eksport (CSV)
-- [ ] Afprøv import med rigtig SkvizBiz-eksport (kolonner, datoformat, tegnsæt)
+- [ ] Afprøv PDF-import med rigtigt kundekartotek (kolonner, ombrudte linjer). Kartotek-PDF mangler sandsynligvis pris, næste dato og rute → skal suppleres (rute-PDF eller manuelt)
 - [ ] Betalingsservice-aftaler: hvordan e-conomic håndterer dem (SKAL VERIFICERES)
 - [ ] Kontant: automatisk indbetaling i e-conomic (SKAL VERIFICERES)

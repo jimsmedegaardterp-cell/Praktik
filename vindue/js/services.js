@@ -49,7 +49,11 @@ export function registerVisit(db, user, visitId, payload) {
     if (Math.abs(payload.price - v.price) / v.price > maxPct) payload = { ...payload, price: v.price, note: (payload.note || '') + ` [Prisforslag ${payload.price} kr afventer godkendelse]` };
   }
   const r = D.completeVisit(v, { ...payload, by: user.employeeId || user.id, at: payload.at || now() });
-  if (r.changed) { db.visits[i] = r.visit; audit(db, user.id, 'visit.' + payload.result, visitId, { opId: payload.opId, price: r.visit.price }); }
+  if (r.changed) {
+    db.visits[i] = r.visit; audit(db, user.id, 'visit.' + payload.result, visitId, { opId: payload.opId, price: r.visit.price });
+    const c = db.customers.find((x) => x.id === v.customerId); // "Husk næste gang" er engangsnote
+    if (c?.rememberNext && payload.result !== 'udsat') { r.visit.history.push({ at: payload.at || now(), action: 'husk', note: c.rememberNext }); c.rememberNext = ''; }
+  }
   return r;
 }
 

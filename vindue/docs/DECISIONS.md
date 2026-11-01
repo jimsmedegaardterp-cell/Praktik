@@ -31,3 +31,7 @@
 | 28 | 2026-11-01 | Færdigmelding 0/1/2/3 som SkvizBiz: 0 åben, 1 udført, 2 udført + kontant, 3 spring over (menu: næste gang / indsæt igen næste arbejdsdag / skub til dato / skub og flyt fremtidige / forgæves) | Ejerens svar + screenshot |
 | 29 | 2026-11-01 | Kontanter samles pr. rute; bogføres dags dato på kasse-konto (18100 Kasse) i e-conomic | Ejerens screenshot. Integration SKAL VERIFICERES |
 | 30 | 2026-11-01 | Kun medarbejdere får provision; ejer 0 % | Ejerens svar |
+| 31 | 2026-11-01 | Import af SkvizBiz' kundekartotek fra PDF: pdf.js læser teksten i browseren, kolonner findes ud fra overskriftsrækken | SkvizBiz kan kun eksportere PDF. Intet sendes ud af browseren |
+| 32 | 2026-11-01 | pdf.js 3.11.174 (Apache-2.0) ligger i `vendor/` og hentes kun ved import | Ingen CDN-afhængighed, virker uden ekstern adgang |
+| 33 | 2026-11-01 | Kundefelter som SkvizBiz: kundegruppe, fastnet, CVR, kontaktperson, fakturatype, fakturainterval, betalingsdage, ring/SMS før, SMS efter, husk hver gang (adresse), husk næste gang (engangsnote, slettes ved færdigmelding), internt notat | Ejerens screenshots |
+| 34 | 2026-11-01 | "SMS før besøg"-listen viser kun kunder med SMS før besøg = Ja | Som i SkvizBiz |

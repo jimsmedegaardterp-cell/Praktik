@@ -198,3 +198,10 @@ test('færdigmelding af rute: idempotent, kontant og fordeling', () => {
   assert.ok(v0.completion.cashPaid); assert.equal(v0.completion.cashAmount, 285); assert.equal(v0.split[0].pct, 35);
   assert.equal(db.visits.find((v) => v.id === vs[2].id).status, 'planlagt');
 });
+
+test('"Husk næste gang" slettes ved færdigmelding', () => {
+  const db = seedDb('2026-11-02'); const c = db.customers[1]; assert.ok(c.rememberNext);
+  const v = db.visits.find((x) => x.customerId === c.id && x.status === 'planlagt');
+  S.registerVisit(db, admin, v.id, { result: 'udfoert', opId: 'h1' });
+  assert.equal(c.rememberNext, ''); assert.ok(db.visits.find((x) => x.id === v.id).history.some((h) => h.action === 'husk'));
+});

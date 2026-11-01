@@ -41,3 +41,25 @@ test('plan: samler adresser, finder dubletter og fejl; import kan fortrydes', ()
   I.rollbackImport(db, 'b1');
   assert.equal(db.customers.length, n); assert.ok(!db.visits.some((v) => v.importBatch === 'b1'));
 });
+
+test('PDF-tekst → tabel (overskrift, flere sider, ombrudte celler, sidetal)', () => {
+  const H = [['Kundenr.', 40], ['Navn / firma', 110], ['Adresse', 260], ['Postnr. / by', 420], ['Interval', 540], ['Mobil', 620]];
+  const it = (page, y, row) => row.map(([str, x]) => ({ str, x, y, w: str.length * 4.5, page }));
+  const items = [
+    ...it(1, 800, [['Kundekartotek 2026-11-01', 40]]),
+    ...it(1, 760, H),
+    ...it(1, 740, [['00000002', 40], ['Testfirma', 110], ['Prøvevej 391', 260], ['9800 Hjørring', 420], ['Ikke fast', 540], ['20112233', 620]]),
+    ...it(1, 728, [['ApS', 110]]),
+    ...it(1, 715, [['00000003', 40], ['Hans', 110], ['Dahl', 133], ['Parken 28, st. th', 260], ['9850 Hirtshals', 420], ['Hver 8. uge', 540]]),
+    ...it(1, 30, [['Side 1 af 2', 300]]),
+    ...it(2, 760, H),
+    ...it(2, 740, [['00000005', 40], ['Eva Prøve', 110], ['Bakken 38', 260], ['9881 Bindslev', 420], ['Hver 4. uge', 540], ['40 58 99 76', 620]]),
+  ];
+  const t = I.pdfItemsToTable(items);
+  assert.deepEqual(t.headers, H.map((h) => h[0]));
+  assert.equal(t.rows.length, 3);
+  assert.equal(t.rows[0][1], 'Testfirma ApS');
+  assert.equal(t.rows[1][1], 'Hans Dahl');
+  assert.equal(t.rows[2][5], '40 58 99 76');
+  const m = I.guessMapping(t.headers); assert.equal(m.zip, 3); assert.equal(m.intervalWeeks, 4); assert.equal(m.name, 1);
+});

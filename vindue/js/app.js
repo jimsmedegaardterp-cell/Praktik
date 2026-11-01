@@ -89,11 +89,11 @@ function overblik() {
 }
 function varselCard() {
   const nd = D.nextWorkday(D.addDays(todayIso(), 1), db.closedDays);
-  const vs = db.visits.filter((v) => v.plannedDate === nd && v.status === 'planlagt');
+  const vs = db.visits.filter((v) => v.plannedDate === nd && v.status === 'planlagt' && cust(v.customerId)?.smsBefore);
   if (!vs.length) return '';
   const sent = new Set(db.smsMessages.filter((m) => m.clientRef?.startsWith('varsel:')).map((m) => m.clientRef.slice(7)));
   const left = vs.filter((v) => !sent.has(v.id)).length;
-  return `<div class="card"><h2>SMS-varsler til ${fmt(nd)} ${left ? `<span class="pill warn">${left} mangler</span>` : '<span class="pill ok">alle sendt</span>'}</h2>
+  return `<div class="card"><h2>SMS før besøg – ${fmt(nd)} ${left ? `<span class="pill warn">${left} mangler</span>` : '<span class="pill ok">alle sendt</span>'}</h2>
     ${vs.map((v) => { const c = cust(v.customerId); const tel = D.normalizePhone(c.phone); const text = D.renderTemplate(db.templates.varsel, { navn: c.name.split(' ')[0], dato: fmt(nd) });
       return `<div class="row" style="border-bottom:1px solid var(--line);padding:6px 0"><div class="sp"><b>${esc(c.name)}</b> <span class="small mute">${esc(addr(v.addressId)?.street)}</span></div>${sent.has(v.id) ? '<span class="pill ok">✓ Sendt</span>' : tel ? `<a class="btn pri" data-varsel="${v.id}" data-text="${esc(text)}" href="${smsLink(tel, text)}">📱 Send varsel</a>` : '<span class="pill bad">intet mobilnr.</span>'}</div>`; }).join('')}</div>`;
 }
@@ -128,7 +128,9 @@ function kundekort(c) {
       <div>📞 <a href="tel:${esc(D.normalizePhone(c.phone) || '')}">${esc(c.phone)}</a></div>
       ${c.email ? `<div>✉️ ${esc(c.email)}</div>` : ''}
       <div class="small mute">${esc(PAY[c.paymentMethod] ?? 'Bankoverførsel')} · ${esc(c.paymentTerms)} · ${c.vatLiable ? 'Momspligtig' : 'Momsfri'} · e-conomic kundenr.: ${c.economicNumber ?? '<i>ikke oprettet</i>'}</div>
-      <div class="small mute">Markedsføringssamtykke: ${c.marketingConsent ? 'ja' : 'nej'}</div>
+      <div class="small mute">${esc(c.group || 'Privat kunder')} · ${esc(INVTYPE[c.invoiceType || 'email'])} · ${c.invoiceInterval === 'maaned' ? 'samlet pr. måned' : 'faktura ved hvert besøg'}${c.cvr ? ' · CVR ' + esc(c.cvr) : ''}</div>
+      <div class="row small" style="margin-top:4px">${c.callBefore ? '<span class="pill warn">📞 Ring før besøg</span>' : ''}${c.smsBefore ? '<span class="pill">SMS før besøg</span>' : ''}${c.smsAfter ? '<span class="pill">SMS efter besøg</span>' : ''}</div>
+      ${c.rememberNext ? `<div class="warnbox">Husk næste gang: ${esc(c.rememberNext)}</div>` : ''}
       ${c.notes ? `<p>${esc(c.notes)}</p>` : ''}
     </div>
     <div class="card"><h2>Adresser</h2>${adrs.map((a) => `<div style="margin-bottom:8px"><b>${esc(a.street)}</b> <a class="small" target="_blank" rel="noopener" href="${mapsDirections(a.street)}">Kør hertil ↗</a>${a.access ? `<div class="small">🔑 ${esc(a.access)}</div>` : ''}</div>`).join('')}<button data-act="addAddress" data-id="${c.id}">+ Adresse</button></div>
@@ -158,23 +160,38 @@ function kundekort(c) {
 }
 const msgHtml = (m) => `<div class="msg ${m.dir}">${esc(m.text)}<div class="meta">${fmtTs(m.at)} · ${m.dir === 'ud' ? esc(m.status) + (m.parts > 1 ? ` · ${m.parts} dele` : '') + (m.error ? ' · ' + esc(m.error) : '') : esc(m.phone)}</div></div>`;
 
+const GROUPS = ['Privat kunder', 'Erhverv', 'Offentlig', 'Boligforening'];
+const INVTYPE = { email: 'Email PDF (A4-faktura)', sms: 'Faktura på SMS', ean: 'EAN (offentlig)', print: 'Papir' };
+const yn = (name, val) => `<select name="${name}"><option value="0" ${!val ? 'selected' : ''}>Nej</option><option value="1" ${val ? 'selected' : ''}>Ja</option></select>`;
 function customerForm(c) {
-  const isNew = !c; c ||= { name: '', phone: '', email: '', notes: '', paymentTerms: 'Netto 8 dage', vatLiable: true, marketingConsent: false };
+  const isNew = !c; c ||= { name: '', phone: '', email: '', notes: '', paymentTerms: 'Netto 8 dage', paymentDays: 8, vatLiable: true, marketingConsent: false, group: 'Privat kunder', invoiceType: 'email', invoiceInterval: 'besoeg' };
   openDlg(`<h2>${isNew ? 'Ny kunde' : 'Rediger kunde'}</h2>
-    <label><span>Navn *</span><input name="name" required value="${esc(c.name)}"></label>
-    <label><span>Mobil *</span><input name="phone" required value="${esc(c.phone)}" inputmode="tel"></label>
-    <label><span>E-mail (faktura)</span><input name="email" type="email" value="${esc(c.email)}"></label>
-    <div class="row"><label><span>Betalingsform</span><select name="paymentMethod">${Object.entries(PAY).map(([k, v]) => `<option value="${k}" ${k === (c.paymentMethod || 'bank') ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
-    <label><span>Betalingsbetingelser</span><input name="paymentTerms" value="${esc(c.paymentTerms)}"></label></div>
-    <label><input type="checkbox" name="vatLiable" ${c.vatLiable ? 'checked' : ''}> Momspligtig</label>
-    <label><input type="checkbox" name="marketingConsent" ${c.marketingConsent ? 'checked' : ''}> Samtykke til markedsførings-SMS</label>
-    <label><span>Bemærkning (undgå følsomme oplysninger)</span><textarea name="notes">${esc(c.notes)}</textarea></label>
-    ${isNew ? `<h3>Første adresse og aftale</h3><label><span>Adresse *</span><input name="street" required placeholder="Vej 1, 8600 Silkeborg"></label>${agreementFields({})}` : ''}`,
+    <h3>Stamoplysninger</h3>
+    <div class="row"><label><span>Kundenr.</span><input name="customerNo" value="${esc(c.customerNo || c.skvizbizId || '')}" style="width:120px"></label><label><span>Kundegruppe</span><select name="group">${GROUPS.map((g) => `<option ${g === (c.group || 'Privat kunder') ? 'selected' : ''}>${g}</option>`).join('')}</select></label></div>
+    <label><span>Navn / firma *</span><input name="name" required value="${esc(c.name)}"></label>
+    ${isNew ? `<label><span>Adresse *</span><input name="street" required placeholder="Vej 1, 9870 Sindal"></label>` : ''}
+    <div class="row"><label><span>Mobilnr. *</span><input name="phone" required value="${esc(c.phone)}" inputmode="tel"></label><label><span>Fastnet nr.</span><input name="landline" value="${esc(c.landline || '')}" inputmode="tel"></label></div>
+    <label><span>E-mail</span><input name="email" type="email" value="${esc(c.email)}"></label>
+    <div class="row"><label><span>CVR nr.</span><input name="cvr" value="${esc(c.cvr || '')}" style="width:120px"></label><label><span>Kontaktperson</span><input name="contact" value="${esc(c.contact || '')}"></label></div>
+    <h3>Fakturering og betaling</h3>
+    <div class="row"><label><span>Fakturatype</span><select name="invoiceType">${Object.entries(INVTYPE).map(([k, v]) => `<option value="${k}" ${k === (c.invoiceType || 'email') ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+    <label><span>Fakturainterval</span><select name="invoiceInterval"><option value="besoeg" ${c.invoiceInterval !== 'maaned' ? 'selected' : ''}>Ved hvert besøg</option><option value="maaned" ${c.invoiceInterval === 'maaned' ? 'selected' : ''}>Samlet pr. måned</option></select></label>
+    <label><span>Betalingsbetingelser: d.d. +</span><input name="paymentDays" type="number" min="0" value="${c.paymentDays ?? 8}" style="width:70px"> dage</label></div>
+    <div class="row"><label><span>Betaling</span><select name="paymentMethod">${Object.entries(PAY).map(([k, v]) => `<option value="${k}" ${k === (c.paymentMethod || 'bank') ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+    <label><input type="checkbox" name="vatLiable" ${c.vatLiable ? 'checked' : ''}> Momspligtig</label></div>
+    <h3>Bemærkninger og notater</h3>
+    <div class="row"><label><span>Ring før besøg</span>${yn('callBefore', c.callBefore)}</label><label><span>SMS før besøg</span>${yn('smsBefore', c.smsBefore)}</label><label><span>SMS efter besøg</span>${yn('smsAfter', c.smsAfter)}</label><label><input type="checkbox" name="marketingConsent" ${c.marketingConsent ? 'checked' : ''}> Samtykke til markedsførings-SMS</label></div>
+    ${isNew ? `<label><span>Husk hver gang (udskrives på ruteplan)</span><input name="access" placeholder="Alt på huset, nøgle under potte …"></label>` : '<p class="small mute">"Husk hver gang" står på hver adresse (ret under Adresser).</p>'}
+    <label><span>Husk næste gang (udskrives på ruteplan én gang, slettes ved færdigmelding)</span><input name="rememberNext" value="${esc(c.rememberNext || '')}"></label>
+    <label><span>Internt notat (udskrives ikke – undgå følsomme oplysninger)</span><textarea name="notes">${esc(c.notes)}</textarea></label>
+    ${isNew ? `<h3>Første aftale</h3>${agreementFields({})}` : ''}`,
   (f) => {
-    if (!D.normalizePhone(f.phone)) return 'Ugyldigt telefonnummer';
+    if (!D.normalizePhone(f.phone)) return 'Ugyldigt mobilnummer';
     const dup = db.customers.find((x) => x !== c && !x.deleted && D.normalizePhone(x.phone) === D.normalizePhone(f.phone));
-    if (dup && !confirm(`${dup.name} har samme nummer. Opret alligevel?`)) return false;
-    Object.assign(c, { name: f.name.trim(), phone: f.phone.trim(), email: f.email.trim(), notes: f.notes, paymentTerms: f.paymentTerms, paymentMethod: f.paymentMethod, vatLiable: !!f.vatLiable, marketingConsent: !!f.marketingConsent });
+    if (dup && !confirm(`${dup.name} har samme nummer. Gem alligevel?`)) return false;
+    Object.assign(c, { customerNo: f.customerNo.trim(), group: f.group, name: f.name.trim(), phone: f.phone.trim(), landline: f.landline.trim(), email: f.email.trim(), cvr: f.cvr.trim(), contact: f.contact.trim(),
+      invoiceType: f.invoiceType, invoiceInterval: f.invoiceInterval, paymentDays: Math.max(0, +f.paymentDays || 0), paymentTerms: `Netto ${Math.max(0, +f.paymentDays || 0)} dage`, paymentMethod: f.paymentMethod, vatLiable: !!f.vatLiable,
+      callBefore: f.callBefore === '1', smsBefore: f.smsBefore === '1', smsAfter: f.smsAfter === '1', marketingConsent: !!f.marketingConsent, rememberNext: f.rememberNext.trim(), notes: f.notes });
     if (isNew) {
       c.id = S.uid('c'); db.customers.push(c);
       const a = { id: S.uid('adr'), customerId: c.id, street: f.street.trim(), lat: null, lng: null, access: f.access || '' }; db.addresses.push(a);
@@ -344,16 +361,16 @@ function ruter() {
       return `<tr class="${res !== 'aaben' ? 'res-' + res : ''} ${done ? 'locked' : ''}"><td><input type="checkbox" data-sel="${v.id}" ${ui.sel.has(v.id) ? 'checked' : ''}></td><td>${i + 1}</td>
         ${RES.map(([k]) => `<td class="c"><input type="radio" name="res-${v.id}" data-res="${v.id}" value="${k}" ${res === k ? 'checked' : ''} ${done ? 'disabled' : ''}></td>`).join('')}
         <td><input type="number" min="0" step="1" class="cash" data-cash="${v.id}" value="${done ? v.completion?.cashAmount || '' : d.cashAmount ?? ''}" placeholder="${c.paymentMethod === 'kontant' || res === 'kontant' ? kr(Math.round(v.price * 1.25)) : ''}" ${done ? 'disabled' : ''}></td>
-        <td><a href="#" data-cust="${c.id}">${esc(c.name)}</a></td><td class="small">${esc(a.street)}${a.access ? `<div class="mute">🔑 ${esc(a.access)}</div>` : ''}</td>
+        <td><a href="#" data-cust="${c.id}">${esc(c.name)}</a></td><td class="small">${esc(a.street)}${a.access ? `<div class="mute">🔑 ${esc(a.access)}</div>` : ''}${c.rememberNext ? `<div style="color:var(--warn)">⚠ ${esc(c.rememberNext)}</div>` : ''}${c.callBefore ? '<div style="color:var(--warn)">📞 Ring før</div>' : ''}</td>
         <td>${done ? `<span class="small">${esc(STATUS[v.status]?.[0])}: ${esc(v.service)}</span>` : res === 'spring' ? `<select data-skip="${v.id}">${skipOptions(v, d)}</select>${d.skip === 'move' || d.skip === 'shift' ? `<input type="date" data-mdate="${v.id}" value="${d.moveDate || ''}" style="margin-top:3px">` : ''}`
           : `<select data-svc="${v.id}">${[...new Set([d.service || v.service, ...services()])].map((x) => `<option value="${esc(x)}" ${x === (d.service || v.service) ? 'selected' : ''}>${res === 'aaben' ? '' : 'Færdigmeld: '}${esc(x)}</option>`).join('')}</select>`}</td>
-        <td title="${esc(PAY[c.paymentMethod] ?? '')}">${PAYICON[c.paymentMethod] ?? '📧'}</td><td class="small"><a href="#" data-act="fmSplitOne" data-id="${v.id}">${splitTxt(sp)}</a></td></tr>`; }).join('')}</table></div>
+        <td title="${esc(INVTYPE[c.invoiceType || 'email'])} · ${esc(PAY[c.paymentMethod] ?? '')}">${c.invoiceType === 'sms' ? '📱' : c.invoiceType === 'ean' ? 'EAN' : '✉'}${c.paymentMethod === 'betalingsservice' ? ' <b style="color:var(--bad)">BS</b>' : ''}${c.paymentMethod === 'kontant' ? ' 💰' : ''}</td><td class="small"><a href="#" data-act="fmSplitOne" data-id="${v.id}">${splitTxt(sp)}</a></td></tr>`; }).join('')}</table></div>
     <div class="small mute" style="margin-top:6px">0 = åben (røres ikke) · 1 = udført · 2 = udført og betalt kontant · 3 = spring over/flyt (vælg i opgavemenuen). Låste rækker er allerede færdigmeldt.</div>
     <div class="row" style="margin-top:10px"><div class="cashbox"><b>Kontante betalinger</b> · i alt <b>${kr(stops.reduce((s, v) => { const d = dr[v.id] || {}; return s + (v.completion?.cashAmount || (d.result === 'kontant' ? (d.cashAmount ?? Math.round(v.price * 125) / 100) : 0)); }, 0))}</b> · bogføres dags dato på kasse-konto ${esc(db.settings.cashAccount || '18100 – Kasse')} <span class="mute">(i e-conomic – SKAL VERIFICERES)</span></div><span class="sp"></span><button data-act="fmSave">💾 Gem til senere</button><button class="pri" data-act="fmCommit">✓ Gem og udfør færdigmelding</button></div>` : '<p class="mute">Ingen besøg på ruten denne dag.</p>'}</div>`;
   } else {
     $view.innerHTML = head + `<div class="card sheet"><div class="row"><h2 class="sp">${fmt(day)} ${day.slice(0, 4)} uge ${D.isoWeek(day)} – Rute: ${esc(r.name)}</h2><button class="noprint" data-act="print">🖨 Udskriv</button><a class="btn noprint" target="_blank" rel="noopener" href="${pts.length ? mapsRoute(pts.map((p) => p.street)) : '#'}">Vis på Google Maps ↗</a></div><div class="small mute">${esc(emp(r.employeeId)?.name)} · ${routeWhen(r)} · udskrevet ${fmtTs(new Date().toISOString())}</div>${stats}
     ${stops.length ? `<table><tr><th>Nr</th><th>Adresse</th><th>Navn</th><th>Tlf.</th><th>Kont.</th><th style="text-align:right">Beløb</th><th>Bemærkninger</th><th>Opgave</th><th>Tid</th><th class="noprint"></th></tr>${stops.map((v, i) => { const c = cust(v.customerId), a = addr(v.addressId); const ag = db.agreements.find((x) => x.id === v.agreementId);
-      return `<tr class="${v.status === 'aflyst' ? 'struck' : ''}"><td>${i + 1}</td><td>${esc(a.street)}</td><td>${esc(c.name)}</td><td>${esc(c.phone)}</td><td>${c.paymentMethod === 'kontant' ? '✓' : ''}</td><td style="text-align:right">${kr(v.price)}</td><td class="small">${esc(a.access)}</td><td class="small">${esc(v.service)} (${ag?.intervalWeeks ? ag.intervalWeeks + 'u' : 'enkelt'})</td><td>${D.hm(v.durationMin ?? 15)}</td><td class="noprint"><button data-act="up" data-i="${i}">↑</button><button data-act="down" data-i="${i}">↓</button></td></tr>`; }).join('')}
+      return `<tr class="${v.status === 'aflyst' ? 'struck' : ''}"><td>${i + 1}</td><td>${esc(a.street)}</td><td>${esc(c.name)}</td><td>${esc(c.phone)}</td><td>${c.paymentMethod === 'kontant' ? '✓' : ''}</td><td style="text-align:right">${kr(v.price)}</td><td class="small">${esc(a.access)}${c.rememberNext ? `<br><b>Husk: ${esc(c.rememberNext)}</b>` : ''}${c.callBefore ? '<br><b>Ring før besøg</b>' : ''}</td><td class="small">${esc(v.service)} (${ag?.intervalWeeks ? ag.intervalWeeks + 'u' : 'enkelt'})</td><td>${D.hm(v.durationMin ?? 15)}</td><td class="noprint"><button data-act="up" data-i="${i}">↑</button><button data-act="down" data-i="${i}">↓</button></td></tr>`; }).join('')}
       <tr><td colspan="5"><b>I alt (ekskl. moms)</b></td><td style="text-align:right"><b>${kr(total)}</b></td><td colspan="2"></td><td><b>${D.hm(mins(stops))}</b></td><td class="noprint"></td></tr></table>
     <div class="row noprint" style="margin-top:8px"><button data-act="applySuggest" ${sug.km >= cur ? 'disabled' : ''}>Brug foreslået rækkefølge${sug.km < cur ? ` (sparer ca. ${Math.round((cur - sug.km) * 1.3)} km)` : ''}</button><span class="small mute">Kørsel = luftlinje × 1,3. Rigtige køretider kræver Google Routes API.</span></div>` : '<p class="mute">Ingen besøg på ruten denne dag.</p>'}</div>`;
   }
@@ -406,7 +423,7 @@ function mobil() {
   <div class="row small" style="margin-bottom:10px"><label><input type="checkbox" id="off" ${ui.offline ? 'checked' : ''}> Simulér offline</label>${ui.outbox.length ? `<span class="pill warn">${ui.outbox.length} registrering(er) venter på net</span>` : ''}</div>
   ${stops.map((v) => { const c = cust(v.customerId), a = addr(v.addressId); const done = v.status !== 'planlagt' || pending.has(v.id); const tel = D.normalizePhone(c.phone);
     return `<div class="stop ${done ? 'done' : ''}"><div class="row"><h3 class="sp">${esc(c.name)}</h3>${pending.has(v.id) ? '<span class="pill warn">Venter på sync</span>' : pill(v.status)}</div>
-    <div>${esc(a.street)}</div>${a.access ? `<div class="small">🔑 ${esc(a.access)}</div>` : ''}<div class="small mute">${esc(v.service)} · ${kr(v.price)} · ${v.durationMin ?? 15} min</div>
+    <div>${esc(a.street)}</div>${a.access ? `<div class="small">🔑 ${esc(a.access)}</div>` : ''}${c.rememberNext ? `<div class="small" style="color:var(--warn)">⚠ Husk: ${esc(c.rememberNext)}</div>` : ''}${c.callBefore ? '<div class="small" style="color:var(--warn)">📞 Ring før besøg</div>' : ''}<div class="small mute">${esc(v.service)} · ${kr(v.price)} · ${v.durationMin ?? 15} min</div>
     <div class="quick"><a class="btn" target="_blank" rel="noopener" href="${mapsDirections(a.street)}">🧭 Kør</a><a class="btn" href="tel:${tel}">📞 Ring</a><a class="btn" href="${smsLink(tel, `Hej ${c.name.split(' ')[0]}, vi er på vej og er hos dig om ca. 15 min. Mvh. Vinduespudseren`)}">💬 På vej</a></div>
     ${c.paymentMethod === 'kontant' ? `<div class="small"><span class="pill warn">💰 Betaler kontant · ${kr(v.price * 1.25)} inkl. moms</span></div>` : ''}
     ${v.completion?.cashPaid ? '<div class="small"><span class="pill ok">Kontant modtaget</span></div>' : ''}
@@ -472,6 +489,23 @@ function beskeder() {
 }
 
 /* ---------------- Import fra SkvizBiz ---------------- */
+const loadScript = (src) => new Promise((res, rej) => { const sc = document.createElement('script'); sc.src = src; sc.onload = res; sc.onerror = () => rej(new Error('Kunne ikke hente ' + src.split('/').pop())); document.head.append(sc); });
+async function readPdf(f) {
+  const V = 'vendor/pdfjs-3.11.174/'; // pdf.js (Apache-2.0) ligger lokalt – ingen ekstern afhængighed
+  if (!window.pdfjsLib) await loadScript(V + 'pdf.min.js');
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc = V + 'pdf.worker.min.js';
+  const pdf = await window.pdfjsLib.getDocument({ data: await f.arrayBuffer() }).promise;
+  const items = [];
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const tc = await (await pdf.getPage(p)).getTextContent();
+    for (const it of tc.items) items.push({ str: it.str, x: it.transform[4], y: it.transform[5], w: it.width, page: p });
+  }
+  return I.pdfItemsToTable(items);
+}
+async function readTable(f) {
+  if (/\.pdf$/i.test(f.name)) return readPdf(f);
+  return I.parseCsv(await readFile(f));
+}
 async function readFile(f) {
   if (/\.xlsx?$/i.test(f.name)) {
     if (!window.XLSX) await new Promise((res, rej) => { const sc = document.createElement('script'); sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'; sc.onload = res; sc.onerror = () => rej(new Error('Kunne ikke hente Excel-læser – gem filen som CSV i stedet')); document.head.append(sc); });
@@ -485,8 +519,8 @@ function importView() {
   const st = ui.imp;
   const batches = (db.imports || []).slice().reverse();
   let html = `<div class="card"><h2>Import fra SkvizBiz</h2>
-    <p class="small">1) Eksportér kunder fra SkvizBiz som Excel eller CSV. 2) Vælg filen. 3) Tjek at kolonnerne passer. 4) Se forhåndsvisningen. 5) Importér. Intet gemmes før trin 5, og importen kan fortrydes.</p>
-    <div class="row"><input type="file" id="impFile" accept=".csv,.txt,.xlsx,.xls"><a class="btn" href="docs/eksempel-import.csv" download>Hent eksempelfil</a></div></div>`;
+    <p class="small">1) Gem kundekartoteket fra SkvizBiz som PDF (eller Excel/CSV). 2) Vælg filen. 3) Tjek at kolonnerne passer. 4) Se forhåndsvisningen. 5) Importér. Intet gemmes før trin 5, og importen kan fortrydes. Filen læses kun i din browser – den sendes ingen steder hen.</p>
+    <div class="row"><input type="file" id="impFile" accept=".pdf,.csv,.txt,.xlsx,.xls"><a class="btn" href="docs/eksempel-import.csv" download>Hent eksempelfil</a></div></div>`;
   if (st) {
     const p = st.parsed;
     html += `<div class="card"><h2>Kolonner i ${esc(st.fileName)} (${p.rows.length} rækker)</h2><div class="grid">${Object.entries(I.FIELDS).map(([f, label]) => `<label><span>${esc(label)}</span><select data-map="${f}"><option value="">– ikke i filen –</option>${p.headers.map((h, i) => `<option value="${i}" ${st.mapping[f] === i ? 'selected' : ''}>${esc(h)}</option>`).join('')}</select></label>`).join('')}</div>
@@ -497,13 +531,13 @@ function importView() {
       <p><b>${plan.customers.length}</b> kunder · <b>${plan.customers.reduce((s, c) => s + c.addresses.length, 0)}</b> adresser · <b>${nAgr}</b> aftaler${plan.skipped ? ` · ${plan.skipped} tomme rækker sprunget over` : ''}</p>
       ${plan.duplicates.length ? `<div class="warnbox">${plan.duplicates.length} findes allerede (samme kundenr./telefon) og springes over: ${plan.duplicates.slice(0, 8).map((d) => esc(d.name)).join(', ')}${plan.duplicates.length > 8 ? ' …' : ''}<br><label><input type="checkbox" id="impDup" ${st.includeDup ? 'checked' : ''}> Importér dem alligevel</label></div>` : ''}
       ${plan.issues.length ? `<details ${plan.errors ? 'open' : ''}><summary>${plan.errors} fejl, ${plan.issues.length - plan.errors} advarsler</summary><table>${plan.issues.slice(0, 200).map((i) => `<tr class="small"><td>Linje ${i.line}</td><td style="color:var(${i.warn ? '--warn' : '--bad'})">${esc(i.msg)}</td></tr>`).join('')}</table></details>` : '<p class="pill ok">Ingen problemer fundet</p>'}
-      <div style="max-height:360px;overflow:auto;margin-top:10px"><table><tr><th>Navn</th><th>Telefon</th><th>Adresse</th><th>Aftale</th><th>Betaling</th></tr>${plan.customers.slice(0, 300).map((c) => c.addresses.map((a, j) => `<tr class="small" style="${c.dupeOf ? 'opacity:.5' : ''}"><td>${j ? '' : esc(c.name)}</td><td>${j ? '' : esc(c.phone)}</td><td>${esc(a.street)}</td><td>${a.agreements.map((g) => `${esc(g.service)} · ${kr(g.price)} · ${g.intervalWeeks} uger · fra ${fmt(g.anchorDate)}`).join('<br>') || '<span class="mute">ingen</span>'}</td><td>${j ? '' : PAY[c.paymentMethod]}</td></tr>`).join('')).join('')}</table></div>
+      <div style="max-height:360px;overflow:auto;margin-top:10px"><table><tr><th>Navn</th><th>Telefon</th><th>Adresse</th><th>Aftale</th><th>Betaling</th></tr>${plan.customers.slice(0, 300).map((c) => c.addresses.map((a, j) => `<tr class="small" style="${c.dupeOf ? 'opacity:.5' : ''}"><td>${j ? '' : esc(c.name)}</td><td>${j ? '' : esc(c.phone)}</td><td>${esc(a.street)}</td><td>${a.agreements.map((g) => `${esc(g.service)} · ${g.price ? kr(g.price) : '<span style="color:var(--warn)">pris mangler</span>'} · ${agrDesc(g)}${g.intervalWeeks ? ' · fra ' + fmt(g.anchorDate) : ''}`).join('<br>') || '<span class="mute">ingen</span>'}</td><td>${j ? '' : PAY[c.paymentMethod]}</td></tr>`).join('')).join('')}</table></div>
       <div class="row" style="margin-top:10px"><button class="pri" data-act="impApply" ${plan.errors ? '' : ''}>Importér ${plan.customers.filter((c) => st.includeDup || !c.dupeOf).length} kunder</button><button data-act="impCancel">Annuller</button>${plan.errors ? '<span class="small" style="color:var(--bad)">Rækker med fejl importeres med de felter der kunne læses – ret gerne filen først.</span>' : ''}</div></div>`;
   }
   if (batches.length) html += `<div class="card"><h2>Tidligere importer</h2><table>${batches.map((b) => `<tr><td>${fmtTs(b.at)}</td><td>${b.counts.customers} kunder · ${b.counts.agreements} aftaler · ${b.counts.visits} besøg</td><td>${b.rolledBack ? '<span class="pill">fortrudt</span>' : `<button class="bad" data-act="impUndo" data-id="${b.batchId}">Fortryd</button>`}</td></tr>`).join('')}</table></div>`;
   $view.innerHTML = html;
   document.getElementById('impFile').onchange = async (e) => { const f = e.target.files[0]; if (!f) return;
-    try { const parsed = I.parseCsv(await readFile(f)); if (!parsed.headers.length) throw new Error('Filen er tom'); ui.imp = { fileName: f.name, parsed, mapping: I.guessMapping(parsed.headers), route: db.routes[0].id }; render(); } catch (err) { toast(err.message); } };
+    try { toast('Læser fil …'); const parsed = await readTable(f); if (!parsed.headers.length) throw new Error('Filen er tom'); ui.imp = { fileName: f.name, parsed, mapping: I.guessMapping(parsed.headers), route: db.routes[0].id }; render(); } catch (err) { toast(err.message); } };
   $view.querySelectorAll('[data-map]').forEach((sl) => (sl.onchange = () => { if (sl.value === '') delete st.mapping[sl.dataset.map]; else st.mapping[sl.dataset.map] = +sl.value; render(); }));
   const ir = document.getElementById('impRoute'); if (ir) ir.onchange = () => { st.route = ir.value; render(); };
   const dp = document.getElementById('impDup'); if (dp) dp.onchange = () => { st.includeDup = dp.checked; render(); };

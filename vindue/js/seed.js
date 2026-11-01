@@ -38,7 +38,9 @@ export function seedDb(todayIso) {
     const route = db.routes.find((r) => r.id === routeId);
     const anchor = nextRouteDate(route, addDays(todayIso, -28));
     db.customers.push({ id: cid, customerNo: String(61000000 + db.customers.length * 1117), name, phone, email: '', notes: '', vatLiable: true, paymentTerms: 'Netto 8 dage',
-      paymentMethod: ['bank', 'mobilepay', 'betalingsservice', 'kontant'][db.customers.length % 4], marketingConsent: false });
+      paymentMethod: ['bank', 'mobilepay', 'betalingsservice', 'kontant'][db.customers.length % 4], marketingConsent: false,
+      group: /ApS|Café/.test(name) ? 'Erhverv' : 'Privat kunder', invoiceType: db.customers.length % 5 === 3 ? 'sms' : 'email', invoiceInterval: 'besoeg', paymentDays: 8,
+      smsBefore: db.customers.length % 2 === 0, callBefore: /Ring/.test(access), rememberNext: db.customers.length === 1 ? 'Kunden vil have pudset kælderruder med – aftal pris' : '' });
     db.addresses.push({ id: aid, customerId: cid, street, lat, lng, access });
     db.agreements.push({ id: uid('ag'), customerId: cid, addressId: aid, routeId, service, price, intervalWeeks: interval, durationMin: dur, anchorDate: anchor, seasonMonths: [], active: true });
   }
