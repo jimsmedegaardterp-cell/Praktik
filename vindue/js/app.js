@@ -13,7 +13,7 @@ import { SupabaseCloud, MemoryCloud } from './cloud.js';
 import { SUPABASE } from './config.js';
 import * as KV from './store.js';
 
-export const VERSION = '2026-11-01 #30';
+export const VERSION = '2026-11-01 #31';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -1137,6 +1137,7 @@ document.addEventListener('click', async (e) => {
       case 'cfSave': { const url = document.getElementById('cfUrl').value.trim(), key2 = document.getElementById('cfKey').value.trim(); if (!/^https:\/\/.+/.test(url) || !key2) return toast('Udfyld URL og nøgle');
         if (/service_role/.test((() => { try { return atob((key2.split('.')[1] || '').replace(/-/g, '+').replace(/_/g, '/')); } catch { return ''; } })()) || /^sb_secret_/.test(key2)) return toast('Det er den hemmelige nøgle – brug den offentlige anon/publishable-nøgle');
         localStorage.setItem('vindue-cloudconf', JSON.stringify({ url, anonKey: key2 })); return bootCloud(); }
+      case 'chPw': return changePassword();
       case 'cfMemory': localStorage.setItem('vindue-cloudconf', JSON.stringify({ url: 'memory', anonKey: '' })); return bootCloud();
       case 'routeMenu': return routeMenu(b.dataset.r, b.dataset.d);
       case 'rmMove': { const { rid, day } = ui._rm; document.getElementById('dlg').close(); return bulkDialog(db.visits.filter((v) => v.routeId === rid && v.plannedDate === day), `Flyt ${route(rid).name} ${fmt(day)}`); }
@@ -1257,7 +1258,7 @@ function renderGate() {
       else if (v === 'org') { await cloud.createOrg(fd.org); member = null; await afterLogin(false, true); }
     } catch (err2) { out.textContent = danishAuthError(err2.message); } };
 }
-const danishAuthError = (m) => (/Invalid login credentials/i.test(m) ? 'Forkert e-mail eller kodeord' : /Email not confirmed/i.test(m) ? 'E-mailen er ikke bekræftet endnu – tjek din indbakke' : /already registered|already exists/i.test(m) ? 'Der findes allerede en bruger med den e-mail – log ind i stedet' : /rate limit/i.test(m) ? 'For mange forsøg – vent lidt og prøv igen' : m);
+const danishAuthError = (m) => (/Invalid login credentials/i.test(m) ? 'Forkert e-mail eller kodeord' : /different from the old/i.test(m) ? 'Det nye kodeord skal være forskelligt fra det gamle' : /Password should be/i.test(m) ? 'Kodeordet er for svagt – brug mindst 8 tegn' : /reauthenticat/i.test(m) ? 'Supabase kræver ny bekræftelse – log ud og ind, og prøv igen' : /Email not confirmed/i.test(m) ? 'E-mailen er ikke bekræftet endnu – tjek din indbakke' : /already registered|already exists/i.test(m) ? 'Der findes allerede en bruger med den e-mail – log ind i stedet' : /rate limit/i.test(m) ? 'For mange forsøg – vent lidt og prøv igen' : m);
 
 async function bootCloud() {
   const conf = cloudConf(); if (!conf) return;
@@ -1306,6 +1307,20 @@ async function doSync(force) {
 /** Logposter skrevet af den indloggede medarbejder mærkes med medarbejder-id (så de må gemmes/ses af vedkommende). */
 function stampAudit() { if (!member) return; for (const a of db.audit || []) { if (a.byEmp) continue; if (a.by === member.userId) a.byEmp = member.employeeId || null; } }
 async function logout() { if (syncer && syncer.pending(db).length && navigator.onLine) await doSync(true); await cloud.signOut(); await signedOut(); }
+/** Skift kodeord (kræver det nuværende, så en ulåst telefon ikke kan overtages). */
+function changePassword() {
+  openDlg(`<h2>Skift kodeord</h2><p class="small mute">${esc(member.email)}</p>
+    <label><span>Nuværende kodeord</span><input name="old" type="password" autocomplete="current-password" required></label>
+    <label><span>Nyt kodeord (mindst 8 tegn)</span><input name="pw" type="password" autocomplete="new-password" required minlength="8"></label>
+    <label><span>Gentag nyt kodeord</span><input name="pw2" type="password" autocomplete="new-password" required minlength="8"></label>`, async (f) => {
+    if (f.pw.length < 8) return 'Kodeord skal være mindst 8 tegn';
+    if (f.pw !== f.pw2) return 'De to nye kodeord er ikke ens';
+    if (f.pw === f.old) return 'Det nye kodeord er det samme som det gamle';
+    try { await cloud.signIn(member.email, f.old); } catch { return 'Det nuværende kodeord er forkert'; }
+    try { await cloud.updatePassword(f.pw); } catch (e) { return danishAuthError(e.message); }
+    toast('Kodeord ændret');
+  });
+}
 /** Efter log ud: gem brugerens data og fjern dem fra skærmen/hukommelsen. */
 async function signedOut() { member = null; syncer = null; gate = 'login'; await persist(); if (dbKey !== KEY) { setDb(freshDb()); dbKey = KEY; } render(); }
 setInterval(() => { if (syncer && document.visibilityState === 'visible') doSync(); }, 30000);
@@ -1329,14 +1344,14 @@ async function cloudCard() {
       <h3>Invitér</h3><div class="row"><select id="ivEmp">${db.employees.filter((e) => !e.inactive).map((e) => `<option value="${e.id}">${esc(e.name)}</option>`).join('')}</select><select id="ivRole"><option value="medarbejder">Medarbejder</option><option value="admin">Admin</option></select><button class="pri" data-act="ivCreate">Lav invitationskode</button></div>
       <p class="small mute">Giv koden til personen. De åbner appen, opretter en bruger med deres egen e-mail og indtaster koden. Koden virker én gang i 14 dage.</p>
       ${inv.length ? `<table><tr><th>Kode</th><th>Til</th><th>Udløber</th><th></th></tr>${inv.map((i) => `<tr><td><b class="code">${esc(i.code)}</b></td><td>${esc(emp(i.employee_id)?.name || '')} (${i.role})</td><td class="small">${esc(String(i.expires_at).slice(0, 10))}</td><td><button class="small" data-act="ivDel" data-id="${esc(i.code)}">Slet</button></td></tr>`).join('')}</table>` : ''}
-      <div class="row" style="margin-top:10px"><button data-act="syncNow">Synkronisér nu</button><button data-act="logout">Log ud</button></div>`;
+      <div class="row" style="margin-top:10px"><button data-act="syncNow">Synkronisér nu</button><button data-act="chPw">Skift kodeord</button><button data-act="logout">Log ud</button></div>`;
   } catch (e) { el.innerHTML += `<p class="warn-t">${esc(e.message)}</p>`; }
 }
 
 const sel = document.getElementById('user');
-function renderUserSelect() { sel.hidden = !!gate; sel.innerHTML = users().map((u) => `<option value="${u.id}" ${u.id === ui.user?.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('') + (member ? `<option value="__logout">Log ud (${esc(member.email)})</option>` : ''); }
+function renderUserSelect() { sel.hidden = !!gate; sel.innerHTML = users().map((u) => `<option value="${u.id}" ${u.id === ui.user?.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('') + (member ? `<option value="__pw">Skift kodeord</option><option value="__logout">Log ud (${esc(member.email)})</option>` : ''); }
 renderUserSelect();
-sel.onchange = () => { if (sel.value === '__logout') return logout(); ui.user = users().find((u) => u.id === sel.value); ui.customer = null; if (!isAdmin()) ui.tab = 'mobil'; render(); };
+sel.onchange = () => { if (sel.value === '__logout') return logout(); if (sel.value === '__pw') { renderUserSelect(); return changePassword(); } ui.user = users().find((u) => u.id === sel.value); ui.customer = null; if (!isAdmin()) ui.tab = 'mobil'; render(); };
 window.addEventListener('online', () => { ui.offline = false; flushOutbox(); render(); });
 window.addEventListener('offline', () => { ui.offline = true; render(); });
 // planlæg løbende 120 dage frem
