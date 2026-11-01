@@ -15,3 +15,7 @@ Leverandørsider kunne ikke hentes fra udviklingsmiljøet 1. nov. 2026. Tal er e
 **Realistisk total:** ca. 300–1.000 kr/md. ekskl. moms + e-conomic. Sammenlign med jeres nuværende SkvizBiz-pris.
 
 **Gratis SMS?** Automatisk udsendelse fra privat "fri SMS" (Telmore) er ikke tilladt uden skriftlig accept. Gratis-alternativ i appen: "Send fra egen telefon" (manuelt, ét tryk pr. kunde, svar havner på telefonen – ikke i appen).
+
+## Google Maps (dagsplan)
+- Routes API `computeRoutes` med optimering af rækkefølge. Ét kald pr. dagsplan pr. 24 stop; resultatet gemmes, så der kun betales når man trykker "Beregn med Google Maps".
+- Pris pr. kald og gratis månedskvote: **SKAL VERIFICERES** på Googles prisside. Ved fx 5 beregninger pr. arbejdsdag ≈ 110 kald/md.

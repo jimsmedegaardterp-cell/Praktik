@@ -65,7 +65,7 @@ export function finishRoute(db, user, entries) {
   const out = { done: 0, skipped: 0, conflicts: [] };
   for (const e of entries) {
     if (!e.result || e.result === 'aaben') { out.skipped++; continue; }
-    const r = registerVisit(db, user, e.visitId, { result: e.result, opId: 'fm:' + e.visitId, cashAmount: Number(e.cashAmount) || 0, service: e.service, note: e.note, split: e.split });
+    const r = registerVisit(db, user, e.visitId, { result: e.result, opId: 'fm:' + e.visitId, cashAmount: Number(e.cashAmount) || 0, service: e.service, note: e.note, split: e.split, extras: e.extras });
     if (r.conflict) out.conflicts.push(r.conflict); else if (r.changed) out.done++;
   }
   audit(db, user.id, 'route.finish', '-', out);
@@ -114,7 +114,8 @@ async function pushDraft(db, user, link, economic) {
     if (!c.economicNumber) { const { externalId } = await economic.upsertCustomer(c); c.economicNumber = externalId; audit(db, user.id, 'economic.customer', c.id, { externalId }); }
     const lines = link.visitIds.map((id) => { const v = db.visits.find((x) => x.id === id); const a = db.addresses.find((x) => x.id === v.addressId);
       const dc = v.customerId !== c.id ? db.customers.find((x) => x.id === v.customerId)?.name + ', ' : '';
-      return { description: `${v.service} – ${dc}${a?.street ?? ''} (${v.completion.at.slice(0, 10)})`, quantity: 1, unitNetPrice: v.price }; });
+      return [{ description: `${v.service} – ${dc}${a?.street ?? ''} (${v.completion.at.slice(0, 10)})`, quantity: 1, unitNetPrice: v.price },
+        ...(v.extras || []).filter((x) => x.text).map((x) => ({ description: `Ekstra: ${x.text} – ${a?.street ?? ''}`, quantity: 1, unitNetPrice: Number(x.price) || 0 }))]; }).flat();
     const { draftNumber } = await economic.createDraftInvoice({ idempotencyKey: link.idempotencyKey, customerExternalId: c.economicNumber, lines });
     Object.assign(link, { status: 'kladde', draftNumber, error: null, total: lines.reduce((s, l) => s + l.unitNetPrice, 0) });
     audit(db, user.id, 'invoice.draft', link.id, { draftNumber });

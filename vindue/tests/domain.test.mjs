@@ -208,3 +208,14 @@ test('"Husk næste gang" slettes ved færdigmelding', () => {
   S.registerVisit(db, admin, v.id, { result: 'udfoert', opId: 'h1' });
   assert.equal(c.rememberNext, ''); assert.ok(db.visits.find((x) => x.id === v.id).history.some((h) => h.action === 'husk'));
 });
+
+test('ekstra opgaver: med på faktura og i provisionsgrundlag', async () => {
+  const { MockEconomic } = await import('../js/adapters.js');
+  const db = seedDb('2026-11-02'); const v = db.visits.find((x) => x.routeId === 'r1' && x.status === 'planlagt');
+  S.finishRoute(db, admin, [{ visitId: v.id, result: 'udfoert', extras: [{ text: 'Kælderruder', price: 150 }], split: [{ employeeId: 'e2', pct: 35 }] }]);
+  const done = db.visits.find((x) => x.id === v.id); assert.equal(D.visitTotal(done), done.price + 150);
+  const [l] = await S.approveInvoices(db, admin, [v.id], new MockEconomic(db.mock.economic));
+  assert.equal(l.total, done.price + 150);
+  assert.ok(Object.values(db.mock.economic.drafts)[0].lines.some((x) => /Ekstra: Kælderruder/.test(x.description)));
+  assert.equal(D.commission([done]).e2.commission, Math.round((done.price + 150) * 0.35 * 100) / 100);
+});
