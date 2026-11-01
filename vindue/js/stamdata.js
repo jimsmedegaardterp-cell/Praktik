@@ -195,24 +195,24 @@ export function matchAgreements(cands, rowAgs, used = new Set()) {
 export function addRouteOverviews(plan, overviews, db, { today }) {
   plan.newRoutes = []; plan.routeOrder = {}; plan.routeUpdates = [];
   const zipOf = (row) => (String(row.zipCity).match(/\d{4}/) || [])[0];
+  // Kunder med SAMME navn behandles som en "familie" (fx leveringskonto + betalerkonto i SkvizBiz):
+  // rækkens aftaler kan høre til hvem som helst af dem, og hver aftale følger sin egen ejer.
+  const planByName = new Map(); for (const c of plan.customers) { const k = normS(c.name); planByName.set(k, [...(planByName.get(k) || []), c]); }
+  const owner = new Map(); for (const c of plan.customers) for (const a of c.addresses) for (const g of a.agreements) owner.set(g, c);
+  const byKey = new Map(plan.customers.map((c) => [keyOf(c.name, c.keyStreet ?? c.addresses[0].street.split(',')[0]), c]));
   const findExisting = (row) => {
     const n = normS(row.name), st = normS(row.street); if (!st) return null;
-    for (const c of db.customers) { if (c.deleted || normS(c.name) !== n) continue;
-      const a = db.addresses.find((x) => x.customerId === c.id && normS(x.street).startsWith(st)); if (a) return { c, a }; }
+    const same = db.customers.filter((c) => !c.deleted && normS(c.name) === n);
+    for (const c of same) { const a = db.addresses.find((x) => x.customerId === c.id && normS(x.street).startsWith(st)); if (a) return { fam: same, a }; }
+    if (same.length) return { fam: same, a: null };
     const zip = zipOf(row);
     const hits = db.addresses.filter((x) => normS(x.street).startsWith(st) && (!zip || x.street.includes(zip)) && !db.customers.find((c) => c.id === x.customerId)?.deleted);
-    if (hits.length === 1) return { c: db.customers.find((c) => c.id === hits[0].customerId), a: hits[0], byAddress: true };
-    const byName = db.customers.filter((c) => !c.deleted && normS(c.name) === n);
-    if (byName.length === 1) return { c: byName[0], a: null };
+    if (hits.length === 1) return { fam: [db.customers.find((c) => c.id === hits[0].customerId)], a: hits[0], byAddress: true };
     return null;
   };
-  const byKey = new Map(plan.customers.map((c) => [keyOf(c.name, c.keyStreet ?? c.addresses[0].street.split(',')[0]), c]));
-  const byName = new Map(); for (const c of plan.customers) { const k = normS(c.name); byName.set(k, byName.has(k) ? null : c); }
-  const routes = []; // { ref, name, existing }
-  const apps = [];   // forekomster: { ref, nr, line, row, kind:'plan'|'ex'|'new', c, ex, cands:[aftaler] }
-  const stats = { rows: 0, matched: 0 };
+  const routes = []; const apps = []; const stats = { rows: 0, matched: 0 };
 
-  // 1) find kunden og kandidat-aftaler for hver række (rækken kan vise ALLE kundens aftaler)
+  // 1) kunde(familie) og kandidat-aftaler pr. række (rækken kan vise ALLE kundens aftaler)
   for (const ov of overviews) {
     const name = ov.routeName || ov.fileName.replace(/\.pdf$/i, '');
     const existing = db.routes.find((r) => r.name.toLowerCase() === name.toLowerCase());
@@ -220,81 +220,84 @@ export function addRouteOverviews(plan, overviews, db, { today }) {
     routes.push({ ref, name, existing, rows: ov.rows.length, matched: 0 }); plan.routeOrder[ref] = [];
     for (const row of ov.rows) {
       stats.rows++; const line = `${name} nr. ${row.nr}`; const rAgs = rowAgreements(row);
-      let c = byKey.get(keyOf(row.name, row.street)) || byName.get(normS(row.name)) || null;
-      if (c) { const all = c.addresses.flatMap((a) => a.agreements); apps.push({ ref, nr: row.nr, line, row, kind: 'plan', c, cands: matchAgreements(all, rAgs) }); stats.matched++; routes.at(-1).matched++; continue; }
+      const hit = byKey.get(keyOf(row.name, row.street)); const fam = [...new Set([hit, ...(planByName.get(normS(row.name)) || [])].filter(Boolean))];
+      if (fam.length) { apps.push({ ref, nr: row.nr, line, row, kind: 'plan', c: hit || fam[0], fam, cands: matchAgreements(fam.flatMap((c) => c.addresses.flatMap((a) => a.agreements)), rAgs) }); stats.matched++; routes.at(-1).matched++; continue; }
       const ex = findExisting(row);
-      if (ex) { if (ex.byAddress) plan.issues.push({ line, msg: `"${row.name}" koblet til "${ex.c.name}" på adressen`, warn: true });
-        apps.push({ ref, nr: row.nr, line, row, kind: 'ex', c: ex.c, exAddr: ex.a, cands: matchAgreements(db.agreements.filter((g) => g.customerId === ex.c.id && g.active !== false), rAgs) }); stats.matched++; routes.at(-1).matched++; continue; }
-      c = { line, extId: null, name: row.name, phone: row.phone.replace(/\s/g, ''), email: '', notes: '', paymentMethod: 'bank', dupeOf: null, fromRoute: true,
+      if (ex) { if (ex.byAddress) plan.issues.push({ line, msg: `"${row.name}" koblet til "${ex.fam[0].name}" på adressen`, warn: true });
+        const ids = new Set(ex.fam.map((c) => c.id));
+        apps.push({ ref, nr: row.nr, line, row, kind: 'ex', c: ex.a ? db.customers.find((c) => c.id === ex.a.customerId) : ex.fam[0], fam: ex.fam, exAddr: ex.a, cands: matchAgreements(db.agreements.filter((g) => ids.has(g.customerId) && g.active !== false), rAgs) }); stats.matched++; routes.at(-1).matched++; continue; }
+      const c = { line, extId: null, name: row.name, phone: row.phone.replace(/\s/g, ''), email: '', notes: '', paymentMethod: 'bank', dupeOf: null, fromRoute: true,
         extra: { invoiceType: 'email', invoiceInterval: 'besoeg', paymentDays: 8, paymentTerms: 'Netto 8 dage', group: 'Privat kunder' },
         addresses: [{ street: [row.street, row.zipCity].filter(Boolean).join(', '), access: row.notes, lat: null, lng: null, agreements: rAgs.map((g) => ({ ...g, anchorDate: null })) }] };
-      plan.customers.push(c); byKey.set(keyOf(row.name, row.street), c);
-      apps.push({ ref, nr: row.nr, line, row, kind: 'plan', c, cands: c.addresses[0].agreements, isNew: true });
+      plan.customers.push(c); byKey.set(keyOf(row.name, row.street), c); planByName.set(normS(c.name), [...(planByName.get(normS(c.name)) || []), c]);
+      for (const g of c.addresses[0].agreements) owner.set(g, c);
+      apps.push({ ref, nr: row.nr, line, row, kind: 'plan', c, fam: [c], cands: c.addresses[0].agreements, isNew: true });
       plan.issues.push({ line, msg: `${row.name}: ikke fundet i stamdata – oprettes uden kundenr.; første besøg = rutens næste dato`, warn: true });
     }
   }
-  // 2) hvilke ruter er hver fast aftale kandidat til?
-  const candRefs = new Map(); // aftale → Set(ref)
+  const famAgreements = (a) => (a.kind === 'ex' ? db.agreements.filter((g) => a.fam.some((c) => c.id === g.customerId) && g.active !== false) : a.fam.flatMap((c) => c.addresses.flatMap((x) => x.agreements)));
+  // 2) kandidat-ruter pr. fast aftale; ugenkendte faste aftaler i familien er kandidat til alle familiens ruter
+  const candRefs = new Map();
   for (const a of apps) for (const g of a.cands) if (g.intervalWeeks) (candRefs.get(g) || candRefs.set(g, new Set()).get(g)).add(a.ref);
-  // kundens faste aftaler, der slet ikke blev genkendt: kandidat til alle kundens ruter
-  const custApps = new Map(); for (const a of apps) (custApps.get(a.c) || custApps.set(a.c, []).get(a.c)).push(a);
-  for (const [c, as] of custApps) {
-    const all = as[0].kind === 'ex' ? db.agreements.filter((g) => g.customerId === c.id && g.active !== false) : c.addresses.flatMap((x) => x.agreements);
-    for (const g of all) if (g.intervalWeeks && !candRefs.has(g)) candRefs.set(g, new Set(as.map((x) => x.ref)));
-  }
-  const assign = new Map(); // aftale → ref
-  for (const [g, refs] of candRefs) if (refs.size === 1) assign.set(g, [...refs][0]);
-  // 3) rutens rytme/dato ud fra de entydige aftaler
+  const famRefs = new Map(); for (const a of apps) for (const g of famAgreements(a)) (famRefs.get(g) || famRefs.set(g, new Set()).get(g)).add(a.ref);
+  for (const [g, refs] of famRefs) if (g.intervalWeeks && !candRefs.has(g)) candRefs.set(g, refs);
+  const assign = new Map(); for (const [g, refs] of candRefs) if (refs.size === 1) assign.set(g, [...refs][0]);
+  // 3) rutens rytme/dato ud fra entydige aftaler
   const rInfo = new Map();
   for (const r of routes) {
+    const used = r.existing && db.agreements.some((g) => g.routeId === r.existing.id);
     const ags = [...assign].filter(([, ref]) => ref === r.ref).map(([g]) => g).filter((g) => g.intervalWeeks && g.anchorDate);
-    const iv = r.existing && db.agreements.some((g) => g.routeId === r.existing.id) ? r.existing.intervalWeeks : (ags.length ? Math.min(...ags.map((g) => g.intervalWeeks)) : 4);
-    const anchor = r.existing && db.agreements.some((g) => g.routeId === r.existing.id) ? r.existing.anchorDate : (ags.map((g) => g.anchorDate).sort()[0] || null);
-    rInfo.set(r.ref, { intervalWeeks: iv, anchorDate: anchor });
+    rInfo.set(r.ref, used ? { intervalWeeks: r.existing.intervalWeeks, anchorDate: r.existing.anchorDate } : { intervalWeeks: ags.length ? Math.min(...ags.map((g) => g.intervalWeeks)) : 4, anchorDate: ags.map((g) => g.anchorDate).sort()[0] || null });
   }
-  // 4) aftaler på flere ruter: vælg ruten hvis datoer passer med aftalens næste gang; ellers navnelighed
+  // 4) aftaler på flere ruter: dato passer → navnelighed → advarsel
   const words = (x) => normS(x).split(' ').filter((w) => w.length > 3);
+  const ownerName = (g) => (g.customerId ? db.customers.find((c) => c.id === g.customerId)?.name : owner.get(g)?.name) || '';
   for (const [g, refs] of candRefs) {
     if (refs.size < 2) continue;
     const list = [...refs]; const fits = list.filter((ref) => { const ri = rInfo.get(ref); return ri.anchorDate && g.anchorDate && D.routeRuns(ri, g.anchorDate) && g.intervalWeeks % ri.intervalWeeks === 0; });
     let pick = fits.length === 1 ? fits[0] : null;
     if (!pick) { const pool = fits.length ? fits : list; const sw = words(g.service);
-      const named = pool.filter((ref) => { const rn = routes.find((r) => r.ref === ref).name; return words(rn).some((w) => sw.some((x) => x.startsWith(w.slice(0, 6)) || w.startsWith(x.slice(0, 6)))); });
-      pick = named.length === 1 ? named[0] : null;
-      if (!pick) { pick = pool[0]; const c = apps.find((a) => a.cands.includes(g) || (candRefs.get(g) && a.ref === pool[0]))?.c;
-        plan.issues.push({ line: c?.line || c?.name || '', msg: `${c?.name ?? ''}: aftalen "${g.service}" kan høre til ${list.map((r) => routes.find((x) => x.ref === r).name).join(' / ')} – lagt på ${routes.find((x) => x.ref === pick).name}, tjek den`, warn: true }); } }
+      const named = pool.filter((ref) => words(routes.find((r) => r.ref === ref).name).some((w) => sw.some((x) => x.startsWith(w.slice(0, 6)) || w.startsWith(x.slice(0, 6)))));
+      pick = named.length === 1 ? named[0] : pool[0];
+      if (named.length !== 1) plan.issues.push({ line: ownerName(g), msg: `${ownerName(g)}: aftalen "${g.service}" kan høre til ${list.map((r) => routes.find((x) => x.ref === r).name).join(' / ')} – lagt på ${routes.find((x) => x.ref === pick).name}, tjek den`, warn: true }); }
     assign.set(g, pick);
   }
-  // 5) adresser: række med anden adresse end kundens → aftaler der nævner adressen (eller kun står i denne række) flyttes dertil
+  // 5) række med en adresse, som ingen i familien har → aftaler der nævner adressen eller kun står i denne række flyttes dertil
   for (const a of apps) {
     if (a.kind !== 'plan' || a.isNew) continue;
-    const st = normS(a.row.street); const c = a.c;
-    let idx = c.addresses.findIndex((x) => normS(x.street).startsWith(st));
-    if (idx >= 0) { a.addrIdx = idx; continue; }
-    const others = apps.filter((x) => x.c === c && x !== a);
+    const st = normS(a.row.street);
+    if (a.fam.some((c) => c.addresses.some((x) => normS(x.street).startsWith(st)))) continue;
+    const others = apps.filter((x) => x !== a && x.fam.some((c) => a.fam.includes(c)));
     const move = a.cands.filter((g) => normS(g.service).includes(st) || !others.some((o) => o.cands.includes(g)));
-    if (!move.length) { a.addrIdx = 0; continue; }
-    const na = { street: [a.row.street, a.row.zipCity].filter(Boolean).join(', '), access: a.row.notes, lat: null, lng: null, agreements: [] };
-    for (const g of move) for (const ad of c.addresses) { const k = ad.agreements.indexOf(g); if (k >= 0) { ad.agreements.splice(k, 1); na.agreements.push(g); } }
-    c.addresses.push(na); a.addrIdx = c.addresses.length - 1;
-    plan.issues.push({ line: a.line, msg: `${c.name}: ${move.length} aftale(r) flyttet til ${a.row.street}`, warn: true });
+    if (!move.length) continue;
+    const c = owner.get(move[0]); const na = { street: [a.row.street, a.row.zipCity].filter(Boolean).join(', '), access: a.row.notes, lat: null, lng: null, agreements: [] };
+    for (const g of move.filter((g) => owner.get(g) === c)) for (const ad of c.addresses) { const k = ad.agreements.indexOf(g); if (k >= 0) { ad.agreements.splice(k, 1); na.agreements.push(g); } }
+    c.addresses.push(na);
+    plan.issues.push({ line: a.line, msg: `${c.name}: ${na.agreements.length} aftale(r) flyttet til ${a.row.street}`, warn: true });
   }
-  // 6) skriv resultatet: plan-aftaler får routeRef; eksisterende kunder får opdateringer; rækkefølge
+  // 6) resultat: plan-aftaler får routeRef; eksisterende får opdateringer; rækkefølge pr. (ejer, adresse)
   for (const [g, ref] of assign) if (!g.id) g.routeRef = ref;
   for (const a of apps) {
-    const mine = [...assign].filter(([g, ref]) => ref === a.ref && (a.kind === 'ex' ? g.customerId === a.c.id : a.c.addresses.some((x) => x.agreements.includes(g)))).map(([g]) => g);
+    const mine = famAgreements(a).filter((g) => assign.get(g) === a.ref);
     if (a.kind === 'plan') {
-      if (!a.c.phone && a.row.phone) a.c.phone = a.row.phone.replace(/\s/g, '');
-      const own = mine.filter((g) => a.cands.includes(g));
-      const idx = a.isNew ? 0 : a.addrIdx ?? (own.length ? a.c.addresses.findIndex((x) => x.agreements.includes(own[0])) : 0);
-      if (!a.c.addresses[idx].access && a.row.notes) a.c.addresses[idx].access = a.row.notes;
-      plan.routeOrder[a.ref].push({ pc: a.c, addrIdx: idx, nr: a.nr });
+      const pick = mine.find((g) => a.cands.includes(g)) || mine[0];
+      const c = pick ? owner.get(pick) : a.c;
+      const idx = pick ? c.addresses.findIndex((x) => x.agreements.includes(pick)) : Math.max(0, c.addresses.findIndex((x) => normS(x.street).startsWith(normS(a.row.street))));
+      if (!c.phone && a.row.phone) c.phone = a.row.phone.replace(/\s/g, '');
+      if (!c.addresses[idx].access && a.row.notes) c.addresses[idx].access = a.row.notes;
+      plan.routeOrder[a.ref].push({ pc: c, addrIdx: idx, nr: a.nr });
     } else {
-      const u = { customerId: a.c.id, name: a.c.name, ref: a.ref, nr: a.nr, agreementIds: mine.map((g) => g.id), addressId: a.exAddr?.id || null,
-        newAddress: a.exAddr ? null : { street: [a.row.street, a.row.zipCity].filter(Boolean).join(', '), access: a.row.notes },
-        anchors: mine.map((g) => ({ anchorDate: g.anchorDate, intervalWeeks: g.intervalWeeks })) };
-      if (!u.addressId && !mine.length) u.addressId = db.addresses.find((x) => x.customerId === a.c.id)?.id || null;
-      plan.routeUpdates.push(u); plan.routeOrder[a.ref].push({ update: u, nr: a.nr });
+      const byCust = new Map(); for (const g of mine) byCust.set(g.customerId, [...(byCust.get(g.customerId) || []), g]);
+      if (!byCust.size) byCust.set(a.c.id, []);
+      let first = true;
+      for (const [cid, gs] of byCust) {
+        const addrId = gs[0]?.addressId || (a.exAddr && a.exAddr.customerId === cid ? a.exAddr.id : db.addresses.find((x) => x.customerId === cid)?.id) || null;
+        const knownStreet = db.addresses.some((x) => x.customerId === cid && normS(x.street).startsWith(normS(a.row.street)));
+        const u = { customerId: cid, name: db.customers.find((c) => c.id === cid)?.name, ref: a.ref, nr: a.nr, agreementIds: gs.map((g) => g.id), addressId: addrId,
+          newAddress: !knownStreet && gs.some((g) => normS(g.service).includes(normS(a.row.street))) ? { street: [a.row.street, a.row.zipCity].filter(Boolean).join(', '), access: a.row.notes } : null,
+          anchors: gs.map((g) => ({ anchorDate: g.anchorDate, intervalWeeks: g.intervalWeeks })) };
+        plan.routeUpdates.push(u); if (first) plan.routeOrder[a.ref].push({ update: u, nr: a.nr }); first = false;
+      }
     }
   }
   for (const r of routes) {
@@ -354,6 +357,23 @@ export function applyRouteUpdates(db, plan, ids, uid = (p) => p + Math.random().
       if (addrId && g.addressId !== addrId) g.addressId = addrId;
       for (const v of db.visits) if (v.agreementId === g.id && (v.status === 'planlagt' || v.status === 'udsat')) { v.routeId = rid; if (addrId) v.addressId = addrId; }
     }
+  }
+  return n;
+}
+
+/**
+ * "Fakturér gennem anden konto" uden GDPR-zip: står faktureringsadressen i stamdata som en anden kundes
+ * leveringsadresse (helst samme navn), er den kunde betaleren. Kaldes efter applyImportPlan (bruger _id).
+ */
+export function linkBillingFromStamdata(db, plan) {
+  let n = 0;
+  for (const pc of plan.customers) {
+    const b = pc.extra?.billing; if (!b?.address || !pc._id) continue;
+    const st = normS(String(b.address).split(',')[0]);
+    const cands = plan.customers.filter((x) => x !== pc && x._id && normS(x.keyStreet || x.addresses[0].street.split(',')[0]) === st);
+    const payer = cands.find((x) => normS(x.name) === normS(pc.name)) || (cands.length === 1 ? cands[0] : null);
+    const c = db.customers.find((x) => x.id === pc._id);
+    if (payer && c && !c.billTo) { c.billTo = payer._id; n++; }
   }
   return n;
 }

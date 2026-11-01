@@ -150,7 +150,8 @@ export function resolveBillTo(db) {
   const bySkviz = new Map(db.customers.filter((c) => c.skvizId != null).map((c) => [String(c.skvizId), c]));
   let linked = 0; const missing = [];
   for (const c of db.customers) {
-    if (c.billingSkvizId == null || c.billingSkvizId === '' || String(c.billingSkvizId) === String(c.skvizId)) { delete c.billTo; continue; }
+    if (c.billingSkvizId == null || c.billingSkvizId === '') continue; // intet fra GDPR – behold evt. kobling fra stamdata
+    if (String(c.billingSkvizId) === String(c.skvizId)) { delete c.billTo; continue; }
     const payer = bySkviz.get(String(c.billingSkvizId));
     if (payer && payer.id !== c.id) { c.billTo = payer.id; linked++; } else { delete c.billTo; missing.push(c.name); }
   }

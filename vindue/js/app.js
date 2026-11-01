@@ -7,7 +7,7 @@ import * as I from './import.js';
 import * as G from './gdpr.js';
 import * as SD from './stamdata.js';
 
-export const VERSION = '2026-11-01 #14';
+export const VERSION = '2026-11-01 #15';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = load();
@@ -781,6 +781,7 @@ document.addEventListener('click', async (e) => {
         const c = I.applyImportPlan(db, st.plan, { batchId, uid: S.uid, includeDuplicates: !!st.includeDup, horizon: D.addDays(todayIso(), 120), today: todayIso() });
         const upd = st.plan.routeUpdates ? SD.applyRouteUpdates(db, st.plan, rids, S.uid) : 0;
         if (st.plan.routeOrder) SD.applyRouteOrder(db, st.plan, rids);
+        if (st.plan.source === 'skviz') SD.linkBillingFromStamdata(db, st.plan);
         G.resolveBillTo(db);
         if (upd) setTimeout(() => toast(`${c.customers} nye kunder · ${upd} eksisterende aftaler har fået rute · ${Object.keys(rids).length} ruter oprettet`), 50);
         S.audit(db, ui.user.id, 'import.apply', batchId, { file: st.fileName, ...c, routes: Object.keys(rids).length }); ui.imp = null; toast(`${c.customers} kunder, ${c.agreements} aftaler, ${c.visits} besøg importeret`); break; }
