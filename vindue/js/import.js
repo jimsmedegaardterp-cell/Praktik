@@ -104,7 +104,7 @@ export function buildImportPlan(parsed, mapping, db, { defaultRouteId, today }) 
     const ad = c.addresses.find((a) => a.street.toLowerCase() === street.toLowerCase()) || (() => { const a = { street, access: get(r, 'access'), agreements: [] }; c.addresses.push(a); return a; })();
     if (interval && !Number.isNaN(interval)) {
       ad.agreements.push({ service: get(r, 'service') || 'Vinduespudsning', price: Number.isNaN(price) ? 0 : price ?? 0, intervalWeeks: interval,
-        anchorDate: next && !Number.isNaN(next) ? next : today, routeId: route?.id || defaultRouteId, line });
+        anchorDate: next && !Number.isNaN(next) ? next : (D.nextRouteDate(route || db.routes.find((x) => x.id === defaultRouteId) || {}, today, db.settings) || today), routeId: route?.id || defaultRouteId, line });
     } else if (!intRaw) plan.issues.push({ line, msg: 'Intet interval – kunden oprettes uden fast aftale', warn: true });
   });
   plan.errors = plan.issues.filter((i) => !i.warn).length;

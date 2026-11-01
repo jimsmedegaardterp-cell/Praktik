@@ -213,3 +213,27 @@ export function commission(visits, { rate = 0.35, rates = {}, from, to, inclVat 
   for (const k in per) { per[k].rate = rates[k] ?? rate; per[k].commission = Math.round(per[k].base * per[k].rate * 100) / 100; }
   return per;
 }
+
+/* ---------------- Rutecyklus ----------------
+ * Ruter kører i en cyklus på N uger (settings.cycleWeeks) regnet fra settings.cycleStart (en mandag).
+ * route.cycleWeek = 1..N (eller null = hver uge), route.weekday = 0..4.
+ */
+export function cycleWeekOf(iso, settings) {
+  const n = settings.cycleWeeks || 1;
+  const w = Math.floor(diffDays(settings.cycleStart, addDays(iso, -weekday(iso))) / 7);
+  return (((w % n) + n) % n) + 1;
+}
+export function routeRuns(route, iso, settings) {
+  return weekday(iso) === route.weekday && (!route.cycleWeek || cycleWeekOf(iso, settings) === route.cycleWeek);
+}
+export function nextRouteDate(route, fromIso, settings) {
+  let d = fromIso;
+  for (let i = 0; i < 7 * 53; i++, d = addDays(d, 1)) if (routeRuns(route, d, settings)) return d;
+  return null;
+}
+/** Advarsel hvis aftalen ikke følger rutens cyklus. */
+export function agreementFitsRoute(agreement, route, settings) {
+  if (!route) return true;
+  const step = route.cycleWeek ? settings.cycleWeeks : 1;
+  return routeRuns(route, agreement.anchorDate, settings) && agreement.intervalWeeks % step === 0;
+}

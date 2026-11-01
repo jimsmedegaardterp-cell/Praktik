@@ -167,3 +167,15 @@ test('provision med individuel sats og periode', () => {
   const r = D.commission(v, { rates: { e2: 0.4 }, from: '2026-11-01', to: '2026-11-30' });
   assert.equal(r.e1.commission, 140); assert.equal(r.e2.commission, 80);
 });
+
+test('rutecyklus', () => {
+  const st = { cycleWeeks: 4, cycleStart: '2026-11-02' };
+  const r = { weekday: 2, cycleWeek: 3 };
+  assert.equal(D.cycleWeekOf('2026-11-02', st), 1); assert.equal(D.cycleWeekOf('2026-11-29', st), 4); assert.equal(D.cycleWeekOf('2026-11-30', st), 1);
+  assert.equal(D.cycleWeekOf('2026-10-26', st), 4, 'før start');
+  assert.equal(D.nextRouteDate(r, '2026-11-02', st), '2026-11-18');
+  assert.equal(D.nextRouteDate(r, '2026-11-19', st), '2026-12-16');
+  assert.ok(D.agreementFitsRoute({ anchorDate: '2026-11-18', intervalWeeks: 8 }, r, st));
+  assert.ok(!D.agreementFitsRoute({ anchorDate: '2026-11-18', intervalWeeks: 6 }, r, st));
+  assert.ok(D.agreementFitsRoute({ anchorDate: '2026-11-06', intervalWeeks: 1 }, { weekday: 4, cycleWeek: null }, st));
+});

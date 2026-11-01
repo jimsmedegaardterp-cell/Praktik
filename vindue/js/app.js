@@ -5,7 +5,7 @@ import { MockEconomic, MockSms, mapsDirections, mapsRoute, smsLink, suggestOrder
 import { seedDb } from './seed.js';
 import * as I from './import.js';
 
-const KEY = 'vindue-demo-v1';
+const KEY = 'vindue-demo-v2'; // v2: rutecyklus
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = load();
 const eco = new MockEconomic(db.mock.economic);
@@ -30,6 +30,7 @@ const fmtTs = (ts) => new Date(ts).toLocaleString('da-DK', { dateStyle: 'short',
 const cust = (id) => db.customers.find((c) => c.id === id);
 const addr = (id) => db.addresses.find((a) => a.id === id);
 const route = (id) => db.routes.find((r) => r.id === id);
+const routeWhen = (r) => `${r.cycleWeek ? 'uge ' + r.cycleWeek + ' af ' + db.settings.cycleWeeks : 'hver uge'}, ${['mandag', 'tirsdag', 'onsdag', 'torsdag', 'fredag'][r.weekday]}`;
 const emp = (id) => db.employees.find((e) => e.id === id);
 const isAdmin = () => ui.user.role === 'admin';
 const STATUS = { planlagt: ['Planlagt', ''], ...Object.fromEntries(Object.entries(D.RESULTS).map(([k, v]) => [k, [v, ['udfoert', 'delvis'].includes(k) ? 'ok' : k === 'udsat' ? 'warn' : 'bad']])) };
@@ -80,8 +81,19 @@ function overblik() {
   ${errs ? `<div class="warnbox">⚠️ ${errs} integrationsfejl – se Fakturering/Beskeder.</div>` : ''}
   ${dbl.length ? `<div class="warnbox">⚠️ ${dbl.length} mulige dobbeltbookinger (samme adresse samme dag).</div>` : ''}
   ${overdue.length ? `<div class="warnbox">⚠️ ${overdue.length} besøg i fortiden er ikke registreret. <button data-act="showOverdue">Vis</button></div>` : ''}
+  ${varselCard()}
   <div class="card"><h2>Dagens ruter – ${fmt(t)}</h2>${dayTable(today)}</div>
   <div class="card"><h2>Kommende 7 dage</h2>${dayTable(db.visits.filter((v) => v.plannedDate > t && v.plannedDate <= D.addDays(t, 7)).sort((a, b) => a.plannedDate.localeCompare(b.plannedDate)), true)}</div>`;
+}
+function varselCard() {
+  const nd = D.nextWorkday(D.addDays(todayIso(), 1), db.closedDays);
+  const vs = db.visits.filter((v) => v.plannedDate === nd && v.status === 'planlagt');
+  if (!vs.length) return '';
+  const sent = new Set(db.smsMessages.filter((m) => m.clientRef?.startsWith('varsel:')).map((m) => m.clientRef.slice(7)));
+  const left = vs.filter((v) => !sent.has(v.id)).length;
+  return `<div class="card"><h2>SMS-varsler til ${fmt(nd)} ${left ? `<span class="pill warn">${left} mangler</span>` : '<span class="pill ok">alle sendt</span>'}</h2>
+    ${vs.map((v) => { const c = cust(v.customerId); const tel = D.normalizePhone(c.phone); const text = D.renderTemplate(db.templates.varsel, { navn: c.name.split(' ')[0], dato: fmt(nd) });
+      return `<div class="row" style="border-bottom:1px solid var(--line);padding:6px 0"><div class="sp"><b>${esc(c.name)}</b> <span class="small mute">${esc(addr(v.addressId)?.street)}</span></div>${sent.has(v.id) ? '<span class="pill ok">✓ Sendt</span>' : tel ? `<a class="btn pri" data-varsel="${v.id}" data-text="${esc(text)}" href="${smsLink(tel, text)}">📱 Send varsel</a>` : '<span class="pill bad">intet mobilnr.</span>'}</div>`; }).join('')}</div>`;
 }
 function dayTable(vs, withDate) {
   if (!vs.length) return '<p class="mute">Ingen besøg.</p>';
@@ -136,8 +148,7 @@ function kundekort(c) {
   const upd = () => { const p = D.smsParts(tx.value); info.textContent = tx.value ? `${p.chars} tegn · ${p.parts} SMS · ${p.encoding}` : ''; own.href = smsLink(D.normalizePhone(c.phone) || '', tx.value); };
   tx.oninput = upd; upd();
   own.onclick = (e) => { if (!tx.value.trim()) { e.preventDefault(); return toast('Skriv en besked først'); }
-    db.smsMessages.push({ id: S.uid('m'), dir: 'ud', customerId: c.id, phone: D.normalizePhone(c.phone), text: tx.value.trim(), kind: 'service', status: 'sendt fra telefon', at: new Date().toISOString(), by: ui.user.id, ...D.smsParts(tx.value) });
-    S.audit(db, ui.user.id, 'sms.manual', c.id); save(); setTimeout(render, 300); };
+    logManualSms(c, tx.value.trim()); setTimeout(render, 300); };
   document.getElementById('tpl').onchange = (e) => { const tpl = db.templates[e.target.value]; if (!tpl) return; const nv = vs.filter((v) => v.status === 'planlagt' && v.plannedDate >= t).sort((a, b) => a.plannedDate.localeCompare(b.plannedDate))[0];
     tx.value = D.renderTemplate(tpl, { navn: c.name.split(' ')[0], dato: nv ? fmt(nv.plannedDate) : '', tid: '', nydato: '' }); upd(); };
 }
@@ -170,19 +181,19 @@ function customerForm(c) {
   });
 }
 function agreementFields(a) {
-  const nm = D.addDays(todayIso(), 7 - D.weekday(todayIso()));
   return `<label><span>Ydelse</span><input name="service" value="${esc(a.service ?? 'Vinduespudsning ude')}"></label>
   <div class="row"><label><span>Pris ekskl. moms</span><input name="price" type="number" min="0" step="1" value="${a.price ?? 300}" style="width:110px"></label>
   <label><span>Interval (uger)</span><select name="intervalWeeks">${[1, 2, 3, 4, 6, 8, 10, 12, 16, 26, 52].map((n) => `<option ${n === (a.intervalWeeks ?? 4) ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
   <label><span>Rute</span><select name="routeId">${db.routes.map((r) => `<option value="${r.id}" ${r.id === a.routeId ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</select></label></div>
-  <div class="row"><label><span>Første besøg (bestemmer ugedag)</span><input name="anchorDate" type="date" value="${a.anchorDate ?? nm}"></label>
+  <div class="row"><label><span>Første besøg (tom = næste gang ruten kører)</span><input name="anchorDate" type="date" value="${a.anchorDate ?? ''}"></label>
   <label><span>Sæson fra–til (måned)</span><input name="sFrom" type="number" min="1" max="12" value="${a.seasonMonths?.length ? Math.min(...a.seasonMonths) : 1}" style="width:60px"> – <input name="sTo" type="number" min="1" max="12" value="${a.seasonMonths?.length ? Math.max(...a.seasonMonths) : 12}" style="width:60px"></label></div>
   ${a.id ? `<label><input type="checkbox" name="active" ${a.active ? 'checked' : ''}> Aktiv</label>` : `<label><span>Adgangsforhold</span><input name="access" placeholder="Nøgle, kode, hund …"></label>`}`;
 }
 function saveAgreement(a, customerId, addressId, f) {
   const price = Number(f.price); if (!(price >= 0)) return 'Ugyldig pris';
   const sf = +f.sFrom, st = +f.sTo; const months = []; for (let m = sf; ; m = (m % 12) + 1) { months.push(m); if (m === st || months.length > 12) break; }
-  const vals = { service: f.service, price, intervalWeeks: +f.intervalWeeks, routeId: f.routeId, anchorDate: f.anchorDate, seasonMonths: months.length >= 12 ? [] : months };
+  const anchorDate = f.anchorDate || D.nextRouteDate(route(f.routeId), todayIso(), db.settings) || todayIso();
+  const vals = { service: f.service, price, intervalWeeks: +f.intervalWeeks, routeId: f.routeId, anchorDate, seasonMonths: months.length >= 12 ? [] : months };
   if (!a) { a = { id: S.uid('ag'), customerId, addressId, active: true, ...vals }; db.agreements.push(a); }
   else {
     const rhythmChanged = a.intervalWeeks !== vals.intervalWeeks || a.anchorDate !== vals.anchorDate || JSON.stringify(a.seasonMonths) !== JSON.stringify(vals.seasonMonths) || a.active !== !!f.active;
@@ -194,18 +205,22 @@ function saveAgreement(a, customerId, addressId, f) {
   }
   if (a.active) { const mine = db.visits.filter((v) => v.agreementId === a.id); db.visits.push(...D.generateVisits(a, todayIso() > a.anchorDate ? todayIso() : a.anchorDate, D.addDays(todayIso(), 120), mine, db.closedDays)); }
   S.audit(db, ui.user.id, 'agreement.save', a.id, vals);
+  if (!D.agreementFitsRoute(a, route(a.routeId), db.settings)) setTimeout(() => toast(`Bemærk: aftalen følger ikke rutens cyklus (${routeWhen(route(a.routeId))}). Tjek interval/startdato.`), 50);
 }
 
 /* ---------------- Kalender (uge) ---------------- */
 function kalender() {
   const ws = ui.weekStart; const days = [0, 1, 2, 3, 4].map((i) => D.addDays(ws, i));
   const rf = ui.calRoute || '';
-  $view.innerHTML = `<div class="card row"><button data-act="wk" data-d="-7">←</button><b>Uge ${D.isoWeek(ws)} · ${fmt(ws)}–${fmt(D.addDays(ws, 4))} ${ws.slice(0, 4)}</b><button data-act="wk" data-d="7">→</button><button data-act="wk" data-d="0">I dag</button>
+  $view.innerHTML = `<div class="card row"><button data-act="wk" data-d="-7">←</button><b>Uge ${D.isoWeek(ws)} <span class="pill">cyklusuge ${D.cycleWeekOf(ws, db.settings)}</span> · ${fmt(ws)}–${fmt(D.addDays(ws, 4))} ${ws.slice(0, 4)}</b><button data-act="wk" data-d="7">→</button><button data-act="wk" data-d="0">I dag</button>
     <span class="sp"></span><select id="calRoute"><option value="">Alle ruter</option>${db.routes.map((r) => `<option value="${r.id}" ${rf === r.id ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</select>
     <button data-act="notifyWeek">SMS-varsel til ugens kunder</button></div>
   <p class="small mute">Træk et besøg til en anden dag for at flytte det. Klik for flere valg.</p>
   <div class="week">${days.map((d) => { const vs = db.visits.filter((v) => v.plannedDate === d && (!rf || v.routeId === rf)); const closed = D.isClosedDay(d, db.closedDays);
-    return `<div class="day ${closed ? 'closed' : ''}" data-day="${d}"><div class="row"><b>${fmt(d)}</b><span class="sp"></span><span class="small mute">${vs.length} · ${kr(vs.filter((v) => v.status !== 'aflyst').reduce((s, v) => s + v.price, 0))}</span></div>${closed ? '<div class="small">Lukkedag</div>' : ''}
+    const runs = db.routes.filter((r) => D.routeRuns(r, d, db.settings));
+    return `<div class="day ${closed ? 'closed' : ''}" data-day="${d}"><div class="row"><b>${fmt(d)}</b><span class="sp"></span><span class="small mute">${vs.length} · ${kr(vs.filter((v) => v.status !== 'aflyst').reduce((s, v) => s + v.price, 0))}</span></div>
+      <div class="small mute">${runs.map((r) => esc(r.name.split('–')[0])).join(', ')}</div>${closed ? '<div class="small">Lukkedag</div>' : ''}
+      ${vs.some((v) => v.status === 'planlagt') ? `<button class="small" data-act="weather" data-d="${d}" style="padding:2px 8px;margin:2px 0">⛈ Vejr/aflys dag</button>` : ''}
       ${vs.map((v) => `<div class="chip ${v.status}" draggable="${v.status === 'planlagt' || v.status === 'udsat'}" data-visit="${v.id}"><b>${esc(cust(v.customerId)?.name)}</b><div class="small mute">${esc(addr(v.addressId)?.street.split(',')[0])} · ${kr(v.price)}</div></div>`).join('')}</div>`; }).join('')}</div>`;
   document.getElementById('calRoute').onchange = (e) => { ui.calRoute = e.target.value; render(); };
   $view.querySelectorAll('.chip[draggable=true]').forEach((ch) => ch.addEventListener('dragstart', (e) => e.dataTransfer.setData('text/plain', ch.dataset.visit)));
@@ -237,6 +252,38 @@ function moveDialog(id, newDate) {
   });
 }
 
+function weatherDialog(day) {
+  const vs = db.visits.filter((v) => v.plannedDate === day && v.status === 'planlagt' && (!ui.calRoute || v.routeId === ui.calRoute));
+  let nd = D.nextWorkday(D.addDays(day, 1), db.closedDays);
+  openDlg(`<h2>Aflys ${fmt(day)} – ${vs.length} besøg</h2>
+    <label><input type="radio" name="mode" value="keep" checked> <b>Flyt alle til</b> <input type="date" name="date" value="${nd}"> – rytmen bevares</label>
+    <label><input type="radio" name="mode" value="shift"> <b>Flyt og forskyd serierne</b> til samme dato – næste besøg rykker også</label>
+    <label><input type="radio" name="mode" value="skip"> <b>Spring over</b> – markeres aflyst, kunderne får næste besøg i rytmen</label>
+    <label><span>Årsag</span><input name="note" value="Vejret"></label>`,
+  (f) => {
+    const done = [];
+    for (const v of vs) {
+      if (f.mode === 'skip') S.registerVisit(db, ui.user, v.id, { result: 'aflyst', opId: 'vejr:' + v.id + ':' + day, note: f.note });
+      else S.moveVisit(db, ui.user, v.id, f.date, f.mode);
+      done.push(v);
+    }
+    S.audit(db, ui.user.id, 'day.weather', day, { mode: f.mode, n: done.length });
+    setTimeout(() => smsListDialog(done, f.mode === 'skip' ? null : f.date), 50);
+  });
+}
+/** Liste med ét tryk pr. kunde → åbner telefonens SMS-app. Logges på kundekortet. */
+function smsListDialog(visits, newDate, title, tplOverride) {
+  const tpl = tplOverride || (newDate ? db.templates.aflyst : 'Hej {navn}. Vi må desværre aflyse vinduespudsningen {dato} pga. vejret. Vi kommer igen ved næste planlagte besøg. Mvh. Vinduespudseren');
+  ui._smsList = visits.map((v) => { const c = cust(v.customerId); return { v, c, text: D.renderTemplate(tpl, { navn: c.name.split(' ')[0], dato: fmt(v.plannedDate), nydato: newDate ? fmt(newDate) : '' }) }; });
+  openDlg(`<h2>${esc(title || 'Giv kunderne besked')}</h2><p class="small mute">Tryk på hver kunde – telefonens SMS-app åbner med teksten.</p>
+    ${ui._smsList.map((x, i) => `<div class="row" style="border-bottom:1px solid var(--line);padding:6px 0"><div class="sp"><b>${esc(x.c.name)}</b><div class="small mute">${esc(x.text)}</div></div><a class="btn pri" data-smsi="${i}" href="${smsLink(D.normalizePhone(x.c.phone), x.text)}">📱 Send</a></div>`).join('') || '<p class="mute">Ingen</p>'}`, null, 'Færdig');
+}
+function logManualSms(c, text, clientRef) {
+  if (clientRef && db.smsMessages.some((m) => m.clientRef === clientRef)) return;
+  db.smsMessages.push({ id: S.uid('m'), clientRef, dir: 'ud', customerId: c.id, phone: D.normalizePhone(c.phone), text, kind: 'service', status: 'sendt fra telefon', at: new Date().toISOString(), by: ui.user.id, ...D.smsParts(text) });
+  S.audit(db, ui.user.id, 'sms.manual', c.id); save();
+}
+
 /* ---------------- Ruter & kort ---------------- */
 function routeStops(routeId, day) {
   const r = route(routeId);
@@ -249,14 +296,14 @@ function ruter() {
   const stops = routeStops(r.id, day); const pts = stops.map((v) => addr(v.addressId));
   const sug = suggestOrder(pts); const cur = routeKm(pts);
   $view.innerHTML = `<div class="card row"><select id="rsel">${db.routes.map((x) => `<option value="${x.id}" ${x.id === r.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select>
-    <input type="date" id="rday" value="${day}"><span class="small mute">Medarbejder: ${esc(emp(r.employeeId)?.name)} · fast dag: ${DAYS[r.weekday]}</span></div>
+    <input type="date" id="rday" value="${day}"><span class="small mute">${esc(emp(r.employeeId)?.name)} · kører ${routeWhen(r)}</span><span class="sp"></span><button data-act="rnext" data-d="-1">← Forrige gang</button><button data-act="rnext" data-d="1">Næste gang →</button></div>${D.routeRuns(r, day, db.settings) ? '' : '<div class="warnbox">Ruten kører ikke normalt denne dag.</div>'}
   <div class="card"><h2>${esc(r.name)} – ${fmt(day)}</h2>
     ${stops.length ? `<table><tr><th>#</th><th>Kunde</th><th>Adresse</th><th>Status</th><th></th></tr>${stops.map((v, i) => `<tr><td>${i + 1}</td><td>${esc(cust(v.customerId).name)}</td><td>${esc(addr(v.addressId).street)}</td><td>${pill(v.status)}</td><td><button data-act="up" data-i="${i}">↑</button><button data-act="down" data-i="${i}">↓</button></td></tr>`).join('')}</table>
     <p>Nuværende rækkefølge ≈ <b>${cur} km</b> (luftlinje). Forslag ≈ <b>${sug.km} km</b>${sug.km < cur ? ` – sparer ca. ${Math.round((cur - sug.km) * 10) / 10} km` : ''}.</p>
     <div class="row"><button data-act="applySuggest" ${sug.km >= cur ? 'disabled' : ''}>Godkend forslag som fast rækkefølge</button><a class="btn pri" target="_blank" rel="noopener" href="${mapsRoute(pts.map((p) => p.street))}">Åbn rute i Google Maps ↗</a></div>
     <p class="small mute">Forslaget er beregnet lokalt (nærmeste nabo, luftlinje) og ændrer intet før du godkender. Rigtige køretider kræver Google Routes API – se docs/COSTS.md.</p>` : '<p class="mute">Ingen besøg på ruten denne dag.</p>'}
   </div>`;
-  document.getElementById('rsel').onchange = (e) => { ui.route = e.target.value; const rr = route(ui.route); let d = todayIso(); while (D.weekday(d) !== rr.weekday) d = D.addDays(d, 1); ui.day = d; render(); };
+  document.getElementById('rsel').onchange = (e) => { ui.route = e.target.value; ui.day = D.nextRouteDate(route(ui.route), todayIso(), db.settings) || todayIso(); render(); };
   document.getElementById('rday').onchange = (e) => { ui.day = e.target.value; render(); };
   ui._stops = stops; ui._sug = sug.order;
 }
@@ -270,7 +317,7 @@ function mobil() {
   <div class="row small" style="margin-bottom:10px"><label><input type="checkbox" id="off" ${ui.offline ? 'checked' : ''}> Simulér offline</label>${ui.outbox.length ? `<span class="pill warn">${ui.outbox.length} registrering(er) venter på net</span>` : ''}</div>
   ${stops.map((v) => { const c = cust(v.customerId), a = addr(v.addressId); const done = v.status !== 'planlagt' || pending.has(v.id); const tel = D.normalizePhone(c.phone);
     return `<div class="stop ${done ? 'done' : ''}"><div class="row"><h3 class="sp">${esc(c.name)}</h3>${pending.has(v.id) ? '<span class="pill warn">Venter på sync</span>' : pill(v.status)}</div>
-    <div>${esc(a.street)}</div>${a.access ? `<div class="small">🔑 ${esc(a.access)}</div>` : ''}<div class="small mute">${esc(v.service)}${isAdmin() || true ? ' · ' + kr(v.price) : ''}</div>
+    <div>${esc(a.street)}</div>${a.access ? `<div class="small">🔑 ${esc(a.access)}</div>` : ''}<div class="small mute">${esc(v.service)} · ${kr(v.price)}</div>
     <div class="quick"><a class="btn" target="_blank" rel="noopener" href="${mapsDirections(a.street)}">🧭 Kør</a><a class="btn" href="tel:${tel}">📞 Ring</a><a class="btn" href="${smsLink(tel, `Hej ${c.name.split(' ')[0]}, vi er på vej og er hos dig om ca. 15 min. Mvh. Vinduespudseren`)}">💬 På vej</a></div>
     ${c.paymentMethod === 'kontant' ? `<div class="small"><span class="pill warn">💰 Betaler kontant · ${kr(v.price * 1.25)} inkl. moms</span></div>` : ''}
     ${v.completion?.cashPaid ? '<div class="small"><span class="pill ok">Kontant modtaget</span></div>' : ''}
@@ -393,12 +440,22 @@ function admin() {
     <div class="card"><h2>Data & backup</h2><div class="row"><button data-act="backup">Download backup (JSON)</button><label class="btn">Gendan…<input type="file" id="restore" accept=".json" hidden></label><button data-act="planMore">Planlæg 6 mdr. frem</button><button class="bad" data-act="reset">Nulstil demo</button></div>
       <p class="small mute">Prototypen gemmer i denne browser (localStorage). ${db.customers.length} kunder · ${db.visits.length} besøg · ${db.audit.length} logposter.</p></div>
   </div>
+  <div class="card"><h2>Ruter og cyklus</h2>
+    <div class="row"><label><span>Cyklus (uger)</span><input type="number" min="1" max="12" id="cyc" value="${db.settings.cycleWeeks}" style="width:70px"></label><label><span>Cyklusuge 1 starter mandag</span><input type="date" id="cycStart" value="${db.settings.cycleStart}"></label><span class="small mute">Denne uge er cyklusuge <b>${D.cycleWeekOf(todayIso(), db.settings)}</b></span></div>
+    <table><tr><th>Navn</th><th>Medarbejder</th><th>Cyklusuge</th><th>Ugedag</th><th>Næste gang</th></tr>${db.routes.map((r) => `<tr><td><input data-rf="name" data-r="${r.id}" value="${esc(r.name)}"></td><td><select data-rf="employeeId" data-r="${r.id}">${db.employees.map((e) => `<option value="${e.id}" ${e.id === r.employeeId ? 'selected' : ''}>${esc(e.name)}</option>`).join('')}</select></td>
+      <td><select data-rf="cycleWeek" data-r="${r.id}"><option value="">Hver uge</option>${Array.from({ length: db.settings.cycleWeeks }, (_, i) => `<option ${r.cycleWeek === i + 1 ? 'selected' : ''}>${i + 1}</option>`).join('')}</select></td>
+      <td><select data-rf="weekday" data-r="${r.id}">${['Mandag', 'Tirsdag', 'Onsdag', 'Torsdag', 'Fredag'].map((n, i) => `<option value="${i}" ${r.weekday === i ? 'selected' : ''}>${n}</option>`).join('')}</select></td><td>${fmt(D.nextRouteDate(r, todayIso(), db.settings))}</td></tr>`).join('')}</table>
+    <button data-act="addRoute" style="margin-top:8px">+ Rute</button>
+    <p class="small mute">Ændring af rutens dag flytter ikke eksisterende besøg automatisk – brug Kalender eller ret aftalerne.</p></div>
   <div class="card"><h2>SMS-skabeloner</h2>${Object.entries(db.templates).map(([k, v]) => `<label><span>${esc(k)} – felter: {navn} {dato} {tid} {nydato}</span><textarea data-tpl="${k}">${esc(v)}</textarea></label>`).join('')}</div>
   <div class="card"><h2>Lukkedage (ferie mv.)</h2><p class="small mute">Helligdage beregnes automatisk. Besøg på lukkedage flyttes til næste arbejdsdag ved planlægning.</p><div class="row"><input type="date" id="cd"><button data-act="addClosed">Tilføj</button></div><div class="small">${db.closedDays.map((d) => `<span class="pill">${d} <a href="#" data-act="rmClosed" data-d="${d}">×</a></span>`).join(' ')}</div></div>
   <div class="card"><h2>Auditlog</h2><div style="max-height:320px;overflow:auto"><table><tr><th>Tid</th><th>Bruger</th><th>Handling</th><th>Ref</th></tr>${db.audit.slice(0, 200).map((a) => `<tr class="small"><td>${fmtTs(a.at)}</td><td>${esc(USERS.find((u) => u.id === a.by)?.name ?? a.by)}</td><td>${esc(a.action)}</td><td class="mute">${esc(a.ref)} ${esc(JSON.stringify(a.detail).slice(0, 80))}</td></tr>`).join('')}</table></div></div>`;
   document.getElementById('comMonth').onchange = (e) => { ui.comMonth = e.target.value; render(); };
   document.getElementById('comVat').onchange = (e) => { db.settings.commissionInclVat = e.target.checked; S.audit(db, ui.user.id, 'commission.vat', '-', { inclVat: e.target.checked }); render(); };
   $view.querySelectorAll('[data-rate]').forEach((i) => (i.onchange = () => { const v = Number(i.value); if (!(v >= 0 && v <= 100)) return toast('Ugyldig sats'); const e = emp(i.dataset.rate); e.commissionRate = v / 100; S.audit(db, ui.user.id, 'commission.rate', e.id, { rate: v }); render(); }));
+  document.getElementById('cyc').onchange = (e) => { db.settings.cycleWeeks = Math.max(1, +e.target.value || 1); S.audit(db, ui.user.id, 'settings.cycle', '-', { weeks: db.settings.cycleWeeks }); render(); };
+  document.getElementById('cycStart').onchange = (e) => { db.settings.cycleStart = D.addDays(e.target.value, -D.weekday(e.target.value)); render(); };
+  $view.querySelectorAll('[data-rf]').forEach((el) => (el.onchange = () => { const r = route(el.dataset.r); const f = el.dataset.rf; r[f] = f === 'weekday' ? +el.value : f === 'cycleWeek' ? (el.value ? +el.value : null) : el.value; S.audit(db, ui.user.id, 'route.edit', r.id, { [f]: r[f] }); render(); }));
   $view.querySelectorAll('[data-tpl]').forEach((t) => (t.onchange = () => { db.templates[t.dataset.tpl] = t.value; save(); toast('Skabelon gemt'); }));
   document.getElementById('restore').onchange = async (e) => { const f = e.target.files[0]; if (!f) return; try { const d = JSON.parse(await f.text()); if (!Array.isArray(d.customers) || !Array.isArray(d.visits)) throw new Error('Ugyldig backup'); if (!confirm(`Gendan ${d.customers.length} kunder? Nuværende data overskrives.`)) return; db = d; save(); location.reload(); } catch (err) { toast(err.message); } };
 }
@@ -421,6 +478,8 @@ function openDlg(html, onSubmit, closeLabel = 'Annuller') {
 document.addEventListener('click', async (e) => {
   const tab = e.target.closest('[data-tab]'); if (tab) { ui.tab = tab.dataset.tab; ui.customer = null; return render(); }
   const cu = e.target.closest('[data-cust]'); if (cu) { e.preventDefault(); document.getElementById('dlg').open && document.getElementById('dlg').close(); ui.tab = 'kunder'; ui.customer = cu.dataset.cust; return render(); }
+  const sl = e.target.closest('[data-smsi]'); if (sl) { const x = ui._smsList[+sl.dataset.smsi]; logManualSms(x.c, x.text); sl.textContent = '✓ Sendt'; sl.classList.remove('pri'); return; }
+  const vs_ = e.target.closest('[data-varsel]'); if (vs_) { const v = db.visits.find((x) => x.id === vs_.dataset.varsel); const c = cust(v.customerId); logManualSms(c, vs_.dataset.text, 'varsel:' + v.id); setTimeout(render, 300); return; }
   const ch = e.target.closest('.chip[data-visit]'); if (ch) return visitDialog(ch.dataset.visit);
   const b = e.target.closest('[data-act]'); if (!b) return;
   const id = b.dataset.id; const act = b.dataset.act;
@@ -442,9 +501,7 @@ document.addEventListener('click', async (e) => {
       case 'wk': ui.weekStart = b.dataset.d === '0' ? mondayOf(todayIso()) : D.addDays(ui.weekStart, +b.dataset.d); break;
       case 'dd': ui.day = D.addDays(ui.day, +b.dataset.d); break;
       case 'notifyWeek': { const vs = db.visits.filter((v) => v.status === 'planlagt' && v.plannedDate >= ui.weekStart && v.plannedDate <= D.addDays(ui.weekStart, 6) && (!ui.calRoute || v.routeId === ui.calRoute));
-        if (!vs.length || !confirm(`Send varsel (mock) til ${vs.length} kunder?`)) return;
-        let n = 0; for (const v of vs) { const c = cust(v.customerId); const m = await S.sendSms(db, ui.user, { customerId: c.id, clientRef: `varsel:${v.id}`, text: D.renderTemplate(db.templates.varsel, { navn: c.name.split(' ')[0], dato: fmt(v.plannedDate) }) }, sms); if (m.status !== 'fejlet') n++; }
-        toast(`${n} varsler sendt (mock). Gensendelse sender ikke dubletter.`); break; }
+        return smsListDialog(vs, null, `Varsel til ugens ${vs.length} kunder`, 'Hej {navn}. Vi kommer og pudser dine vinduer {dato}. Svar hvis det ikke passer. Mvh. Vinduespudseren'); }
       case 'up': case 'down': { const st = ui._stops; const i = +b.dataset.i; const j = act === 'up' ? i - 1 : i + 1; if (j < 0 || j >= st.length) return; [st[i], st[j]] = [st[j], st[i]]; setOrder(st.map((v) => v.addressId)); break; }
       case 'applySuggest': setOrder(ui._sug.map((a) => a.id)); toast('Ny fast rækkefølge gemt'); break;
       case 'reg': return regDialog(id, b.dataset.r, b.dataset.cash);
@@ -464,6 +521,10 @@ document.addEventListener('click', async (e) => {
         const batchId = S.uid('imp'); const c = I.applyImportPlan(db, st.plan, { batchId, uid: S.uid, includeDuplicates: !!st.includeDup, horizon: D.addDays(todayIso(), 120), today: todayIso() });
         S.audit(db, ui.user.id, 'import.apply', batchId, { file: st.fileName, ...c }); ui.imp = null; toast(`${c.customers} kunder, ${c.agreements} aftaler, ${c.visits} besøg importeret`); break; }
       case 'impUndo': if (!confirm('Fortryd importen? Alle kunder fra den slettes.')) return; I.rollbackImport(db, id); S.audit(db, ui.user.id, 'import.rollback', id); toast('Import fortrudt'); break;
+      case 'rnext': { const r = route(ui.route); let d = D.addDays(ui.day, +b.dataset.d); for (let i = 0; i < 400 && !D.routeRuns(r, d, db.settings); i++) d = D.addDays(d, +b.dataset.d); ui.day = d; break; }
+      case 'weather': return weatherDialog(b.dataset.d);
+      case 'varselSent': return;
+      case 'addRoute': db.routes.push({ id: S.uid('r'), name: `Rute ${db.routes.length + 1}`, employeeId: db.employees[0].id, weekday: 0, cycleWeek: 1 }); break;
       case 'backup': download(`vinduesdrift-backup-${todayIso()}.json`, db); S.audit(db, ui.user.id, 'backup.export', '-'); break;
       case 'planMore': toast(`${S.planAhead(db, D.addDays(todayIso(), 183))} nye besøg planlagt`); break;
       case 'reset': if (!confirm('Slet alle demodata og start forfra?')) return; localStorage.removeItem(KEY); localStorage.removeItem(KEY + '-ui'); location.reload(); return;
