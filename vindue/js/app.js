@@ -8,7 +8,7 @@ import * as G from './gdpr.js';
 import * as SD from './stamdata.js';
 import * as RS from './rutesedel.js';
 
-export const VERSION = '2026-11-01 #18';
+export const VERSION = '2026-11-01 #19';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = load();
@@ -99,7 +99,7 @@ function overblik() {
   </div>
   ${errs ? `<div class="warnbox">⚠️ ${errs} integrationsfejl – se Fakturering/Beskeder.</div>` : ''}
   ${dbl.length ? `<div class="warnbox">⚠️ ${dbl.length} mulige dobbeltbookinger (samme adresse samme dag – samme opgave to gange eller to forskellige ruter). <button data-act="showDbl">Vis</button></div>` : ''}
-  ${(() => { const n = dataCheck().slice(0, 4).reduce((s, [, it]) => s + it.length, 0); return n ? `<div class="warnbox">📋 ${n} ting at tjekke i kunde- og rutedata (aftaler uden rute, mulige dubletter …). <button data-act="showCheck">Vis</button></div>` : ''; })()}
+  ${(() => { const n = dataCheck().slice(0, 3).reduce((s, [, it]) => s + it.length, 0); return n ? `<div class="warnbox">📋 ${n} ting at tjekke i kunde- og rutedata (mulige dubletter, kunder uden kundenr. …). <button data-act="showCheck">Vis</button></div>` : ''; })()}
   ${overdue.length ? `<div class="warnbox">⚠️ ${overdue.length} besøg i fortiden er ikke registreret. <button data-act="showOverdue">Vis</button></div>` : ''}
   ${varselCard()}
   <div class="card"><h2>Dagens ruter – ${fmt(t)}</h2>${dayTable(today)}</div>
@@ -265,7 +265,7 @@ function kalender() {
     const groups = new Map(); for (const v of vs) { const k = v.routeId || ''; groups.set(k, [...(groups.get(k) || []), v]); }
     return `<div class="day ${closed ? 'closed' : ''}" data-day="${d}"><div class="row"><b>${fmt(d)}</b><span class="sp"></span>${vs.some((v) => v.status === 'planlagt') ? `<button class="small" data-act="dayMenu" data-d="${d}" title="Flyt/aflys/udfør hele dagen" style="padding:1px 7px">⋯</button>` : ''}</div>${closed ? '<div class="small">Lukkedag</div>' : ''}
       ${[...groups.entries()].map(([rid, gv]) => { const r = route(rid); const order = r?.order || []; gv.sort((a, b) => ((order.indexOf(a.addressId) + 1 || 999) - (order.indexOf(b.addressId) + 1 || 999)));
-        return `<div class="rblock"><div class="row" ${r ? `data-route="${r.id}" data-day="${d}" style="cursor:pointer" title="Åbn færdigmelding"` : ''}><b class="sp">${esc(r?.name ?? 'Enkeltbesøg')}</b><span class="badge">${gv.length}</span></div><div class="small">${D.hm(mins(gv))} timer · ${kr(gv.filter((v) => v.status !== 'aflyst').reduce((s, v) => s + v.price, 0))}</div>
+        return `<div class="rblock"><div class="row" ${r ? `data-route="${r.id}" data-day="${d}" style="cursor:pointer" title="Åbn færdigmelding"` : ''}><b class="sp">${esc(r?.name ?? 'Uden rute')}</b><span class="badge">${gv.length}</span></div><div class="small">${D.hm(mins(gv))} timer · ${kr(gv.filter((v) => v.status !== 'aflyst').reduce((s, v) => s + v.price, 0))}</div>
         ${gv.map((v) => `<div class="vline ${v.status}" draggable="${v.status === 'planlagt' || v.status === 'udsat'}" data-visit="${v.id}">${esc(cust(v.customerId)?.name)}, ${esc(addr(v.addressId)?.street.split(',')[0])}</div>`).join('')}</div>`; }).join('')}</div>`; }).join('')}</div>`;
   document.getElementById('calRoute').onchange = (e) => { ui.calRoute = e.target.value; render(); };
   $view.querySelectorAll('.vline[draggable=true]').forEach((ch) => ch.addEventListener('dragstart', (e) => e.dataTransfer.setData('text/plain', ch.dataset.visit)));
@@ -340,13 +340,13 @@ function dataCheck() {
   const byAddr = new Map(); for (const a of db.addresses) { const c = cust(a.customerId); if (!c || c.deleted) continue; const k = norm(a.street); byAddr.set(k, [...(byAddr.get(k) || []), c]); }
   const dupes = [...byAddr.values()].map((cs) => [...new Set(cs)]).filter((cs) => cs.length > 1);
   return [
-    ['Faste aftaler uden rute (kommer ikke på nogen rute)', live.flatMap((c) => agOf(c).filter((g) => g.intervalWeeks && !g.routeId).map((g) => ({ c, txt: `${g.service} · hver ${g.intervalWeeks}. uge · ${kr(g.price)}` })))],
     ['Mulige dubletkunder (samme adresse)', dupes.map((cs) => ({ c: cs[0], txt: cs.map((x) => `${x.name}${x.customerNo ? ' #' + x.customerNo : ' (uden kundenr.)'}`).join('  ·  '), others: cs.slice(1) }))],
     ['Kunder uden kundenr. (kun fundet i ruteoversigt)', live.filter((c) => !c.customerNo).map((c) => ({ c, txt: db.addresses.find((a) => a.customerId === c.id)?.street || '' }))],
     ['Ruter uden kendt dato', db.routes.filter((r) => r.anchorUnknown).map((r) => ({ r, txt: r.name }))],
     ['Kunder uden aftaler', live.filter((c) => !agOf(c).length).map((c) => ({ c, txt: db.addresses.find((a) => a.customerId === c.id)?.street || '' }))],
     ['Faktureres via anden konto – betaler ikke fundet', live.filter((c) => c.billingSkvizId && !c.billTo).map((c) => ({ c, txt: `SkvizBiz betaler-id ${c.billingSkvizId}` }))],
     ['Kunder uden telefon og e-mail', live.filter((c) => !c.phone && !c.email).map((c) => ({ c, txt: '' }))],
+    ['ℹ️ Faste aftaler uden rute (planlægges på deres egen dato – kun til orientering)', live.flatMap((c) => agOf(c).filter((g) => g.intervalWeeks && !g.routeId).map((g) => ({ c, txt: `${g.service} · hver ${g.intervalWeeks}. uge · ${kr(g.price)}` })))],
   ];
 }
 function checkDialog() {
@@ -360,7 +360,7 @@ function dblDialog() {
   openDlg(`<h2>Mulige dobbeltbookinger (${groups.length})</h2><p class="small mute">Samme adresse samme dag med samme opgave to gange, eller på to forskellige ruter. Aflys det besøg, der er forkert, eller ret aftalen på kundekortet.</p>
     ${groups.map((ids) => { const vs = ids.map((id) => db.visits.find((v) => v.id === id)); const c = cust(vs[0].customerId);
       return `<div class="card" style="padding:10px"><div class="row"><b class="sp"><a href="#" data-cust="${c.id}">${esc(c.name)}</a> · ${fmt(vs[0].plannedDate)} ${vs[0].plannedDate.slice(0, 4)}</b></div><div class="small mute">${esc(addr(vs[0].addressId)?.street)}</div>
-      <table>${vs.map((v) => `<tr class="small"><td>${esc(v.service)}</td><td>${esc(route(v.routeId)?.name ?? 'Enkeltbesøg')}</td><td>${kr(v.price)}</td><td>${v.manual ? 'manuelt booket' : 'fast aftale'}</td><td>${v.status === 'planlagt' ? `<button type="button" class="bad" data-act="dblCancel" data-id="${v.id}">Aflys dette</button>` : pill(v.status)}</td></tr>`).join('')}</table></div>`; }).join('') || '<p class="mute">Ingen.</p>'}`, null, 'Luk');
+      <table>${vs.map((v) => `<tr class="small"><td>${esc(v.service)}</td><td>${esc(route(v.routeId)?.name ?? 'Uden rute')}</td><td>${kr(v.price)}</td><td>${v.manual ? 'manuelt booket' : 'fast aftale'}</td><td>${v.status === 'planlagt' ? `<button type="button" class="bad" data-act="dblCancel" data-id="${v.id}">Aflys dette</button>` : pill(v.status)}</td></tr>`).join('')}</table></div>`; }).join('') || '<p class="mute">Ingen.</p>'}`, null, 'Luk');
 }
 function issuesDialog(batchId) {
   const bs = (db.imports || []).filter((b) => !b.rolledBack && b.issues?.length && (!batchId || b.batchId === batchId));
@@ -480,7 +480,7 @@ function ruteOversigt() {
 /* ---------------- Mobil dagsrute ---------------- */
 function mobil() {
   const day = ui.day; const myRoutes = db.routes.filter((r) => isAdmin() || r.employeeId === ui.user.employeeId);
-  const stops = myRoutes.flatMap((r) => routeStops(r.id, day));
+  const stops = [...myRoutes.flatMap((r) => routeStops(r.id, day)), ...(isAdmin() ? db.visits.filter((v) => !v.routeId && v.plannedDate === day) : [])];
   const pending = new Set(ui.outbox.map((o) => o.visitId));
   $view.innerHTML = `<div class="row" style="margin-bottom:10px"><button data-act="dd" data-d="-1">←</button><b class="sp" style="text-align:center">${fmt(day)} · ${stops.filter((v) => v.status !== 'planlagt').length}/${stops.length} · ${D.hm(mins(stops))} t</b><button data-act="dd" data-d="1">→</button></div>
   <div class="row small" style="margin-bottom:10px"><label><input type="checkbox" id="off" ${ui.offline ? 'checked' : ''}> Simulér offline</label>${ui.outbox.length ? `<span class="pill warn">${ui.outbox.length} registrering(er) venter på net</span>` : ''}</div>
