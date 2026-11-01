@@ -130,3 +130,23 @@ dialog::backdrop{background:rgba(15,20,30,.45)}
 @media (max-width:640px){main{padding:12px}.hide-m{display:none}td,th{padding:7px 4px}.top{padding:8px 12px}.tag{display:none}.tabs{padding:6px 8px}}
 @media print{.top,.tabs,.noprint,.toast,.alerts{display:none!important}body{background:#fff;color:#000}main{padding:0;max-width:none}.card{border:0;padding:0;box-shadow:none}.sheet td,.sheet th{padding:3px 4px;font-size:11px}}
 .icon.on{color:var(--pri);background:var(--pri-soft)}
+/* Ruteblok med bred kant (grip), valgt rute, dagsknap, menu, minikalender */
+.rblock{position:relative;padding-left:24px}
+.grip{position:absolute;left:0;top:0;bottom:0;width:18px;display:grid;place-items:center;font-size:11px;letter-spacing:-2px;color:var(--mute);cursor:grab;border-radius:10px 0 0 10px;background:color-mix(in srgb,var(--pri) 10%,transparent);user-select:none}
+.grip:hover{background:var(--pri);color:#fff}
+.rblock{border-left:0;box-shadow:inset 3px 0 0 var(--pri)}.rblock.done{box-shadow:inset 3px 0 0 var(--ok)}
+.rblock.sel{outline:2px solid var(--pri);background:var(--pri-soft)}
+.daybtn{border:0;background:none;padding:2px 6px;margin-left:-6px;font-weight:700;border-radius:6px}.daybtn:hover{background:var(--soft);color:var(--pri)}
+.closedlbl{font-size:12px;font-weight:600;color:var(--warn);background:var(--warn-soft);border-radius:6px;padding:2px 8px;display:inline-block;margin-bottom:4px}
+.menu{display:grid;gap:8px}.menu button{justify-content:flex-start;padding:11px 14px;font-size:15px}
+.mcal{max-width:340px}.mcal-h{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.mcal-g{display:grid;grid-template-columns:repeat(7,1fr);gap:3px}.mcal-g .dn{text-align:center;font-size:11px;color:var(--mute)}
+.mcal-g button{padding:8px 0;justify-content:center;border-radius:8px;border:1px solid transparent;background:var(--soft)}
+.mcal-g button.out{opacity:.4}.mcal-g button.closed{color:var(--warn)}.mcal-g button.in{background:var(--pri-soft);color:var(--pri)}.mcal-g button.end{background:var(--pri);color:#fff}
+.sheet-page{page-break-after:always;margin-bottom:28px}.sheet-page:last-child{page-break-after:auto}
+.vline.vsel{background:var(--pri);color:#fff;border-radius:5px;padding:1px 5px}
+.rhead[draggable=true]{cursor:grab}
+.chk{display:flex;gap:8px;align-items:center;margin:6px 0}
+tr.subhead td{background:var(--soft);font-size:13px}
+.invoice .inv-head{display:flex;justify-content:space-between;gap:20px;margin-bottom:24px}.inv-meta{text-align:right}.inv-to{margin:10px 0 22px;font-size:15px}
+@media print{.invoice{font-size:13px}}
