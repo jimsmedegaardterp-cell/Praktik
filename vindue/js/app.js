@@ -6,8 +6,9 @@ import { seedDb, freshDb } from './seed.js';
 import * as I from './import.js';
 import * as G from './gdpr.js';
 import * as SD from './stamdata.js';
+import * as RS from './rutesedel.js';
 
-export const VERSION = '2026-11-01 #15';
+export const VERSION = '2026-11-01 #16';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = load();
@@ -581,7 +582,18 @@ function importView() {
   let html = `${db.settings.realData ? '' : '<div class="warnbox">Appen indeholder <b>testdata</b>. Før du importerer dine rigtige kunder: Admin → <b>Start tomt (til rigtige data)</b>. <button data-act="wipe">Start tomt nu</button></div>'}<div class="card"><h2>Import fra SkvizBiz</h2>
     <p class="small"><b>Fra SkvizBiz:</b> 1) Kunder → vælg alle → <b>Stamdata for valgte kunder</b> (én PDF). 2) Faste ruter → <b>ruteoversigt</b> for hver rute (én PDF pr. rute – giver rute og rækkefølge). Vælg alle PDF'erne her på én gang. Tilføj gerne <b>GDPR-udtrækket (zip)</b> – så kommer fakturatype, EAN, SMS-indstillinger og kort-koordinater med. Andre formater: 1) Gem kundekartoteket som PDF (eller Excel/CSV). 2) Vælg filen. 3) Tjek at kolonnerne passer. 4) Se forhåndsvisningen. 5) Importér. Intet gemmes før trin 5, og importen kan fortrydes. Filen læses kun i din browser – den sendes ingen steder hen.</p>
     <div class="row"><label class="btn pri">📄 Stamdata- og rute-PDF'er<input type="file" id="impStam" accept=".pdf" multiple hidden></label><label class="btn pri">📦 GDPR-udtræk (zip)<input type="file" id="impZip" accept=".zip" hidden></label><label class="btn">📁 Udpakket GDPR-mappe<input type="file" id="impDir" webkitdirectory multiple hidden></label><span class="small mute">eller PDF/Excel/CSV:</span><input type="file" id="impFile" accept=".pdf,.csv,.txt,.xlsx,.xls"><a class="btn" href="docs/eksempel-import.csv" download>Hent eksempelfil</a></div></div>`;
-  if (st?.skviz) {
+  if (st?.skviz && st.sheets?.length) {
+    const sp = RS.buildSheetPlan(db, st.sheets, { today: todayIso() }); st.sheetPlan = sp;
+    const cnt = (a) => sp.items.filter((x) => x.action === a).length;
+    html += `<div class="card"><h2>Åbne ruter fra rutesedler</h2>
+      ${db.customers.length ? '' : '<div class="warnbox">Importér kunderne (stamdata + ruteoversigter) først – rutesedlerne lægges ind på eksisterende kunder.</div>'}
+      <table><tr><th>Rutesedel</th><th>Rute</th><th>Kunder</th><th>Læg besøgene på</th></tr>${st.sheets.map((x, i) => `<tr><td class="small">${esc(x.fileName)}</td><td>${esc(x.routeName)}</td><td>${x.rows.length}</td><td><input type="date" data-sheetdate="${i}" value="${x.targetDate}"> <span class="small mute">(rutesedlens dato ${fmt(x.date)} ${x.date.slice(0, 4)})</span></td></tr>`).join('')}</table>
+      <p><b>${cnt('visit')}</b> besøg på eksisterende aftaler · <b>${cnt('oneoff')}</b> enkeltopgaver oprettes · <b>${cnt('skip')}</b> springes over (har allerede besøg tæt på datoen)</p>
+      ${sp.issues.length ? `<details ${sp.issues.some((i) => !i.warn) ? 'open' : ''}><summary>${sp.issues.filter((i) => !i.warn).length} fejl, ${sp.issues.filter((i) => i.warn).length} advarsler</summary><table>${[...sp.issues].sort((a, b) => !!a.warn - !!b.warn).map((i) => `<tr class="small"><td>${esc(i.line)}</td><td style="color:var(${i.warn ? '--warn' : '--bad'})">${esc(i.msg)}</td></tr>`).join('')}</table></details>` : ''}
+      <div style="max-height:320px;overflow:auto"><table><tr><th>Nr</th><th>Kunde</th><th>Opgave</th><th>Aftale i appen</th><th>Pris</th><th></th></tr>${sp.items.map((x) => `<tr class="small" style="${x.action === 'skip' ? 'opacity:.5' : ''}"><td>${x.row.nr}</td><td>${esc(x.c.name)}</td><td>${esc(x.task.service)}</td><td>${x.g ? esc(x.g.service) + ' · ' + agrDesc(x.g) : '<span style="color:var(--warn)">ny enkeltopgave</span>'}</td><td>${kr(x.price || 0)}</td><td>${x.action === 'skip' ? esc(x.reason) : ''}</td></tr>`).join('')}</table></div>
+      <div class="row" style="margin-top:10px"><button class="pri" data-act="sheetApply" ${db.customers.length ? '' : 'disabled'}>Læg ${cnt('visit') + cnt('oneoff')} besøg ind</button><button data-act="impCancel">Annuller</button></div></div>`;
+  }
+  if (st?.skviz && (st.stams.length || st.overviews?.length || !st.sheets?.length)) {
     const plan = SD.buildSkvizPlan(st.stams, st.gdprMap, db, { today: todayIso() }); if (st.overviews?.length) SD.addRouteOverviews(plan, st.overviews, db, { today: todayIso() }); st.plan = plan;
     const nAgr = plan.customers.reduce((s, c) => s + c.addresses[0].agreements.length, 0);
     html += `<div class="card"><h2>Filer</h2><table>${st.stams.length ? '' : '<tr><td class="mute small">Ingen stamdata-PDF – kunder fra ruteoversigter får ikke kundenr. og næste dato</td></tr>'}<tr><th>Stamdata-PDF</th><th>Kunder</th><th>Rute for kunderne i filen</th><th></th></tr>${st.stams.map((f, i) => `<tr><td>${esc(f.fileName)}</td><td>${f.customers.length}</td>
@@ -612,7 +624,7 @@ function importView() {
       <div style="max-height:380px;overflow:auto;margin-top:10px"><table><tr><th>Kundenr.</th><th>Navn</th><th>Adresse</th><th>Tlf.</th><th>Aftaler</th><th>Faktura</th></tr>${plan.customers.slice(0, 500).map((c) => `<tr class="small" style="${c.dupeOf ? 'opacity:.5' : ''}"><td>${esc(c.extId)}</td><td>${esc(c.name)}</td><td>${esc(c.addresses[0].street)}</td><td>${esc(c.phone)}</td>
         <td>${c.addresses[0].agreements.map((g) => `${esc(g.service)} · ${kr(g.price)} · ${agrDesc(g)}${g.routeRaw ? ' · ' + esc(g.routeRaw) : ''}${g.intervalWeeks ? ' · ' + fmt(g.anchorDate) : ''}`).join('<br>') || '<span class="mute">–</span>'}</td><td>${esc(INVTYPE[c.extra.invoiceType])}${c.paymentMethod === 'kontant' ? ' 💰' : ''}</td></tr>`).join('')}</table></div>
       <div class="row" style="margin-top:10px"><button class="pri" data-act="impApply">Importér ${plan.customers.filter((c) => st.includeDup || !c.dupeOf).length} kunder</button><button data-act="impCancel">Annuller</button></div></div>`;
-  } else if (st) {
+  } else if (st && !st.skviz) {
     const p = st.parsed;
     html += `<div class="card"><h2>Kolonner i ${esc(st.fileName)} (${p.rows.length} rækker)</h2><div class="grid">${Object.entries(I.FIELDS).map(([f, label]) => `<label><span>${esc(label)}</span><select data-map="${f}"><option value="">– ikke i filen –</option>${p.headers.map((h, i) => `<option value="${i}" ${st.mapping[f] === i ? 'selected' : ''}>${esc(h)}</option>`).join('')}</select></label>`).join('')}</div>
       <label><span>Standardrute for kunder uden rute</span><select id="impRoute">${db.routes.map((r) => `<option value="${r.id}" ${st.route === r.id ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</select></label></div>`;
@@ -635,10 +647,11 @@ function importView() {
       if (ui.imp?.gdpr) { const map = {}; for (const x of ui.imp.files) { try { const o = G.normalize(JSON.parse(x.json)); if (o.number != null) map[String(o.number).padStart(8, '0')] = o; } catch {} } cur.gdprMap = map; cur.gdprName = ui.imp.fileName; }
       cur.overviews ||= [];
       for (const f of fs) { const items = await pdfItems(f);
+        if (RS.isRouteSheet(items)) { const sh = RS.parseRouteSheetItems(items); cur.sheets ||= []; cur.sheets = cur.sheets.filter((x) => !(x.date === sh.date && x.routeName === sh.routeName)); cur.sheets.push({ ...sh, fileName: f.name, targetDate: sh.date }); continue; }
         if (SD.isRouteOverview(items)) { const ov = SD.parseRouteOverviewItems(items); cur.overviews = cur.overviews.filter((o) => o.routeName !== ov.routeName); cur.overviews.push({ ...ov, fileName: f.name }); continue; }
         if (!isStamdata(items)) throw new Error(`${f.name} ligner hverken en stamdata-PDF eller en ruteoversigt fra SkvizBiz`); const customers = SD.parseStamdataItems(items);
         const guess = db.routes.find((r) => f.name.toLowerCase().includes(r.name.toLowerCase())); cur.stams.push({ fileName: f.name, routeId: guess?.id || '', customers }); }
-      ui.imp = cur; toast(`${cur.stams.reduce((s, x) => s + x.customers.length, 0)} kunder i stamdata · ${cur.overviews.length} ruteoversigter`); render(); } catch (err) { toast(err.message); } };
+      ui.imp = cur; toast(`${cur.stams.reduce((s, x) => s + x.customers.length, 0)} kunder i stamdata · ${cur.overviews.length} ruteoversigter${cur.sheets?.length ? ` · ${cur.sheets.length} rutesedler` : ''}`); render(); } catch (err) { toast(err.message); } };
   $view.querySelectorAll('[data-stroute]').forEach((sl) => (sl.onchange = () => { const f = st.stams[+sl.dataset.stroute];
     if (sl.value === '__new') { const name = prompt('Navn på ny rute (som i SkvizBiz):', f.fileName.replace(/\.pdf$/i, '')); if (!name) return render(); const r = { id: S.uid('r'), name: name.trim(), employeeId: db.employees[0].id, intervalWeeks: 4, anchorDate: D.nextWorkday(todayIso()) };
       const firstAg = f.customers.flatMap((c) => c.agreements).map((a) => I.parseDate(a.next)).filter((d) => d && !Number.isNaN(d)).sort()[0]; if (firstAg) r.anchorDate = firstAg;
@@ -652,6 +665,7 @@ function importView() {
     try { await loadGdpr(await Promise.all(fs.map(async (f) => ({ name: (f.webkitRelativePath || f.name).split('/').slice(-2, -1)[0] || f.name, json: await f.text() }))), 'mappe'); } catch (err) { toast(err.message); } };
   $view.querySelectorAll('[data-map]').forEach((sl) => (sl.onchange = () => { if (sl.value === '') delete st.mapping[sl.dataset.map]; else st.mapping[sl.dataset.map] = +sl.value; render(); }));
   const ir = document.getElementById('impRoute'); if (ir) ir.onchange = () => { st.route = ir.value; render(); };
+  $view.querySelectorAll('[data-sheetdate]').forEach((x) => (x.onchange = () => { if (x.value) { st.sheets[+x.dataset.sheetdate].targetDate = x.value; render(); } }));
   const nw = document.getElementById('impNew'); if (nw) nw.onchange = () => { st.includeNew = nw.checked; render(); };
   const dp = document.getElementById('impDup'); if (dp) dp.onchange = () => { st.includeDup = dp.checked; render(); };
 }
@@ -768,6 +782,9 @@ document.addEventListener('click', async (e) => {
         S.audit(db, ui.user.id, 'import.gdprUpdate', '-', { updated: n, created: made, backup: backup.length }); (db.gdprBackups ||= []).push({ at: new Date().toISOString(), backup });
         const bt = G.resolveBillTo(db);
         ui.imp = null; toast(`${n} kunder opdateret${made ? `, ${made} oprettet` : ''}${bt.linked ? ` · ${bt.linked} faktureres via en anden konto` : ''}${bt.missing.length ? ` · ${bt.missing.length} betalere ikke fundet` : ''}`); break; }
+      case 'sheetApply': { const sp = ui.imp.sheetPlan; const n = sp.items.filter((x) => x.action !== 'skip').length; if (!confirm(`Læg ${n} besøg fra rutesedlerne ind?`)) return;
+        const made = RS.applySheetPlan(db, sp, { uid: S.uid }); (db.imports ||= []).push({ batchId: S.uid('imp'), at: new Date().toISOString(), counts: { customers: 0, agreements: 0, visits: made }, kind: 'rutesedler', issues: sp.issues.map((i) => ({ ...i, done: false })) });
+        S.audit(db, ui.user.id, 'import.routeSheets', '-', { visits: made }); ui.imp.sheets = []; if (!ui.imp.stams.length && !ui.imp.overviews?.length) ui.imp = null; toast(`${made} besøg lagt ind fra rutesedlerne`); break; }
       case 'stRemove': ui.imp.stams.splice(+b.dataset.i, 1); if (!ui.imp.stams.length && !ui.imp.overviews?.length) ui.imp = null; break;
       case 'ovRemove': ui.imp.overviews.splice(+b.dataset.i, 1); if (!ui.imp.stams.length && !ui.imp.overviews.length) ui.imp = null; break;
       case 'impMakeRoutes': { const pl = ui.imp.plan; let n = 0;
