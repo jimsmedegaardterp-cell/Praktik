@@ -10,7 +10,7 @@ export const DEFAULT_TEMPLATES = {
 /** Tom database til rigtige data: kun ejeren som bruger, ingen kunder/ruter. */
 export function freshDb() {
   const db = emptyDb();
-  db.employees = [{ id: 'e1', name: 'Jim (ejer)', role: 'admin', commissionRate: 0 }];
+  db.employees = [{ id: 'e1', name: 'Jim', role: 'admin', commissionRate: 0 }];
   db.templates = { ...DEFAULT_TEMPLATES };
   db.settings.realData = true;
   return db;
@@ -19,7 +19,7 @@ export function freshDb() {
 export function seedDb(todayIso) {
   const db = emptyDb();
   db.employees = [
-    { id: 'e1', name: 'Jim (ejer)', role: 'admin', commissionRate: 0 },
+    { id: 'e1', name: 'Jim', role: 'admin', commissionRate: 0 },
     { id: 'e2', name: 'Mads', role: 'medarbejder' },
   ];
   // Ruter: egen rytme + næste dato (som "faste ruter" i SkvizBiz)

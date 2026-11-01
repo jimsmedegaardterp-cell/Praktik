@@ -12,9 +12,13 @@ const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${Stri
 let db = load();
 const eco = new MockEconomic(db.mock.economic);
 const sms = new MockSms(db.mock.sms);
-const USERS = [{ id: 'u1', name: 'Jim (admin)', role: 'admin', employeeId: 'e1' }, { id: 'u2', name: 'Mads (medarbejder)', role: 'medarbejder', employeeId: 'e2' }];
-const ui = { tab: 'overblik', user: USERS[0], weekStart: mondayOf(todayIso()), day: todayIso(), customer: null, route: 'r1', q: '', offline: false, outbox: [], sel: new Set() };
-try { Object.assign(ui, JSON.parse(localStorage.getItem(KEY + '-ui')) || {}); ui.user = USERS.find((u) => u.id === ui.user?.id) || USERS[0]; } catch {}
+// Brugere = medarbejdere i appen (prototype: ingen login – vælg bruger i topbjælken)
+const LEGACY = { e1: 'u1', e2: 'u2' };
+const users = () => db.employees.filter((e) => !e.inactive).map((e) => ({ id: LEGACY[e.id] || 'u_' + e.id, name: `${e.name}${e.role === 'admin' ? ' (admin)' : ''}`, role: e.role === 'admin' ? 'admin' : 'medarbejder', employeeId: e.id }));
+const userName = (id) => { const u = users().find((x) => x.id === id); if (u) return u.name; const e = db.employees.find((x) => 'u_' + x.id === id || LEGACY[x.id] === id); return e?.name ?? id; };
+const ui = { tab: 'overblik', user: null, weekStart: mondayOf(todayIso()), day: todayIso(), customer: null, route: 'r1', q: '', offline: false, outbox: [], sel: new Set() };
+try { Object.assign(ui, JSON.parse(localStorage.getItem(KEY + '-ui')) || {}); } catch {}
+ui.user = users().find((u) => u.id === ui.user?.id) || users().find((u) => u.role === 'admin') || users()[0];
 
 function load() {
   try { const r = localStorage.getItem(KEY); if (r) return JSON.parse(r); } catch {}
@@ -57,6 +61,8 @@ function renderTabs() {
   document.getElementById('tabs').innerHTML = tabs.map(([k, n]) => `<button data-tab="${k}" class="${ui.tab === k ? 'on' : ''}">${n}${k === 'sms' && unread ? ` <span class="pill bad">${unread}</span>` : ''}</button>`).join('');
 }
 function render() {
+  if (!users().some((u) => u.id === ui.user?.id)) ui.user = users().find((u) => u.role === 'admin') || users()[0];
+  renderUserSelect();
   renderTabs();
   const tag = document.querySelector('.tag'); if (tag) tag.textContent = db.settings.realData ? 'PROTOTYPE · data gemmes kun i denne browser · ingen rigtige SMS/fakturaer' : 'PROTOTYPE · testdata · ingen rigtige SMS/fakturaer';
   const net = document.getElementById('net'); net.textContent = ui.offline ? `Offline${ui.outbox.length ? ` · ${ui.outbox.length} i kø` : ''}` : 'Online'; net.className = 'pill ' + (ui.offline ? 'bad' : 'ok');
@@ -617,17 +623,27 @@ function admin() {
     <div class="card"><h2>Data & backup</h2><div class="row"><button data-act="backup">Download backup (JSON)</button><label class="btn">Gendan…<input type="file" id="restore" accept=".json" hidden></label><button data-act="planMore">Planlæg 6 mdr. frem</button><button class="bad" data-act="reset">Nulstil til testdata</button><button class="bad" data-act="wipe">Start tomt (til rigtige data)</button></div>
       <p class="small mute">Prototypen gemmer i denne browser (localStorage). ${db.customers.length} kunder · ${db.visits.length} besøg · ${db.audit.length} logposter.</p></div>
   </div>
+  <div class="card"><h2>Medarbejdere</h2>
+    <table><tr><th>Navn</th><th>Rolle</th><th>Provision %</th><th>Ruter</th><th></th></tr>${db.employees.filter((e) => !e.inactive).map((e) => `<tr><td><input data-ef="name" data-e="${e.id}" value="${esc(e.name)}"></td>
+      <td><select data-ef="role" data-e="${e.id}"><option value="admin" ${e.role === 'admin' ? 'selected' : ''}>Ejer/admin</option><option value="medarbejder" ${e.role !== 'admin' ? 'selected' : ''}>Medarbejder</option></select></td>
+      <td><input type="number" min="0" max="100" step="0.5" data-ef="commissionRate" data-e="${e.id}" value="${Math.round((e.commissionRate ?? db.settings.commissionRate) * 1000) / 10}" style="width:70px"></td>
+      <td class="small">${db.routes.filter((r) => r.employeeId === e.id).map((r) => esc(r.name)).join(', ') || '–'}</td><td><button class="bad" data-act="empDel" data-id="${e.id}">Fjern</button></td></tr>`).join('')}</table>
+    <button data-act="empAdd" style="margin-top:8px">+ Medarbejder</button>
+    <p class="small mute">Prototypen har ikke login endnu – brugeren vælges i topbjælken. Medarbejdere ser kun egne ruter og ingen økonomi.</p></div>
   <div class="card"><h2>Ruter</h2>
-    <table><tr><th>Navn</th><th>Medarbejder</th><th>Hver … uge</th><th>Næste dato</th></tr>${db.routes.map((r) => `<tr><td><input data-rf="name" data-r="${r.id}" value="${esc(r.name)}"></td><td><select data-rf="employeeId" data-r="${r.id}">${db.employees.map((e) => `<option value="${e.id}" ${e.id === r.employeeId ? 'selected' : ''}>${esc(e.name)}</option>`).join('')}</select></td>
+    <table><tr><th>Navn</th><th>Medarbejder</th><th>Hver … uge</th><th>Næste dato</th></tr>${db.routes.map((r) => `<tr><td><input data-rf="name" data-r="${r.id}" value="${esc(r.name)}"></td><td><select data-rf="employeeId" data-r="${r.id}">${db.employees.filter((x) => !x.inactive).map((e) => `<option value="${e.id}" ${e.id === r.employeeId ? 'selected' : ''}>${esc(e.name)}</option>`).join('')}</select></td>
       <td><input type="number" min="1" max="52" data-rf="intervalWeeks" data-r="${r.id}" value="${r.intervalWeeks}" style="width:70px"></td><td><input type="date" data-rf="anchorDate" data-r="${r.id}" value="${D.nextRouteDate(r, todayIso())}"></td></tr>`).join('')}</table>
     <button data-act="addRoute" style="margin-top:8px">+ Rute</button>
     <p class="small mute">Ændring af rutens dato/rytme flytter ikke eksisterende besøg automatisk – brug Kalender (flyt/forskyd) eller ret aftalerne.</p></div>
   <div class="card"><h2>SMS-skabeloner</h2>${Object.entries(db.templates).map(([k, v]) => `<label><span>${esc(k)} – felter: {navn} {dato} {tid} {nydato}</span><textarea data-tpl="${k}">${esc(v)}</textarea></label>`).join('')}</div>
   <div class="card"><h2>Lukkedage (ferie mv.)</h2><p class="small mute">Helligdage beregnes automatisk. Besøg på lukkedage flyttes til næste arbejdsdag ved planlægning.</p><div class="row"><input type="date" id="cd"><button data-act="addClosed">Tilføj</button></div><div class="small">${db.closedDays.map((d) => `<span class="pill">${d} <a href="#" data-act="rmClosed" data-d="${d}">×</a></span>`).join(' ')}</div></div>
-  <div class="card"><h2>Auditlog</h2><div style="max-height:320px;overflow:auto"><table><tr><th>Tid</th><th>Bruger</th><th>Handling</th><th>Ref</th></tr>${db.audit.slice(0, 200).map((a) => `<tr class="small"><td>${fmtTs(a.at)}</td><td>${esc(USERS.find((u) => u.id === a.by)?.name ?? a.by)}</td><td>${esc(a.action)}</td><td class="mute">${esc(a.ref)} ${esc(JSON.stringify(a.detail).slice(0, 80))}</td></tr>`).join('')}</table></div></div>`;
+  <div class="card"><h2>Auditlog</h2><div style="max-height:320px;overflow:auto"><table><tr><th>Tid</th><th>Bruger</th><th>Handling</th><th>Ref</th></tr>${db.audit.slice(0, 200).map((a) => `<tr class="small"><td>${fmtTs(a.at)}</td><td>${esc(userName(a.by))}</td><td>${esc(a.action)}</td><td class="mute">${esc(a.ref)} ${esc(JSON.stringify(a.detail).slice(0, 80))}</td></tr>`).join('')}</table></div></div>`;
   document.getElementById('comMonth').onchange = (e) => { ui.comMonth = e.target.value; render(); };
   document.getElementById('comVat').onchange = (e) => { db.settings.commissionInclVat = e.target.checked; S.audit(db, ui.user.id, 'commission.vat', '-', { inclVat: e.target.checked }); render(); };
   $view.querySelectorAll('[data-rate]').forEach((i) => (i.onchange = () => { const v = Number(i.value); if (!(v >= 0 && v <= 100)) return toast('Ugyldig sats'); const e = emp(i.dataset.rate); e.commissionRate = v / 100; S.audit(db, ui.user.id, 'commission.rate', e.id, { rate: v }); render(); }));
+  $view.querySelectorAll('[data-ef]').forEach((el) => (el.onchange = () => { const e = emp(el.dataset.e); const f = el.dataset.ef;
+    if (f === 'role' && el.value !== 'admin' && db.employees.filter((x) => !x.inactive && x.role === 'admin').length === 1 && e.role === 'admin') { toast('Der skal være mindst én admin'); return render(); }
+    e[f] = f === 'commissionRate' ? Math.min(100, Math.max(0, +el.value || 0)) / 100 : el.value.trim(); S.audit(db, ui.user.id, 'employee.edit', e.id, { [f]: e[f] }); render(); }));
   $view.querySelectorAll('[data-rf]').forEach((el) => (el.onchange = () => { const r = route(el.dataset.r); const f = el.dataset.rf; r[f] = f === 'intervalWeeks' ? Math.max(1, +el.value || 1) : el.value; S.audit(db, ui.user.id, 'route.edit', r.id, { [f]: r[f] }); render(); }));
   $view.querySelectorAll('[data-tpl]').forEach((t) => (t.onchange = () => { db.templates[t.dataset.tpl] = t.value; save(); toast('Skabelon gemt'); }));
   document.getElementById('restore').onchange = async (e) => { const f = e.target.files[0]; if (!f) return; try { const d = JSON.parse(await f.text()); if (!Array.isArray(d.customers) || !Array.isArray(d.visits)) throw new Error('Ugyldig backup'); if (!confirm(`Gendan ${d.customers.length} kunder? Nuværende data overskrives.`)) return; db = d; save(); location.reload(); } catch (err) { toast(err.message); } };
@@ -731,6 +747,10 @@ document.addEventListener('click', async (e) => {
       case 'selAll': { const all = ui._stops.every((v) => ui.sel.has(v.id)); ui._stops.forEach((v) => (all ? ui.sel.delete(v.id) : ui.sel.add(v.id))); break; }
       case 'bulkSms': return smsListDialog(ui._stops.filter((v) => ui.sel.has(v.id)), null, 'SMS til valgte', db.templates.varsel);
       case 'varselSent': return;
+      case 'empAdd': db.employees.push({ id: S.uid('e'), name: 'Ny medarbejder', role: 'medarbejder', commissionRate: db.settings.commissionRate }); break;
+      case 'empDel': { const e = emp(id); if (e.role === 'admin' && db.employees.filter((x) => !x.inactive && x.role === 'admin').length === 1) return toast('Der skal være mindst én admin');
+        const rs = db.routes.filter((r) => r.employeeId === id); if (!confirm(`Fjern ${e.name}?${rs.length ? ` ${rs.length} ruter flyttes til dig.` : ''} Historik og provision bevares.`)) return;
+        rs.forEach((r) => (r.employeeId = ui.user.employeeId)); e.inactive = true; S.audit(db, ui.user.id, 'employee.remove', id); break; }
       case 'addRoute': db.routes.push({ id: S.uid('r'), name: `Ny rute ${db.routes.length + 1}`, employeeId: db.employees[0].id, intervalWeeks: 4, anchorDate: D.nextWorkday(todayIso()) }); break;
       case 'bookVisit': { const a = db.agreements.find((x) => x.id === id); return openDlg(`<h2>Book besøg – ${esc(cust(a.customerId).name)}</h2><p class="small">${esc(a.service)} · ${esc(addr(a.addressId)?.street)}</p><label><span>Dato</span><input type="date" name="date" required value="${D.nextWorkday(D.addDays(todayIso(), 1), db.closedDays)}"></label><label><span>Rute (valgfri)</span><select name="routeId"><option value="">Ingen</option>${db.routes.map((r) => `<option value="${r.id}" ${r.id === a.routeId ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</select></label>`, (f) => { const v = D.manualVisit(a, f.date, db.visits); v.routeId = f.routeId || null; db.visits.push(v); S.audit(db, ui.user.id, 'visit.book', v.id); toast('Besøg booket'); }); }
       case 'print': window.print(); return;
@@ -750,8 +770,9 @@ function setOrder(addressIds) { const r = route(ui.route); r.order = [...address
 function download(name, obj) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); }
 
 const sel = document.getElementById('user');
-sel.innerHTML = USERS.map((u) => `<option value="${u.id}" ${u.id === ui.user.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('');
-sel.onchange = () => { ui.user = USERS.find((u) => u.id === sel.value); ui.customer = null; if (!isAdmin()) ui.tab = 'mobil'; render(); };
+function renderUserSelect() { sel.innerHTML = users().map((u) => `<option value="${u.id}" ${u.id === ui.user?.id ? 'selected' : ''}>${esc(u.name)}</option>`).join(''); }
+renderUserSelect();
+sel.onchange = () => { ui.user = users().find((u) => u.id === sel.value); ui.customer = null; if (!isAdmin()) ui.tab = 'mobil'; render(); };
 window.addEventListener('online', () => { ui.offline = false; flushOutbox(); render(); });
 window.addEventListener('offline', () => { ui.offline = true; render(); });
 // planlæg løbende 120 dage frem
