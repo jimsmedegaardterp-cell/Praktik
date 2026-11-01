@@ -7,7 +7,7 @@ import * as I from './import.js';
 import * as G from './gdpr.js';
 import * as SD from './stamdata.js';
 
-export const VERSION = '2026-11-01 #5';
+export const VERSION = '2026-11-01 #6';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = load();
@@ -634,7 +634,7 @@ function admin() {
   <div class="card"><h2>Ruter</h2>
     <table><tr><th>Navn</th><th>Medarbejder</th><th>Hver … uge</th><th>Næste dato</th></tr>${db.routes.map((r) => `<tr><td><input data-rf="name" data-r="${r.id}" value="${esc(r.name)}"></td><td><select data-rf="employeeId" data-r="${r.id}">${db.employees.filter((x) => !x.inactive).map((e) => `<option value="${e.id}" ${e.id === r.employeeId ? 'selected' : ''}>${esc(e.name)}</option>`).join('')}</select></td>
       <td><input type="number" min="1" max="52" data-rf="intervalWeeks" data-r="${r.id}" value="${r.intervalWeeks}" style="width:70px"></td><td><input type="date" data-rf="anchorDate" data-r="${r.id}" value="${D.nextRouteDate(r, todayIso())}"></td></tr>`).join('')}</table>
-    <div class="row" style="margin-top:8px"><button data-act="addRoute">+ Rute</button><button data-act="delEmptyRoutes">Slet ruter uden kunder</button></div>
+    <div class="row" style="margin-top:8px"><button data-act="addRoute">+ Rute</button><button data-act="delEmptyRoutes">Slet ruter uden kunder</button><button data-act="recalcRoutes">Genberegn rytme og dato ud fra kunderne</button></div>
     <p class="small mute">Ændring af rutens dato/rytme flytter ikke eksisterende besøg automatisk – brug Kalender (flyt/forskyd) eller ret aftalerne.</p></div>
   <div class="card"><h2>SMS-skabeloner</h2>${Object.entries(db.templates).map(([k, v]) => `<label><span>${esc(k)} – felter: {navn} {dato} {tid} {nydato}</span><textarea data-tpl="${k}">${esc(v)}</textarea></label>`).join('')}</div>
   <div class="card"><h2>Lukkedage (ferie mv.)</h2><p class="small mute">Helligdage beregnes automatisk. Besøg på lukkedage flyttes til næste arbejdsdag ved planlægning.</p><div class="row"><input type="date" id="cd"><button data-act="addClosed">Tilføj</button></div><div class="small">${db.closedDays.map((d) => `<span class="pill">${d} <a href="#" data-act="rmClosed" data-d="${d}">×</a></span>`).join(' ')}</div></div>
@@ -751,6 +751,13 @@ document.addEventListener('click', async (e) => {
       case 'selAll': { const all = ui._stops.every((v) => ui.sel.has(v.id)); ui._stops.forEach((v) => (all ? ui.sel.delete(v.id) : ui.sel.add(v.id))); break; }
       case 'bulkSms': return smsListDialog(ui._stops.filter((v) => ui.sel.has(v.id)), null, 'SMS til valgte', db.templates.varsel);
       case 'varselSent': return;
+      case 'recalcRoutes': { let n = 0; const t = todayIso();
+        for (const r of db.routes) { const ags = db.agreements.filter((g) => g.routeId === r.id && g.active && g.intervalWeeks); if (!ags.length) continue;
+          const iv = Math.min(...ags.map((g) => g.intervalWeeks));
+          // næste rigtige besøgsdato blandt rutens kunder (fra planlagte besøg, ellers aftalens dato)
+          const next = db.visits.filter((v) => v.routeId === r.id && v.status === 'planlagt' && v.plannedDate >= t).map((v) => v.rhythmDate).sort()[0] || ags.map((g) => g.anchorDate).sort()[0];
+          if (next && (r.intervalWeeks !== iv || !D.routeRuns({ ...r, intervalWeeks: iv }, next) || r.anchorUnknown)) { r.intervalWeeks = iv; r.anchorDate = next; delete r.anchorUnknown; n++; } }
+        S.audit(db, ui.user.id, 'route.recalc', '-', { n }); toast(n ? `${n} ruter fik ny rytme/dato – tjek dem mod SkvizBiz` : 'Ruterne passer allerede med kunderne'); break; }
       case 'delEmptyRoutes': { const empty = db.routes.filter((r) => !db.agreements.some((g) => g.routeId === r.id) && !db.visits.some((v) => v.routeId === r.id)); if (!empty.length) return toast('Ingen tomme ruter');
         if (!confirm(`Slet ${empty.length} ruter uden kunder?`)) return; db.routes = db.routes.filter((r) => !empty.includes(r)); S.audit(db, ui.user.id, 'route.deleteEmpty', '-', { n: empty.length }); toast(`${empty.length} ruter slettet`); break; }
       case 'empAdd': db.employees.push({ id: S.uid('e'), name: 'Ny medarbejder', role: 'medarbejder', commissionRate: db.settings.commissionRate }); break;
