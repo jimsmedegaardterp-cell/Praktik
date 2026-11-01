@@ -35,3 +35,7 @@
 | 32 | 2026-11-01 | pdf.js 3.11.174 (Apache-2.0) ligger i `vendor/` og hentes kun ved import | Ingen CDN-afhængighed, virker uden ekstern adgang |
 | 33 | 2026-11-01 | Kundefelter som SkvizBiz: kundegruppe, fastnet, CVR, kontaktperson, fakturatype, fakturainterval, betalingsdage, ring/SMS før, SMS efter, husk hver gang (adresse), husk næste gang (engangsnote, slettes ved færdigmelding), internt notat | Ejerens screenshots |
 | 34 | 2026-11-01 | "SMS før besøg"-listen viser kun kunder med SMS før besøg = Ja | Som i SkvizBiz |
+| 35 | 2026-11-01 | Import af SkvizBiz' GDPR-udtræk (zip eller udpakket mappe): kun `data.json` pr. kunde læses, i browseren, med egen zip-læser (ingen afhængighed) | Bedste datakilde; PDF-fakturaer ligger i e-conomic/arkiv |
+| 36 | 2026-11-01 | Felter som `portal_password`, `cache_*` og lignende læses aldrig | Dataminimering/sikkerhed |
+| 37 | 2026-11-01 | Aftaler findes ved at lede efter lister med interval/pris/næste/rute – feltnavne SKAL VERIFICERES; forhåndsvisningen viser ukendte felter og hvor aftaler blev fundet | Kun ét eksempel set |
+| 38 | 2026-11-01 | Ruter fra udtrækket, der ikke findes i appen, kan oprettes med ét klik (rytme = mindste interval, dato = tidligste næste gang) | Hurtig start |
