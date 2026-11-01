@@ -7,7 +7,7 @@ import * as I from './import.js';
 import * as G from './gdpr.js';
 import * as SD from './stamdata.js';
 
-export const VERSION = '2026-11-01 #8';
+export const VERSION = '2026-11-01 #9';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = load();
@@ -38,6 +38,8 @@ const cust = (id) => db.customers.find((c) => c.id === id);
 const addr = (id) => db.addresses.find((a) => a.id === id);
 const route = (id) => db.routes.find((r) => r.id === id);
 const routeWhen = (r) => `hver ${r.intervalWeeks}. uge · næste ${fmt(D.nextRouteDate(r, todayIso()) || todayIso())}`;
+/** Første dag (fra i dag) hvor ruten har planlagte besøg; ellers rutens beregnede dato. */
+const nextRouteDay = (r, from = todayIso()) => db.visits.filter((v) => v.routeId === r.id && v.plannedDate >= from && (v.status === 'planlagt' || v.status === 'udsat')).map((v) => v.plannedDate).sort()[0] || D.nextRouteDate(r, from);
 const mins = (vs) => vs.filter((v) => v.status !== 'aflyst').reduce((s, v) => s + (v.durationMin ?? 15), 0);
 const agrDesc = (a) => a.intervalWeeks ? `Hver ${a.intervalWeeks}. uge` : 'Ikke fast';
 const emp = (id) => db.employees.find((e) => e.id === id);
@@ -347,7 +349,7 @@ const splitTxt = (sp) => sp.length ? sp.map((x) => `${esc(emp(x.employeeId)?.nam
 function ruter() {
   if (!ui.route || !route(ui.route)) return ruteOversigt();
   const r = route(ui.route);
-  if (!routeStops(r.id, ui.day).length && !D.routeRuns(r, ui.day)) ui.day = D.nextRouteDate(r, todayIso()) || ui.day;
+  if (!routeStops(r.id, ui.day).length && ui._routeDayFor !== r.id + ui.day) { ui.day = nextRouteDay(r) || ui.day; ui._routeDayFor = r.id + ui.day; };
   const day = ui.day; const key = r.id + '|' + day;
   const stops = routeStops(r.id, day); const pts = stops.map((v) => addr(v.addressId));
   const sug = suggestOrder(pts); const cur = routeKm(pts);
@@ -384,7 +386,7 @@ function ruter() {
       <tr><td colspan="5"><b>I alt (ekskl. moms)</b></td><td style="text-align:right"><b>${kr(total)}</b></td><td colspan="2"></td><td><b>${D.hm(mins(stops))}</b></td><td class="noprint"></td></tr></table>
     <div class="row noprint" style="margin-top:8px"><button data-act="applySuggest" ${sug.km >= cur ? 'disabled' : ''}>Brug foreslået rækkefølge${sug.km < cur ? ` (sparer ca. ${Math.round((cur - sug.km) * 1.3)} km)` : ''}</button><span class="small mute">Kørsel = luftlinje × 1,3. Rigtige køretider kræver Google Routes API.</span></div>` : '<p class="mute">Ingen besøg på ruten denne dag.</p>'}</div>`;
   }
-  document.getElementById('rsel').onchange = (e) => { ui.route = e.target.value; ui.day = D.nextRouteDate(route(ui.route), todayIso()) || todayIso(); ui.sel = new Set(); render(); };
+  document.getElementById('rsel').onchange = (e) => { ui.route = e.target.value; ui.day = nextRouteDay(route(ui.route)) || todayIso(); ui.sel = new Set(); render(); };
   document.getElementById('rday').onchange = (e) => { ui.day = e.target.value; render(); };
   $view.querySelectorAll('[data-sel]').forEach((c) => (c.onchange = () => { c.checked ? ui.sel.add(c.dataset.sel) : ui.sel.delete(c.dataset.sel); render(); }));
   const upd = (id, f) => { dr[id] = { ...(dr[id] || {}), ...f }; };
@@ -412,7 +414,7 @@ function ruteOversigt() {
   for (const ag of db.agreements) for (const v of [...D.generateVisits(ag, t, end, [], db.closedDays), ...db.visits.filter((x) => x.agreementId === ag.id && x.manual && x.plannedDate >= t)]) { const n = (load.get(v.plannedDate) || 0) + 1; load.set(v.plannedDate, n); maxN = Math.max(maxN, n); }
   const weeks = []; for (let w = D.addDays(t, -D.weekday(t)); w <= end; w = D.addDays(w, 7)) weeks.push(w);
   const MONTHS = ['jan', 'feb', 'mar', 'apr', 'maj', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec'];
-  const rows = db.routes.map((r) => { const ags = db.agreements.filter((a) => a.routeId === r.id && a.active); const next = D.nextRouteDate(r, t);
+  const rows = db.routes.map((r) => { const ags = db.agreements.filter((a) => a.routeId === r.id && a.active); const next = nextRouteDay(r, t);
     return { r, n: new Set(ags.map((a) => a.customerId)).size, year: ags.reduce((s, a) => s + D.annualRevenue(a), 0), min: ags.filter((a) => next && D.generateVisits(a, next, next).length).reduce((s, a) => s + (a.durationMin ?? 15), 0), next }; });
   const tot = rows.reduce((s, x) => s + x.year, 0);
   $view.innerHTML = `<div class="card"><div class="row"><h2 class="sp">Faste ruter (${db.routes.length})</h2><button data-act="addRoute">+ Opret rute</button></div>
@@ -670,7 +672,7 @@ document.addEventListener('click', async (e) => {
   const cu = e.target.closest('[data-cust]'); if (cu) { e.preventDefault(); document.getElementById('dlg').open && document.getElementById('dlg').close(); ui.tab = 'kunder'; ui.customer = cu.dataset.cust; return render(); }
   const sl = e.target.closest('[data-smsi]'); if (sl) { const x = ui._smsList[+sl.dataset.smsi]; logManualSms(x.c, x.text); sl.textContent = '✓ Sendt'; sl.classList.remove('pri'); return; }
   const vs_ = e.target.closest('[data-varsel]'); if (vs_) { const v = db.visits.find((x) => x.id === vs_.dataset.varsel); const c = cust(v.customerId); logManualSms(c, vs_.dataset.text, 'varsel:' + v.id); setTimeout(render, 300); return; }
-  const rt = e.target.closest('[data-route]'); if (rt) { ui.tab = 'ruter'; ui.routeMode = 'fm'; ui.sel = new Set(); ui.route = rt.dataset.route; ui.day = rt.dataset.day || D.nextRouteDate(route(ui.route), todayIso()) || todayIso(); return render(); }
+  const rt = e.target.closest('[data-route]'); if (rt) { ui.tab = 'ruter'; ui.routeMode = 'fm'; ui.sel = new Set(); ui.route = rt.dataset.route; ui.day = rt.dataset.day || nextRouteDay(route(ui.route)) || todayIso(); return render(); }
   const ch = e.target.closest('.vline[data-visit]'); if (ch) return visitDialog(ch.dataset.visit);
   const b = e.target.closest('[data-act]'); if (!b) return;
   const id = b.dataset.id; const act = b.dataset.act;
@@ -724,7 +726,8 @@ document.addEventListener('click', async (e) => {
         if (upd) setTimeout(() => toast(`${c.customers} nye kunder · ${upd} eksisterende aftaler har fået rute · ${Object.keys(rids).length} ruter oprettet`), 50);
         S.audit(db, ui.user.id, 'import.apply', batchId, { file: st.fileName, ...c, routes: Object.keys(rids).length }); ui.imp = null; toast(`${c.customers} kunder, ${c.agreements} aftaler, ${c.visits} besøg importeret`); break; }
       case 'impUndo': if (!confirm('Fortryd importen? Alle kunder fra den slettes.')) return; I.rollbackImport(db, id); S.audit(db, ui.user.id, 'import.rollback', id); toast('Import fortrudt'); break;
-      case 'rnext': { const r = route(ui.route); let d = D.addDays(ui.day, +b.dataset.d); for (let i = 0; i < 400 && !D.routeRuns(r, d); i++) d = D.addDays(d, +b.dataset.d); ui.day = d; break; }
+      case 'rnext': { const r = route(ui.route); const dir = +b.dataset.d; let d = D.addDays(ui.day, dir);
+        for (let i = 0; i < 400 && !D.routeRuns(r, d) && !db.visits.some((v) => v.routeId === r.id && v.plannedDate === d); i++) d = D.addDays(d, dir); ui.day = d; ui._routeDayFor = r.id + d; break; }
       case 'rmode': ui.routeMode = b.dataset.m; break;
       case 'fmSet': for (const v of ui._stops) if (ui.sel.has(v.id) && v.status === 'planlagt') ui._draft[v.id] = { ...(ui._draft[v.id] || {}), result: b.dataset.r }; break;
       case 'fmSplit': return splitDialog(ui._stops.filter((v) => ui.sel.has(v.id) && v.status === 'planlagt'));

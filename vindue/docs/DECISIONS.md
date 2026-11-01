@@ -51,3 +51,4 @@
 | 48 | 2026-11-01 | Cache-busting: import map i index.html giver alle JS-moduler `?v=N`; ved hver udgivelse hæves N og VERSION i app.js | Browseren kørte gammel kode efter opdatering (GitHub Pages cacher 10 min) |
 | 49 | 2026-11-01 | Admin → Ruter: "Genberegn rytme og dato ud fra kunderne" | Reparation af ruter uden at importere igen |
 | 50 | 2026-11-01 | Stamdata: e-mail i telefonfeltet (kunder uden tlf.) flyttes til e-mail; fejl vises før advarsler; preview viser hvor mange rutekunder der blev fundet i stamdata | Set i ejerens forhåndsvisning |
+| 51 | 2026-11-01 | Rute åbner på første dag med planlagte besøg; "Næste" i rutelisten = første besøgsdag; Forrige/Næste gang springer også til dage med besøg | Besøg der allerede er åbne/udskrevet i SkvizBiz kommer ikke med i stamdata ("Næste gang" er efter dem) |
