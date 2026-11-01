@@ -7,6 +7,7 @@ import * as I from './import.js';
 import * as G from './gdpr.js';
 import * as SD from './stamdata.js';
 
+export const VERSION = '2026-11-01 #5';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = load();
@@ -64,7 +65,7 @@ function render() {
   if (!users().some((u) => u.id === ui.user?.id)) ui.user = users().find((u) => u.role === 'admin') || users()[0];
   renderUserSelect();
   renderTabs();
-  const tag = document.querySelector('.tag'); if (tag) tag.textContent = db.settings.realData ? 'PROTOTYPE · data gemmes kun i denne browser · ingen rigtige SMS/fakturaer' : 'PROTOTYPE · testdata · ingen rigtige SMS/fakturaer';
+  const tag = document.querySelector('.tag'); if (tag) tag.textContent = (db.settings.realData ? 'PROTOTYPE · data gemmes kun i denne browser' : 'PROTOTYPE · testdata') + ' · version ' + VERSION;
   const net = document.getElementById('net'); net.textContent = ui.offline ? `Offline${ui.outbox.length ? ` · ${ui.outbox.length} i kø` : ''}` : 'Online'; net.className = 'pill ' + (ui.offline ? 'bad' : 'ok');
   ({ overblik, kunder, kalender, ruter, mobil, faktura, sms: beskeder, import: importView, admin })[ui.tab]();
   save();
@@ -419,7 +420,7 @@ function ruteOversigt() {
     ${['M', 'T', 'O', 'T', 'F'].map((dn, i) => `<tr><td class="hm">${dn}</td>${weeks.map((w) => { const d = D.addDays(w, i); const n = load.get(d) || 0; return `<td title="${fmt(d)}: ${n} besøg" style="background:${n ? `rgba(31,95,139,${0.15 + 0.85 * n / maxN})` : 'var(--chip)'}"></td>`; }).join('')}</tr>`).join('')}</table></div>
     <p class="small mute">Belastning pr. dag de næste 12 måneder (mørkere = flere besøg).</p></div>
   <div class="card"><table class="clickable"><tr><th>Rutenavn</th><th>Medarbejder</th><th>Rytme</th><th>Størrelse</th><th>Næste</th><th style="text-align:right">Oms./år</th><th style="text-align:right">Inkl. moms</th><th>Tid næste gang</th></tr>
-    ${rows.map((x) => `<tr data-route="${x.r.id}"><td><b>${esc(x.r.name)}</b></td><td>${esc(emp(x.r.employeeId)?.name)}</td><td>hver ${x.r.intervalWeeks}. uge</td><td>${x.n} kunder</td><td>${x.next ? fmt(x.next) + ' ' + x.next.slice(0, 4) : '–'}</td><td style="text-align:right">${kr(Math.round(x.year))}</td><td style="text-align:right">${kr(Math.round(x.year * 1.25))}</td><td>${D.hm(x.min)}</td></tr>`).join('')}
+    ${rows.map((x) => `<tr data-route="${x.r.id}"><td><b>${esc(x.r.name)}</b></td><td>${esc(emp(x.r.employeeId)?.name)}</td><td>hver ${x.r.intervalWeeks}. uge</td><td>${x.n} kunder</td><td>${x.r.anchorUnknown ? '<span style="color:var(--bad)">ukendt – sæt dato under Admin</span>' : x.next ? fmt(x.next) + ' ' + x.next.slice(0, 4) : '–'}</td><td style="text-align:right">${kr(Math.round(x.year))}</td><td style="text-align:right">${kr(Math.round(x.year * 1.25))}</td><td>${D.hm(x.min)}</td></tr>`).join('')}
     <tr><td colspan="5"><b>Total</b></td><td style="text-align:right"><b>${kr(Math.round(tot))}</b></td><td style="text-align:right"><b>${kr(Math.round(tot * 1.25))}</b></td><td></td></tr></table>
     <p class="small mute">Oms./år er beregnet ud fra aftalernes pris, interval og sæson.</p></div>`;
 }
@@ -540,7 +541,7 @@ function importView() {
       ${st.overviews?.length ? `<table style="margin-top:8px"><tr><th>Ruteoversigt</th><th>Kunder</th><th>Fundet i stamdata</th><th>Rute i appen</th></tr>${st.overviews.map((o, i) => { const nr = plan.newRoutes?.find((x) => x.name === o.routeName);
       return `<tr><td>${esc(o.routeName || o.fileName)}</td><td>${o.rows.length}</td><td>${nr ? nr.matched : '–'}</td><td>${nr ? `<span class="pill">ny</span> hver ${nr.intervalWeeks}. uge · næste ${nr.anchorDate ? fmt(nr.anchorDate) + ' ' + nr.anchorDate.slice(0, 4) : '<span style="color:var(--warn)">ukendt</span>'}` : '<span class="pill ok">findes</span>'} <button data-act="ovRemove" data-i="${i}">Fjern</button></td></tr>`; }).join('')}</table>` : ''}
       <p class="small">GDPR-udtræk: ${st.gdprMap ? `<b>${Object.keys(st.gdprMap).length} kunder</b> (${esc(st.gdprName)})` : '<span class="mute">ikke tilføjet – valgfrit</span>'}</p></div>
-    <div class="card"><h2>Forhåndsvisning</h2>${plan.newRoutes?.length || plan.routeUpdates?.length ? `<p><b>${plan.newRoutes.length}</b> nye ruter · <b>${plan.routeUpdates.length}</b> eksisterende kunder får rute og rækkefølge</p>` : ''}<p><b>${plan.customers.length}</b> nye kunder · <b>${nAgr}</b> aftaler${plan.skipped ? ` · ${plan.skipped} slettede sprunget over` : ''}</p>
+    <div class="card"><h2>Forhåndsvisning</h2>${plan.newRoutes?.length || plan.routeUpdates?.length ? `<p><b>${plan.newRoutes.length}</b> nye ruter${plan.resetRoutes?.length ? ` · <b>${plan.resetRoutes.length}</b> tomme ruter får rytme og dato` : ''} · <b>${plan.routeUpdates.length}</b> eksisterende kunder får rute og rækkefølge</p>` : ''}<p><b>${plan.customers.length}</b> nye kunder · <b>${nAgr}</b> aftaler${plan.skipped ? ` · ${plan.skipped} slettede sprunget over` : ''}</p>
       ${plan.duplicates.length ? `<div class="warnbox">${plan.duplicates.length} findes allerede (samme kundenr.) og springes over. <label><input type="checkbox" id="impDup" ${st.includeDup ? 'checked' : ''}> Importér dem alligevel</label></div>` : ''}
       ${plan.issues.length ? `<details ${plan.errors ? 'open' : ''}><summary>${plan.errors} fejl, ${plan.issues.length - plan.errors} advarsler</summary><table>${plan.issues.slice(0, 300).map((i) => `<tr class="small"><td>${esc(i.line)}</td><td style="color:var(${i.warn ? '--warn' : '--bad'})">${esc(i.msg)}</td></tr>`).join('')}</table></details>` : '<p class="pill ok">Ingen problemer fundet</p>'}
       <div style="max-height:420px;overflow:auto;margin-top:10px"><table><tr><th>Kundenr.</th><th>Navn</th><th>Adresse</th><th>Tlf.</th><th>Husk hver gang</th><th>Aftaler</th><th>Faktura</th></tr>${plan.customers.slice(0, 600).map((c) => `<tr class="small" style="${c.dupeOf ? 'opacity:.5' : ''}"><td>${esc(c.extId || '–')}${c.routeNr ? `<div class="mute">nr. ${c.routeNr}</div>` : ''}</td><td>${esc(c.name)}</td><td>${esc(c.addresses[0].street)}</td><td>${esc(c.phone)}</td><td>${esc(c.addresses[0].access)}</td>
@@ -633,7 +634,7 @@ function admin() {
   <div class="card"><h2>Ruter</h2>
     <table><tr><th>Navn</th><th>Medarbejder</th><th>Hver … uge</th><th>Næste dato</th></tr>${db.routes.map((r) => `<tr><td><input data-rf="name" data-r="${r.id}" value="${esc(r.name)}"></td><td><select data-rf="employeeId" data-r="${r.id}">${db.employees.filter((x) => !x.inactive).map((e) => `<option value="${e.id}" ${e.id === r.employeeId ? 'selected' : ''}>${esc(e.name)}</option>`).join('')}</select></td>
       <td><input type="number" min="1" max="52" data-rf="intervalWeeks" data-r="${r.id}" value="${r.intervalWeeks}" style="width:70px"></td><td><input type="date" data-rf="anchorDate" data-r="${r.id}" value="${D.nextRouteDate(r, todayIso())}"></td></tr>`).join('')}</table>
-    <button data-act="addRoute" style="margin-top:8px">+ Rute</button>
+    <div class="row" style="margin-top:8px"><button data-act="addRoute">+ Rute</button><button data-act="delEmptyRoutes">Slet ruter uden kunder</button></div>
     <p class="small mute">Ændring af rutens dato/rytme flytter ikke eksisterende besøg automatisk – brug Kalender (flyt/forskyd) eller ret aftalerne.</p></div>
   <div class="card"><h2>SMS-skabeloner</h2>${Object.entries(db.templates).map(([k, v]) => `<label><span>${esc(k)} – felter: {navn} {dato} {tid} {nydato}</span><textarea data-tpl="${k}">${esc(v)}</textarea></label>`).join('')}</div>
   <div class="card"><h2>Lukkedage (ferie mv.)</h2><p class="small mute">Helligdage beregnes automatisk. Besøg på lukkedage flyttes til næste arbejdsdag ved planlægning.</p><div class="row"><input type="date" id="cd"><button data-act="addClosed">Tilføj</button></div><div class="small">${db.closedDays.map((d) => `<span class="pill">${d} <a href="#" data-act="rmClosed" data-d="${d}">×</a></span>`).join(' ')}</div></div>
@@ -644,7 +645,7 @@ function admin() {
   $view.querySelectorAll('[data-ef]').forEach((el) => (el.onchange = () => { const e = emp(el.dataset.e); const f = el.dataset.ef;
     if (f === 'role' && el.value !== 'admin' && db.employees.filter((x) => !x.inactive && x.role === 'admin').length === 1 && e.role === 'admin') { toast('Der skal være mindst én admin'); return render(); }
     e[f] = f === 'commissionRate' ? Math.min(100, Math.max(0, +el.value || 0)) / 100 : el.value.trim(); S.audit(db, ui.user.id, 'employee.edit', e.id, { [f]: e[f] }); render(); }));
-  $view.querySelectorAll('[data-rf]').forEach((el) => (el.onchange = () => { const r = route(el.dataset.r); const f = el.dataset.rf; r[f] = f === 'intervalWeeks' ? Math.max(1, +el.value || 1) : el.value; S.audit(db, ui.user.id, 'route.edit', r.id, { [f]: r[f] }); render(); }));
+  $view.querySelectorAll('[data-rf]').forEach((el) => (el.onchange = () => { const r = route(el.dataset.r); const f = el.dataset.rf; r[f] = f === 'intervalWeeks' ? Math.max(1, +el.value || 1) : el.value; if (f === 'anchorDate') delete r.anchorUnknown; S.audit(db, ui.user.id, 'route.edit', r.id, { [f]: r[f] }); render(); }));
   $view.querySelectorAll('[data-tpl]').forEach((t) => (t.onchange = () => { db.templates[t.dataset.tpl] = t.value; save(); toast('Skabelon gemt'); }));
   document.getElementById('restore').onchange = async (e) => { const f = e.target.files[0]; if (!f) return; try { const d = JSON.parse(await f.text()); if (!Array.isArray(d.customers) || !Array.isArray(d.visits)) throw new Error('Ugyldig backup'); if (!confirm(`Gendan ${d.customers.length} kunder? Nuværende data overskrives.`)) return; db = d; save(); location.reload(); } catch (err) { toast(err.message); } };
 }
@@ -750,6 +751,8 @@ document.addEventListener('click', async (e) => {
       case 'selAll': { const all = ui._stops.every((v) => ui.sel.has(v.id)); ui._stops.forEach((v) => (all ? ui.sel.delete(v.id) : ui.sel.add(v.id))); break; }
       case 'bulkSms': return smsListDialog(ui._stops.filter((v) => ui.sel.has(v.id)), null, 'SMS til valgte', db.templates.varsel);
       case 'varselSent': return;
+      case 'delEmptyRoutes': { const empty = db.routes.filter((r) => !db.agreements.some((g) => g.routeId === r.id) && !db.visits.some((v) => v.routeId === r.id)); if (!empty.length) return toast('Ingen tomme ruter');
+        if (!confirm(`Slet ${empty.length} ruter uden kunder?`)) return; db.routes = db.routes.filter((r) => !empty.includes(r)); S.audit(db, ui.user.id, 'route.deleteEmpty', '-', { n: empty.length }); toast(`${empty.length} ruter slettet`); break; }
       case 'empAdd': db.employees.push({ id: S.uid('e'), name: 'Ny medarbejder', role: 'medarbejder', commissionRate: db.settings.commissionRate }); break;
       case 'empDel': { const e = emp(id); if (e.role === 'admin' && db.employees.filter((x) => !x.inactive && x.role === 'admin').length === 1) return toast('Der skal være mindst én admin');
         const rs = db.routes.filter((r) => r.employeeId === id); if (!confirm(`Fjern ${e.name}?${rs.length ? ` ${rs.length} ruter flyttes til dig.` : ''} Historik og provision bevares.`)) return;

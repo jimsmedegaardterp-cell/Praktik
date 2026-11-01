@@ -47,3 +47,4 @@
 | 44 | 2026-11-01 | "Start tomt (til rigtige data)" sletter testdata; topbjælken viser om appen kører på testdata eller rigtige data | Undgå blanding af test- og rigtige kunder |
 | 45 | 2026-11-01 | Brugere i topbjælken = appens medarbejdere (ikke hårdkodet); medarbejdere oprettes/omdøbes/fjernes under Admin; mindst én admin; fjernede beholdes til historik/provision | "Mads" var testdata og var låst fast |
 | 46 | 2026-11-01 | Ruteoversigter kan importeres efter kunderne: eksisterende kunder (navn + adresse) får rute på faste aftaler og planlagte besøg samt rækkefølge | Ejer importerede kunder uden ruter |
+| 47 | 2026-11-01 | Tomme ruter (fx fra import med gammel version) får rytme og dato ved ny import af ruteoversigter; reserve-match på adresse + postnr. når navn afviger; ukendt rutedato vises som "ukendt"; versionsnummer i topbjælken; "Slet ruter uden kunder" | Ejers import blev kørt med cachet gammel version |
