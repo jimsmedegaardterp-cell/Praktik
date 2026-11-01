@@ -9,3 +9,7 @@
 | 6 | 2026-11-01 | Helligdag → næste arbejdsdag, grundrytme uændret | Projektbeskrivelse §3 |
 | 7 | 2026-11-01 | Medarbejders prisændring > ±20 % kræver admin | Godkendelsesregel (§2), tal kan ændres |
 | 8 | 2026-11-01 | "Send fra egen telefon" (sms:-link) som gratis manuel mulighed | Ikke automatisk udsendelse; svar lander på telefonen |
+| 9 | 2026-11-01 | Størrelse: ejer + 1–2 medarbejdere, 300–800 kunder | Ejerens svar |
+| 10 | 2026-11-01 | Data hentes via Excel/CSV-eksport fra SkvizBiz → importværktøj med preview | Ejerens svar |
+| 11 | 2026-11-01 | SMS: gratis fra egen telefon (sms:-link). Ingen gateway nu → svar kommer på telefonen, ikke i appen | Ejerens svar. Gateway-adapter bevares, så det kan slås til senere |
+| 12 | 2026-11-01 | Hosting: Supabase i EU-region | Ejerens svar |
