@@ -9,7 +9,7 @@ import * as SD from './stamdata.js';
 import * as RS from './rutesedel.js';
 import * as DP from './dayplan.js';
 
-export const VERSION = '2026-11-01 #25';
+export const VERSION = '2026-11-01 #26';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = load();
@@ -481,8 +481,9 @@ function printView() {
   const keys = [...(ui.printSet || [])].map((k) => k.split('|')).filter(([rid]) => route(rid));
   const byDay = new Map(); for (const [rid, d] of keys) byDay.set(d, [...(byDay.get(d) || []), rid]);
   const days = [...byDay.keys()].sort();
-  const invVisits = days.flatMap((d) => byDay.get(d).flatMap((rid) => routeStops(rid, d))).filter((v) => v.status === 'planlagt' || v.status === 'udsat').filter((v) => { const c = cust(v.customerId); return ((c.billTo && cust(c.billTo)) || c).invoiceType === 'print'; });
-  $view.innerHTML = `<div class="toolbar noprint"><button data-act="planBack">← Kalender</button><h2 class="sp">Udskriv ${days.length} ${days.length === 1 ? 'dag' : 'dage'} · ${invVisits.length} A4-fakturaer</h2><button class="pri" data-act="print">🖨 Udskriv</button></div>
+  // A4-fakturaer er slået fra indtil e-conomic er koblet på (fakturanumre skal komme derfra)
+  const invVisits = !db.settings.printInvoices ? [] : days.flatMap((d) => byDay.get(d).flatMap((rid) => routeStops(rid, d))).filter((v) => v.status === 'planlagt' || v.status === 'udsat').filter((v) => { const c = cust(v.customerId); return ((c.billTo && cust(c.billTo)) || c).invoiceType === 'print'; });
+  $view.innerHTML = `<div class="toolbar noprint"><button data-act="planBack">← Kalender</button><h2 class="sp">Udskriv ${days.length} ${days.length === 1 ? 'dag' : 'dage'}${invVisits.length ? ` · ${invVisits.length} A4-fakturaer` : ''}</h2><button class="pri" data-act="print">🖨 Udskriv</button></div>
     ${invVisits.length ? '<p class="small mute noprint">Fakturaerne er til kunder med fakturatype "Papir". Fakturanummer tildeles, når fakturaen bogføres i e-conomic.</p>' : ''}
     <div class="card sheet">${days.map((d) => daySheetHtml(d, byDay.get(d).sort((a, b) => route(a).name.localeCompare(route(b).name)))).join('')}${invVisits.map(invoiceHtml).join('')}</div>`;
 }
@@ -933,7 +934,7 @@ function admin() {
     <div class="card"><h2>Data & backup</h2><div class="row"><button data-act="backup">Download backup (JSON)</button><label class="btn">Gendan…<input type="file" id="restore" accept=".json" hidden></label><button data-act="planMore">Planlæg 6 mdr. frem</button><button class="bad" data-act="reset">Nulstil til testdata</button><button class="bad" data-act="wipe">Start tomt (til rigtige data)</button></div>
       <p class="small mute">Prototypen gemmer i denne browser (localStorage). ${db.customers.length} kunder · ${db.visits.length} besøg · ${db.audit.length} logposter.</p></div>
   </div>
-  <div class="card"><h2>Firma (bruges på A4-fakturaer)</h2><div class="grid">${[['name', 'Firmanavn', 'Sindal Vinduespolering'], ['address', 'Adresse', 'Vej 1, 9870 Sindal'], ['cvr', 'CVR', ''], ['phone', 'Telefon', ''], ['email', 'E-mail', ''], ['bank', 'Bank reg. og konto', '1234 1234567'], ['mobilepay', 'MobilePay-nr.', '']].map(([k, l, ph]) => `<label><span>${l}</span><input data-firm="${k}" value="${esc(db.settings.firm?.[k] || '')}" placeholder="${ph}"></label>`).join('')}</div></div>
+  ${!db.settings.printInvoices ? '' : `<div class="card"><h2>Firma (bruges på A4-fakturaer)</h2><div class="grid">${[['name', 'Firmanavn', 'Sindal Vinduespolering'], ['address', 'Adresse', 'Vej 1, 9870 Sindal'], ['cvr', 'CVR', ''], ['phone', 'Telefon', ''], ['email', 'E-mail', ''], ['bank', 'Bank reg. og konto', '1234 1234567'], ['mobilepay', 'MobilePay-nr.', '']].map(([k, l, ph]) => `<label><span>${l}</span><input data-firm="${k}" value="${esc(db.settings.firm?.[k] || '')}" placeholder="${ph}"></label>`).join('')}</div></div>`}
   <div class="card"><h2>Kørsel og Google Maps</h2>
     <div class="grid"><label><span>Firmaets startadresse (her starter og slutter dagen)</span><input id="stAddr" value="${esc(db.settings.start?.address || '')}" placeholder="Vej 1, 9870 Sindal"></label>
       <label><span>Koordinater for startadresse (valgfrit, "57.47, 10.21" – højreklik i Google Maps)</span><input id="stLL" value="${db.settings.start?.lat != null ? db.settings.start.lat + ', ' + db.settings.start.lng : ''}"></label>
