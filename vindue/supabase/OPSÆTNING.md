@@ -19,7 +19,7 @@ Tager ca. 10 minutter. Du kan bruge samme Supabase-konto som til andre apps, men
 1. **Authentication → URL Configuration**
    - Site URL: `https://jimsmedegaardterp-cell.github.io/Praktik/vindue/`
    - Redirect URLs: tilføj samme adresse.
-2. **Authentication → Sign In / Providers → Email**: skal være slået til. Lad "Confirm email" være slået til.
+2. **Authentication → Sign In / Providers → Email**: skal være slået til. Slå **"Confirm email" fra**, indtil der er sat egen mailserver (SMTP) op – Supabase' indbyggede mails er meget begrænsede og havner ofte ikke i indbakken.
 
 ## 4. Forbind appen
 1. **Project Settings → API Keys** (eller "Data API"): kopiér
@@ -29,7 +29,7 @@ Tager ca. 10 minutter. Du kan bruge samme Supabase-konto som til andre apps, men
 3. Send de to værdier til Claude, så de lægges ind i `js/config.js` (så virker det automatisk på alle enheder) – eller indtast dem selv i appen under **Admin → Fælles database og login → Forbind** (gælder kun den browser).
 
 ## 5. Første login
-1. Åbn appen → **Opret ny bruger** med din e-mail → bekræft via mailen → log ind.
+1. Åbn appen → **Opret ny bruger** med din e-mail → (log ind, hvis "Confirm email" er slået til: bekræft via mailen først).
 2. Vælg **Opret firma**.
 3. Vælg **Upload de data, der ligger på denne computer** (hvis du har importeret kunderne) eller **Start tomt**.
 4. Opret dine medarbejdere under **Admin → Medarbejdere**, og lav en **invitationskode** til hver under **Admin → Brugere og adgang**.
@@ -39,7 +39,11 @@ Tager ca. 10 minutter. Du kan bruge samme Supabase-konto som til andre apps, men
 - Gratis-planen kan sætte projekter på pause efter en periode uden aktivitet og har begrænset backup. Tjek gældende vilkår; overvej betalt plan før rigtig drift.
 - Tag stadig jævnligt **Admin → Download backup**.
 
+## Opdateringer af skemaet
+Når `schema.sql` ændres (står i ændringsbeskrivelsen), så kør hele filen igen i **SQL Editor** – **før** den nye version af appen tages i brug. Data slettes ikke.
+
 ## Hvordan det virker
 - Appen gemmer lokalt og synkroniserer hvert 30. sekund, når du gemmer, og når appen åbnes. Status ses øverst til højre ("✓ Synk 12:03"). Klik på den for at synkronisere nu.
-- Adgang styres i databasen (Row Level Security): kun brugere i firmaet ser data; medarbejdere kan kun ændre besøg, kladder, SMS-log og auditlog.
+- Adgang styres i databasen (Row Level Security): kun brugere i firmaet ser data. Medarbejdere ser kun kunder, aftaler og besøg på **egne ruter** (plus rutenavne og fælles indstillinger) og kan kun ændre besøg, kladder, SMS-log og egne logposter. Flyttes en rute til en anden medarbejder, forsvinder kunderne fra den gamles telefon næste gang appen åbnes.
+- Data på enheden ligger i browserens IndexedDB, adskilt pr. bruger.
 - Test af reglerne: `vindue/supabase/test/run.sh` (kræver lokal PostgreSQL).

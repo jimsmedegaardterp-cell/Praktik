@@ -34,13 +34,13 @@ export class SupabaseCloud {
   async removeMember(orgId, userId) { const { error } = await this.c.from('members').delete().eq('org_id', orgId).eq('user_id', userId); err(error); }
   async deleteInvite(code) { const { error } = await this.c.from('invites').delete().eq('code', code); err(error); }
   async push(orgId, rows) {
-    const { error } = await this.c.from('records').upsert(rows.map((r) => ({ org_id: orgId, kind: r.kind, id: r.id, data: r.data, deleted: !!r.deleted })), { onConflict: 'org_id,kind,id' });
+    const { error } = await this.c.from('records').upsert(rows.map((r) => ({ org_id: orgId, kind: r.kind, id: r.id, data: r.data, deleted: !!r.deleted, emps: r.emps ?? null })), { onConflict: 'org_id,kind,id' });
     err(error);
   }
   async pull(orgId, since) {
     const out = []; const page = 1000;
     for (let from = 0; ; from += page) {
-      let q = this.c.from('records').select('kind, id, data, deleted, updated_at').eq('org_id', orgId).order('updated_at').order('kind').order('id').range(from, from + page - 1);
+      let q = this.c.from('records').select('kind, id, data, deleted, emps, updated_at').eq('org_id', orgId).order('updated_at').order('kind').order('id').range(from, from + page - 1);
       if (since) q = q.gt('updated_at', since);
       const { data, error } = await q; err(error); out.push(...data); if (data.length < page) break;
     }
@@ -53,7 +53,7 @@ export class MemoryCloud {
   constructor() { this.K = 'vindue-memserver'; this.cbs = []; this.backend = { push: (o, r) => this.mem().push(o, r), pull: (o, s) => this.mem().pull(o, s) }; }
   st() { try { return JSON.parse(localStorage.getItem(this.K)) || { users: [], orgs: [], members: [], invites: [], rows: {}, clock: 0 }; } catch { return { users: [], orgs: [], members: [], invites: [], rows: {}, clock: 0 }; } }
   put(s) { localStorage.setItem(this.K, JSON.stringify(s)); }
-  mem() { const s = this.st(); const self = this; const m = new MemoryBackend(s); m.role = this.myRole || 'admin';
+  mem() { const s = this.st(); const self = this; const m = new MemoryBackend(s); m.role = this.myRole || 'admin'; m.emp = this.myEmp || null;
     return { push: async (o, rows) => { await m.push(o, rows); self.put(s); }, pull: (o, since) => m.pull(o, since) }; }
   uid() { return sessionStorage.getItem('vindue-memuser') || localStorage.getItem('vindue-memuser'); }
   async session() { const u = this.st().users.find((x) => x.id === this.uid()); return u ? { user: { id: u.id, email: u.email } } : null; }
@@ -65,7 +65,7 @@ export class MemoryCloud {
   async signOut() { localStorage.removeItem('vindue-memuser'); this.fire('SIGNED_OUT'); }
   async resetPassword() { throw new Error('Ikke muligt i testdatabasen'); }
   async updatePassword() {}
-  async membership() { const s = this.st(); const m = s.members.find((x) => x.user_id === this.uid()); if (!m) return null; this.myRole = m.role;
+  async membership() { const s = this.st(); const m = s.members.find((x) => x.user_id === this.uid()); if (!m) return null; this.myRole = m.role; this.myEmp = m.employee_id;
     return { orgId: m.org_id, role: m.role, employeeId: m.employee_id, email: m.email, orgName: s.orgs.find((o) => o.id === m.org_id)?.name }; }
   async createOrg(name) { const s = this.st(); if (s.members.some((x) => x.user_id === this.uid())) throw new Error('Du er allerede med i et firma');
     const o = { id: 'org' + Math.random().toString(36).slice(2, 8), name }; s.orgs.push(o); s.members.push({ org_id: o.id, user_id: this.uid(), role: 'admin', employee_id: 'e1', email: s.users.find((u) => u.id === this.uid()).email, created_at: new Date().toISOString() }); this.put(s); return o.id; }

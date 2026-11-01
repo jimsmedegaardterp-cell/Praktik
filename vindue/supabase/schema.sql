@@ -3,7 +3,8 @@
 --
 -- Model: appen arbejder lokalt og synkroniserer "records" (én række pr. kunde, adresse, aftale, rute, besøg …).
 -- Adgang styres med Row Level Security:
---   * kun medlemmer af et firma (org) kan læse dets data
+--   * kun medlemmer af et firma (org) kan læse dets data; medarbejdere kun poster med deres id i emps
+--     (kunder/besøg på egne ruter – emps beregnes af appen, se scoper() i js/sync.js)
 --   * admin kan ændre alt; medarbejder kan kun ændre besøg, kladder, SMS-log og auditlog
 --   * nye brugere kommer ind med en invitationskode, som admin laver i appen
 
@@ -50,6 +51,8 @@ create table if not exists public.records (
   primary key (org_id, kind, id)
 );
 create index if not exists records_org_updated_idx on public.records(org_id, updated_at);
+-- Hvilke medarbejdere (ud over admin) må se posten: null = alle i firmaet, {} = kun admin
+alter table public.records add column if not exists emps text[];
 
 -- Tidsstempel og bruger sættes altid af databasen (kan ikke forfalskes af klienten)
 create or replace function public.records_touch() returns trigger language plpgsql as $$
@@ -67,6 +70,10 @@ create or replace function public.is_member(o uuid) returns boolean language sql
 $$;
 create or replace function public.is_admin(o uuid) returns boolean language sql stable security definer set search_path = public as $$
   select exists (select 1 from public.members where org_id = o and user_id = auth.uid() and role = 'admin')
+$$;
+-- Den indloggede brugers medarbejder-id i firmaet
+create or replace function public.my_employee(o uuid) returns text language sql stable security definer set search_path = public as $$
+  select employee_id from public.members where org_id = o and user_id = auth.uid()
 $$;
 -- Hvilke typer data en medarbejder må skrive
 create or replace function public.employee_may_write(k text) returns boolean language sql immutable as $$
@@ -94,14 +101,17 @@ drop policy if exists invites_admin_all on public.invites;
 create policy invites_admin_all on public.invites for all to authenticated using (public.is_admin(org_id)) with check (public.is_admin(org_id));
 
 drop policy if exists records_select on public.records;
-create policy records_select on public.records for select to authenticated using (public.is_member(org_id));
+create policy records_select on public.records for select to authenticated
+  using (public.is_admin(org_id) or (public.is_member(org_id) and (emps is null or public.my_employee(org_id) = any(emps))));
 drop policy if exists records_insert on public.records;
 create policy records_insert on public.records for insert to authenticated
-  with check (public.is_admin(org_id) or (public.is_member(org_id) and public.employee_may_write(kind)));
+  with check (public.is_admin(org_id) or (public.is_member(org_id) and public.employee_may_write(kind)
+    and public.my_employee(org_id) = any(emps)));
 drop policy if exists records_update on public.records;
 create policy records_update on public.records for update to authenticated
-  using (public.is_admin(org_id) or (public.is_member(org_id) and public.employee_may_write(kind)))
-  with check (public.is_admin(org_id) or (public.is_member(org_id) and public.employee_may_write(kind)));
+  using (public.is_admin(org_id) or (public.is_member(org_id) and public.employee_may_write(kind) and (emps is null or public.my_employee(org_id) = any(emps))))
+  with check (public.is_admin(org_id) or (public.is_member(org_id) and public.employee_may_write(kind)
+    and public.my_employee(org_id) = any(emps)));
 -- Ingen DELETE-politik: sletning sker som "deleted = true", så historikken kan genskabes.
 
 grant usage on schema public to authenticated;
@@ -161,3 +171,4 @@ grant execute on function public.create_invite(uuid, text, text, text) to authen
 grant execute on function public.accept_invite(text) to authenticated;
 grant execute on function public.is_member(uuid) to authenticated;
 grant execute on function public.is_admin(uuid) to authenticated;
+grant execute on function public.my_employee(uuid) to authenticated;

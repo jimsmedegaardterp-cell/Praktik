@@ -11,11 +11,12 @@ import * as DP from './dayplan.js';
 import * as SY from './sync.js';
 import { SupabaseCloud, MemoryCloud } from './cloud.js';
 import { SUPABASE } from './config.js';
+import * as KV from './store.js';
 
-export const VERSION = '2026-11-01 #28';
+export const VERSION = '2026-11-01 #30';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
-let db = load();
+let db = await load();
 let eco = new MockEconomic(db.mock.economic);
 let sms = new MockSms(db.mock.sms);
 function setDb(nd) { db = nd; db.mock ||= { economic: {}, sms: {} }; eco = new MockEconomic(db.mock.economic); sms = new MockSms(db.mock.sms); }
@@ -33,15 +34,28 @@ const ui = { tab: 'kalender', user: null, weekStart: mondayOf(todayIso()), day: 
 try { Object.assign(ui, JSON.parse(localStorage.getItem(KEY + '-ui')) || {}); } catch {}
 ui.user = users().find((u) => u.id === ui.user?.id) || users().find((u) => u.role === 'admin') || users()[0];
 
-function load() {
-  try { const r = localStorage.getItem(KEY); if (r) return JSON.parse(r); } catch {}
-  const d = seedDb(todayIso()); return d;
+async function load() {
+  const d = await KV.get(KEY); KV.persist();
+  return d && Array.isArray(d.customers) ? d : seedDb(todayIso());
+}
+// Gemmer hele db i IndexedDB. Flere gem lige efter hinanden slås sammen; rækkefølgen bevares.
+let saving = null, again = false;
+let dbKey = KEY; // indlogget: hver bruger har sine egne lokale data (KEY:brugerid)
+function persist() {
+  if (saving) { again = true; return saving; }
+  saving = (async () => {
+    try { do { again = false; await KV.set(dbKey, db); } while (again); }
+    catch (e) { toast('⚠️ Kunne ikke gemme på enheden (' + (e?.name === 'QuotaExceededError' ? 'lageret er fuldt' : e?.message || e) + '). Tag en backup under Admin.'); console.error(e); }
+    finally { saving = null; }
+  })();
+  return saving;
 }
 function save() {
   if (syncer) scheduleSync();
-  try { localStorage.setItem(KEY, JSON.stringify(db)); } catch (e) { toast('⚠️ Browserens lager er fuldt – slet nogle billeder eller tag backup. Ændringen er IKKE gemt.'); console.error(e); return; }
   try { localStorage.setItem(KEY + '-ui', JSON.stringify({ tab: ui.tab, user: { id: ui.user.id }, route: ui.route, outbox: ui.outbox })); } catch {}
+  return persist();
 }
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') persist(); });
 function mondayOf(iso) { return D.addDays(iso, -D.weekday(iso)); }
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const kr = (n) => (n ?? 0).toLocaleString('da-DK', { minimumFractionDigits: 0, maximumFractionDigits: 2 }) + ' kr';
@@ -945,7 +959,7 @@ function admin() {
       <div>e-conomic: <span class="pill warn">Mock</span></div><div>SMS-gateway: <span class="pill warn">Mock</span></div><div>Google Maps: <span class="pill ok">Links (gratis)</span></div>
       <p class="small mute">Rigtige integrationer kræver en server (nøgler må ikke ligge i browseren). Se docs/PLAN.md.</p></div>
     <div class="card"><h2>Data & backup</h2><div class="row"><button data-act="backup">Download backup (JSON)</button><label class="btn">Gendan…<input type="file" id="restore" accept=".json" hidden></label><button data-act="planMore">Planlæg 6 mdr. frem</button><button class="bad" data-act="reset">Nulstil til testdata</button><button class="bad" data-act="wipe">Start tomt (til rigtige data)</button></div>
-      <p class="small mute">Prototypen gemmer i denne browser (localStorage). ${db.customers.length} kunder · ${db.visits.length} besøg · ${db.audit.length} logposter.</p></div>
+      <p class="small mute">Data gemmes på denne enhed (${KV.usingIdb() ? 'IndexedDB' : 'localStorage – begrænset plads'})${syncer ? ' og i den fælles database' : ''}. ${db.customers.length} kunder · ${db.visits.length} besøg · ${db.audit.length} logposter.</p></div>
   </div>
   ${!db.settings.printInvoices ? '' : `<div class="card"><h2>Firma (bruges på A4-fakturaer)</h2><div class="grid">${[['name', 'Firmanavn', 'Sindal Vinduespolering'], ['address', 'Adresse', 'Vej 1, 9870 Sindal'], ['cvr', 'CVR', ''], ['phone', 'Telefon', ''], ['email', 'E-mail', ''], ['bank', 'Bank reg. og konto', '1234 1234567'], ['mobilepay', 'MobilePay-nr.', '']].map(([k, l, ph]) => `<label><span>${l}</span><input data-firm="${k}" value="${esc(db.settings.firm?.[k] || '')}" placeholder="${ph}"></label>`).join('')}</div></div>`}
   <div class="card" id="cloudCard"></div>
@@ -983,7 +997,7 @@ function admin() {
     e[f] = f === 'commissionRate' ? Math.min(100, Math.max(0, +el.value || 0)) / 100 : el.value.trim(); S.audit(db, ui.user.id, 'employee.edit', e.id, { [f]: e[f] }); render(); }));
   $view.querySelectorAll('[data-rf]').forEach((el) => (el.onchange = () => { const r = route(el.dataset.r); const f = el.dataset.rf; r[f] = f === 'intervalWeeks' ? Math.max(1, +el.value || 1) : el.value; if (f === 'anchorDate') delete r.anchorUnknown; S.audit(db, ui.user.id, 'route.edit', r.id, { [f]: r[f] }); render(); }));
   $view.querySelectorAll('[data-tpl]').forEach((t) => (t.onchange = () => { db.templates[t.dataset.tpl] = t.value; save(); toast('Skabelon gemt'); }));
-  document.getElementById('restore').onchange = async (e) => { const f = e.target.files[0]; if (!f) return; try { const d = JSON.parse(await f.text()); if (!Array.isArray(d.customers) || !Array.isArray(d.visits)) throw new Error('Ugyldig backup'); if (!confirm(`Gendan ${d.customers.length} kunder? Nuværende data overskrives.`)) return; db = d; save(); location.reload(); } catch (err) { toast(err.message); } };
+  document.getElementById('restore').onchange = async (e) => { const f = e.target.files[0]; if (!f) return; try { const d = JSON.parse(await f.text()); if (!Array.isArray(d.customers) || !Array.isArray(d.visits)) throw new Error('Ugyldig backup'); if (!confirm(`Gendan ${d.customers.length} kunder? Nuværende data overskrives.`)) return; db = d; await save(); location.reload(); } catch (err) { toast(err.message); } };
 }
 
 /* ---------------- Dialog-hjælper ---------------- */
@@ -1193,8 +1207,8 @@ document.addEventListener('click', async (e) => {
       case 'routesAll': ui.route = null; ui.sel = new Set(); ui.tab = 'kunder'; ui.kView = 'ruter'; break;
       case 'backup': download(`sindal-vinduespolering-backup-${todayIso()}.json`, db); S.audit(db, ui.user.id, 'backup.export', '-'); break;
       case 'planMore': toast(`${S.planAhead(db, D.addDays(todayIso(), 183))} nye besøg planlagt`); break;
-      case 'wipe': if (!confirm('Slet ALT i appen (testkunder, ruter, besøg) og start helt tomt? Tag evt. en backup først.')) return; db = freshDb(); save(); location.reload(); return;
-      case 'reset': if (!confirm('Slet alle data og indlæs testdata igen?')) return; localStorage.removeItem(KEY); localStorage.removeItem(KEY + '-ui'); location.reload(); return;
+      case 'wipe': if (!confirm('Slet ALT i appen (testkunder, ruter, besøg) og start helt tomt? Tag evt. en backup først.')) return; db = freshDb(); save().then(() => location.reload()); return;
+      case 'reset': if (!confirm('Slet alle data og indlæs testdata igen?')) return; localStorage.removeItem(KEY + '-ui'); KV.del(dbKey).then(() => location.reload()); return;
       case 'addClosed': { const d = document.getElementById('cd').value; if (d && !db.closedDays.includes(d)) { db.closedDays.push(d); db.closedDays.sort(); db.visits.forEach((v) => { if (v.status === 'planlagt' && v.plannedDate === d) v.plannedDate = D.nextWorkday(d, db.closedDays); }); } break; }
       case 'rmClosed': db.closedDays = db.closedDays.filter((x) => x !== b.dataset.d); break;
       case 'showOverdue': ui.tab = 'mobil'; ui._mobDayFor = null; ui.day = db.visits.filter((v) => (v.status === 'planlagt' || v.status === 'udsat') && v.plannedDate < todayIso()).map((v) => v.plannedDate).sort()[0]; break;
@@ -1250,7 +1264,7 @@ async function bootCloud() {
   gate = 'loading'; render();
   try { cloud = conf.url === 'memory' ? new MemoryCloud() : await SupabaseCloud.create(conf); }
   catch (e) { gate = null; cloud = null; toast('Kunne ikke forbinde til databasen: ' + e.message); render(); return; }
-  cloud.onAuth((ev) => { if (ev === 'PASSWORD_RECOVERY') { gate = 'recovery'; render(); } if (ev === 'SIGNED_OUT') { member = null; syncer = null; gate = 'login'; render(); } });
+  cloud.onAuth((ev) => { if (ev === 'PASSWORD_RECOVERY') { gate = 'recovery'; render(); } if (ev === 'SIGNED_OUT' && member) signedOut(); });
   if (/type=recovery/.test(location.hash)) { gate = 'recovery'; render(); return; }
   await afterLogin();
 }
@@ -1260,17 +1274,22 @@ async function afterLogin(joined = false, created = false) {
   ui._gEmail = sess.user.email;
   const m = await cloud.membership(); if (!m) { gate = 'onboard'; return render(); }
   member = { ...m, userId: sess.user.id };
-  const sk = `vindue-sync-${m.orgId}-${sess.user.id}`; let st; try { st = JSON.parse(localStorage.getItem(sk)); } catch {}
-  const first = !st?.lastPull && !st?.hashes;
+  const sk = `vindue-sync-${m.orgId}-${sess.user.id}`; let st; try { st = await KV.get(sk); } catch {}
+  // Lokale data hører til den indloggede bruger (en medarbejder har kun en del af firmaets data)
+  const uk = `${KEY}:${sess.user.id}`; const own = await KV.get(uk);
+  if (own?.customers) { setDb(own); dbKey = uk; }
+  // ny bruger på enheden; har brugeren synket før uden egne lokale data (ældre version), overtages enhedens data
+  const first = !own && !st?.lastPull && !st?.hashes;
   st ||= { orgId: m.orgId }; st.orgId = m.orgId;
   syncer = new SY.SyncEngine({ backend: cloud.backend, state: st, role: m.role }); syncer._key = sk;
-  if (created) { gate = 'firstdata'; return render(); }
+  if (created) { dbKey = uk; await persist(); KV.del(KEY); gate = 'firstdata'; return render(); }
   if (first) {
     // ny enhed/bruger: data på enheden erstattes af firmaets data
     const n = db.customers.filter((c) => !c.deleted).length;
     if (db.settings.realData && n && m.role === 'admin' && !joined && !confirm(`Data på denne enhed (${n} kunder) erstattes af firmaets fælles data. Fortsæt? (Tryk Annuller og tag en backup under Admin, hvis du er i tvivl.)`)) { await cloud.signOut(); return; }
     setDb(freshDb()); db.settings.realData = true;
   }
+  if (dbKey !== uk) { dbKey = uk; await persist(); if (!own) KV.del(KEY); }
   gate = null; ui.user = users()[0]; ui.tab = member.role === 'admin' ? (ui.tab || 'kalender') : 'mobil'; ui._mobDayFor = null;
   render(); await doSync(true);
 }
@@ -1279,13 +1298,16 @@ async function doSync(force) {
   if (!syncer || gate || syncInfo.status === 'syncing') return;
   if (!navigator.onLine && !force) return renderNet();
   syncInfo.status = 'syncing'; renderNet();
-  try { const r = await syncer.sync(db); syncInfo.status = 'ok'; syncInfo.at = Date.now(); syncInfo.error = null;
-    localStorage.setItem(syncer._key, JSON.stringify(syncer.s));
-    try { localStorage.setItem(KEY, JSON.stringify(db)); } catch {}
+  try { stampAudit(); const r = await syncer.sync(db); syncInfo.status = 'ok'; syncInfo.at = Date.now(); syncInfo.error = null;
+    await persist(); await KV.set(syncer._key, syncer.s);
     if (r.pulled) { S.planAhead(db, D.addDays(todayIso(), 120)); render(); } else renderNet();
   } catch (e) { syncInfo.status = 'error'; syncInfo.error = e.message; renderNet(); if (force) toast('Synkronisering fejlede: ' + e.message); }
 }
-async function logout() { if (syncer && syncer.pending(db).length && navigator.onLine) await doSync(true); await cloud.signOut(); member = null; syncer = null; gate = 'login'; render(); }
+/** Logposter skrevet af den indloggede medarbejder mærkes med medarbejder-id (så de må gemmes/ses af vedkommende). */
+function stampAudit() { if (!member) return; for (const a of db.audit || []) { if (a.byEmp) continue; if (a.by === member.userId) a.byEmp = member.employeeId || null; } }
+async function logout() { if (syncer && syncer.pending(db).length && navigator.onLine) await doSync(true); await cloud.signOut(); await signedOut(); }
+/** Efter log ud: gem brugerens data og fjern dem fra skærmen/hukommelsen. */
+async function signedOut() { member = null; syncer = null; gate = 'login'; await persist(); if (dbKey !== KEY) { setDb(freshDb()); dbKey = KEY; } render(); }
 setInterval(() => { if (syncer && document.visibilityState === 'visible') doSync(); }, 30000);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') doSync(); });
 window.addEventListener('online', () => doSync());

@@ -18,8 +18,8 @@
 
 ## Database/login – før rigtig drift
 - [ ] MFA (TOTP) for admin (Supabase understøtter det)
-- [ ] Medarbejdere ser i dag alle kunder i firmaet – begræns til egne ruter (kræver kolonner på records + RLS)
-- [ ] Billeder til Supabase Storage i stedet for i records (mindre data pr. synk)
-- [ ] Lokalt lager: flyt fra localStorage (~5 MB) til IndexedDB
+- [x] Medarbejdere ser kun kunder/besøg på egne ruter (records.emps + RLS; fuld afstemning ved opstart)
+- [ ] (Udskudt – få billeder) Billeder til Supabase Storage i stedet for i records
+- [x] Lokalt lager i IndexedDB, separat pr. indlogget bruger
 - [ ] Konfliktvisning når to enheder ændrer samme post
 - [ ] Backup/gendannelse fra Supabase testet
