@@ -1,0 +1,11 @@
+# Beslutninger
+| # | Dato | Beslutning | Begrundelse |
+|---|---|---|---|
+| 1 | 2026-11-01 | Ny app i `vindue/`, eksisterende Praktik-app urørt | Undgå at bryde husstandsappen på GitHub Pages |
+| 2 | 2026-11-01 | Vanilla JS-moduler, ingen build, ingen afhængigheder | Enkel drift, let at ændre, kører direkte på GitHub Pages |
+| 3 | 2026-11-01 | Besøgs-id = `aftale#serieindeks` | Samme besøg kan aldrig dannes to gange |
+| 4 | 2026-11-01 | Fakturalink oprettes lokalt *før* API-kald, nøgle = sorterede besøgs-id | Timeout/dobbeltklik giver ikke dobbeltfaktura |
+| 5 | 2026-11-01 | Google Maps via gratis links; ruteforslag lokalt (luftlinje) | 0 kr; betalt Routes API kun hvis behov |
+| 6 | 2026-11-01 | Helligdag → næste arbejdsdag, grundrytme uændret | Projektbeskrivelse §3 |
+| 7 | 2026-11-01 | Medarbejders prisændring > ±20 % kræver admin | Godkendelsesregel (§2), tal kan ændres |
+| 8 | 2026-11-01 | "Send fra egen telefon" (sms:-link) som gratis manuel mulighed | Ikke automatisk udsendelse; svar lander på telefonen |

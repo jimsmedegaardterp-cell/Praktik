@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="da">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Vinduesdrift – prototype</title>
+<meta name="theme-color" content="#1f5f8b">
+<link rel="manifest" href="manifest.json">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">🪟 Vinduesdrift <span class="tag">PROTOTYPE · testdata · ingen rigtige SMS/fakturaer</span></div>
+  <div class="who">
+    <span id="net" class="pill ok">Online</span>
+    <select id="user" aria-label="Bruger"></select>
+  </div>
+</header>
+<nav id="tabs" class="tabs"></nav>
+<main id="view"></main>
+<dialog id="dlg"><form method="dialog" id="dlgBody"></form></dialog>
+<div id="toast" class="toast" hidden></div>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
