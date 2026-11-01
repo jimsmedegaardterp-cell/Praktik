@@ -20,7 +20,7 @@ export function seedDb(todayIso) {
   const db = emptyDb();
   db.employees = [
     { id: 'e1', name: 'Jim', role: 'admin', commissionRate: 0 },
-    { id: 'e2', name: 'Mads', role: 'medarbejder' },
+    { id: 'e2', name: 'Medarbejder 1', role: 'medarbejder' },
   ];
   // Ruter: egen rytme + næste dato (som "faste ruter" i SkvizBiz)
   const mon = addDays(todayIso, -weekday(todayIso));

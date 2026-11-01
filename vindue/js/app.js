@@ -8,16 +8,26 @@ import * as G from './gdpr.js';
 import * as SD from './stamdata.js';
 import * as RS from './rutesedel.js';
 import * as DP from './dayplan.js';
+import * as SY from './sync.js';
+import { SupabaseCloud, MemoryCloud } from './cloud.js';
+import { SUPABASE } from './config.js';
 
-export const VERSION = '2026-11-01 #26';
+export const VERSION = '2026-11-01 #27';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = load();
-const eco = new MockEconomic(db.mock.economic);
-const sms = new MockSms(db.mock.sms);
+let eco = new MockEconomic(db.mock.economic);
+let sms = new MockSms(db.mock.sms);
+function setDb(nd) { db = nd; db.mock ||= { economic: {}, sms: {} }; eco = new MockEconomic(db.mock.economic); sms = new MockSms(db.mock.sms); }
+/* ---------- Fælles database (login + synkronisering) ---------- */
+let cloud = null;      // forbindelse (SupabaseCloud / MemoryCloud) – null = kun lokalt
+let member = null;     // { userId, email, orgId, orgName, role, employeeId }
+let gate = null;       // login-skærm der vises i stedet for appen: 'login' | 'confirm' | 'onboard' | 'firstdata' | 'recovery' | 'loading'
+let syncer = null, syncTimer = null; const syncInfo = { status: 'off', at: null, error: null };
+const cloudConf = () => { try { const o = JSON.parse(localStorage.getItem('vindue-cloudconf')); if (o?.url) return o; } catch {} return SUPABASE.url ? SUPABASE : null; };
 // Brugere = medarbejdere i appen (prototype: ingen login – vælg bruger i topbjælken)
 const LEGACY = { e1: 'u1', e2: 'u2' };
-const users = () => db.employees.filter((e) => !e.inactive).map((e) => ({ id: LEGACY[e.id] || 'u_' + e.id, name: `${e.name}${e.role === 'admin' ? ' (admin)' : ''}`, role: e.role === 'admin' ? 'admin' : 'medarbejder', employeeId: e.id }));
+const users = () => member ? [{ id: member.userId, name: `${emp(member.employeeId)?.name || member.email}${member.role === 'admin' ? ' (admin)' : ''}`, role: member.role, employeeId: member.employeeId }] : db.employees.filter((e) => !e.inactive).map((e) => ({ id: LEGACY[e.id] || 'u_' + e.id, name: `${e.name}${e.role === 'admin' ? ' (admin)' : ''}`, role: e.role === 'admin' ? 'admin' : 'medarbejder', employeeId: e.id }));
 const userName = (id) => { const u = users().find((x) => x.id === id); if (u) return u.name; const e = db.employees.find((x) => 'u_' + x.id === id || LEGACY[x.id] === id); return e?.name ?? id; };
 const ui = { tab: 'kalender', user: null, weekStart: mondayOf(todayIso()), day: todayIso(), customer: null, route: 'r1', q: '', offline: false, outbox: [], sel: new Set() };
 try { Object.assign(ui, JSON.parse(localStorage.getItem(KEY + '-ui')) || {}); } catch {}
@@ -28,6 +38,7 @@ function load() {
   const d = seedDb(todayIso()); return d;
 }
 function save() {
+  if (syncer) scheduleSync();
   try { localStorage.setItem(KEY, JSON.stringify(db)); } catch (e) { toast('⚠️ Browserens lager er fuldt – slet nogle billeder eller tag backup. Ændringen er IKKE gemt.'); console.error(e); return; }
   try { localStorage.setItem(KEY + '-ui', JSON.stringify({ tab: ui.tab, user: { id: ui.user.id }, route: ui.route, outbox: ui.outbox })); } catch {}
 }
@@ -73,11 +84,13 @@ function renderTabs() {
   document.getElementById('tabs').innerHTML = tabs.map(([k, n]) => `<button data-tab="${k}" class="${active === k ? 'on' : ''}">${n}${k === 'sms' && unread ? ` <span class="pill bad">${unread}</span>` : ''}</button>`).join('');
 }
 function render() {
+  renderNet();
+  if (gate) return renderGate();
+  document.getElementById('tabs').hidden = false;
   if (!users().some((u) => u.id === ui.user?.id)) ui.user = users().find((u) => u.role === 'admin') || users()[0];
   renderUserSelect();
   renderTabs();
   const tag = document.querySelector('.tag'); if (tag) tag.textContent = (db.settings.realData ? 'PROTOTYPE · data gemmes kun i denne browser' : 'PROTOTYPE · testdata') + ' · version ' + VERSION;
-  const net = document.getElementById('net'); net.textContent = ui.offline ? `Offline${ui.outbox.length ? ` · ${ui.outbox.length} i kø` : ''}` : 'Online'; net.className = 'pill ' + (ui.offline ? 'bad' : 'ok');
   ({ overblik, kunder, kalender, ruter, dag: dagsplan, print: printView, mobil, faktura, sms: beskeder, import: importView, admin })[ui.tab]();
   save();
 }
@@ -935,6 +948,7 @@ function admin() {
       <p class="small mute">Prototypen gemmer i denne browser (localStorage). ${db.customers.length} kunder · ${db.visits.length} besøg · ${db.audit.length} logposter.</p></div>
   </div>
   ${!db.settings.printInvoices ? '' : `<div class="card"><h2>Firma (bruges på A4-fakturaer)</h2><div class="grid">${[['name', 'Firmanavn', 'Sindal Vinduespolering'], ['address', 'Adresse', 'Vej 1, 9870 Sindal'], ['cvr', 'CVR', ''], ['phone', 'Telefon', ''], ['email', 'E-mail', ''], ['bank', 'Bank reg. og konto', '1234 1234567'], ['mobilepay', 'MobilePay-nr.', '']].map(([k, l, ph]) => `<label><span>${l}</span><input data-firm="${k}" value="${esc(db.settings.firm?.[k] || '')}" placeholder="${ph}"></label>`).join('')}</div></div>`}
+  <div class="card" id="cloudCard"></div>
   <div class="card"><h2>Kørsel og Google Maps</h2>
     <div class="grid"><label><span>Firmaets startadresse (her starter og slutter dagen)</span><input id="stAddr" value="${esc(db.settings.start?.address || '')}" placeholder="Vej 1, 9870 Sindal"></label>
       <label><span>Koordinater for startadresse (valgfrit, "57.47, 10.21" – højreklik i Google Maps)</span><input id="stLL" value="${db.settings.start?.lat != null ? db.settings.start.lat + ', ' + db.settings.start.lng : ''}"></label>
@@ -958,6 +972,7 @@ function admin() {
   document.getElementById('comMonth').onchange = (e) => { ui.comMonth = e.target.value; render(); };
   document.getElementById('comVat').onchange = (e) => { db.settings.commissionInclVat = e.target.checked; S.audit(db, ui.user.id, 'commission.vat', '-', { inclVat: e.target.checked }); render(); };
   $view.querySelectorAll('[data-rate]').forEach((i) => (i.onchange = () => { const v = Number(i.value); if (!(v >= 0 && v <= 100)) return toast('Ugyldig sats'); const e = emp(i.dataset.rate); e.commissionRate = v / 100; S.audit(db, ui.user.id, 'commission.rate', e.id, { rate: v }); render(); }));
+  cloudCard();
   $view.querySelectorAll('[data-firm]').forEach((x) => (x.onchange = () => { db.settings.firm ||= {}; db.settings.firm[x.dataset.firm] = x.value.trim(); save(); toast('Gemt'); }));
   const saveStart = () => { const ll = (document.getElementById('stLL').value.match(/(-?\d+(?:[.,]\d+)?)\s*[,; ]\s*(-?\d+(?:[.,]\d+)?)/) || []);
     db.settings.start = { address: document.getElementById('stAddr').value.trim(), lat: ll[1] ? +ll[1].replace(',', '.') : null, lng: ll[2] ? +ll[2].replace(',', '.') : null }; save(); toast('Startadresse gemt'); };
@@ -1095,6 +1110,20 @@ document.addEventListener('click', async (e) => {
           ${vs2.map((v) => `<label class="chk"><input type="checkbox" name="v_${v.id}"> ${esc(cust(v.customerId).name)} <span class="small mute">${esc(addr(v.addressId)?.street)}</span></label>`).join('')}
           <label><span>Ny dato</span><input type="date" name="date" required value="${D.nextWorkday(D.addDays(day, 1), db.closedDays)}"></label>`,
           (f) => { const pick = vs2.filter((v) => f['v_' + v.id]); if (!pick.length) return 'Vælg mindst én kunde'; for (const v of pick) S.moveVisit(db, ui.user, v.id, f.date, 'keep'); toast(`${pick.length} kunder flyttet til ${fmt(f.date)} (kun denne gang)`); }); }
+      case 'gForgot': { const em = document.querySelector('#gform input[name=email]')?.value.trim(); if (!em) return toast('Skriv din e-mail først'); await cloud.resetPassword(em); toast('Vi har sendt et link til ' + em); return; }
+      case 'gBack': gate = 'login'; break;
+      case 'gLogout': case 'logout': return logout();
+      case 'gUpload': gate = null; db.settings.realData = true; ui.user = users()[0]; render(); toast('Uploader …'); return doSync(true).then(() => toast(syncInfo.error ? 'Fejl: ' + syncInfo.error : 'Data uploadet til den fælles database'));
+      case 'gEmpty': setDb(freshDb()); gate = null; ui.user = users()[0]; render(); return doSync(true);
+      case 'syncNow': return doSync(true).then(() => toast(syncInfo.error ? 'Fejl: ' + syncInfo.error : 'Synkroniseret'));
+      case 'ivCreate': { const code = await cloud.createInvite(member.orgId, document.getElementById('ivRole').value, document.getElementById('ivEmp').value, null); S.audit(db, ui.user.id, 'user.invite', document.getElementById('ivEmp').value);
+        openDlg(`<h2>Invitationskode</h2><p style="font-size:30px;font-weight:700;letter-spacing:3px" class="code">${esc(code)}</p><p class="small">Giv koden til medarbejderen. De åbner <b>${esc(location.origin + location.pathname)}</b>, opretter en bruger og indtaster koden.</p>`, null, 'Luk'); return cloudCard(); }
+      case 'ivDel': await cloud.deleteInvite(id); return cloudCard();
+      case 'cmRemove': if (!confirm('Fjern brugerens adgang til firmaets data?')) return; await cloud.removeMember(member.orgId, id); S.audit(db, ui.user.id, 'user.remove', id); return cloudCard();
+      case 'cfSave': { const url = document.getElementById('cfUrl').value.trim(), key2 = document.getElementById('cfKey').value.trim(); if (!/^https:\/\/.+/.test(url) || !key2) return toast('Udfyld URL og nøgle');
+        if (/service_role/.test((() => { try { return atob((key2.split('.')[1] || '').replace(/-/g, '+').replace(/_/g, '/')); } catch { return ''; } })()) || /^sb_secret_/.test(key2)) return toast('Det er den hemmelige nøgle – brug den offentlige anon/publishable-nøgle');
+        localStorage.setItem('vindue-cloudconf', JSON.stringify({ url, anonKey: key2 })); return bootCloud(); }
+      case 'cfMemory': localStorage.setItem('vindue-cloudconf', JSON.stringify({ url: 'memory', anonKey: '' })); return bootCloud();
       case 'routeMenu': return routeMenu(b.dataset.r, b.dataset.d);
       case 'rmMove': { const { rid, day } = ui._rm; document.getElementById('dlg').close(); return bulkDialog(db.visits.filter((v) => v.routeId === rid && v.plannedDate === day), `Flyt ${route(rid).name} ${fmt(day)}`); }
       case 'rmSms': { const { rid, day } = ui._rm; document.getElementById('dlg').close(); return smsListDialog(db.visits.filter((v) => v.routeId === rid && v.plannedDate === day && v.status === 'planlagt'), null, `SMS til ${route(rid).name} ${fmt(day)}`, 'Hej {navn}. Vi kommer og pudser dine vinduer {dato}. Svar på denne SMS hvis det ikke passer. Mvh. Sindal Vinduespolering'); }
@@ -1176,12 +1205,119 @@ document.addEventListener('click', async (e) => {
 function setOrder(addressIds) { const r = route(ui.route); r.order = [...addressIds, ...(r.order || []).filter((a) => !addressIds.includes(a))]; S.audit(db, ui.user.id, 'route.order', r.id); }
 function download(name, obj) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); }
 
+/* ---------------- Login og synkronisering ---------------- */
+function renderNet() {
+  const net = document.getElementById('net'); if (!net) return;
+  const pend = syncer ? syncer.pending(db).length : 0;
+  const [txt, cls] = !cloud ? [ui.offline ? 'Offline' : 'Kun lokalt', ui.offline ? 'bad' : ''] :
+    syncInfo.status === 'syncing' ? ['Synkroniserer …', ''] : syncInfo.status === 'error' ? ['Synk-fejl', 'bad'] : !navigator.onLine ? [`Offline${pend ? ' · ' + pend + ' venter' : ''}`, 'warn'] :
+    syncInfo.at ? [`✓ Synk ${new Date(syncInfo.at).toLocaleTimeString('da-DK', { hour: '2-digit', minute: '2-digit' })}${pend ? ' · ' + pend + ' venter' : ''}`, 'ok'] : ['Forbundet', 'ok'];
+  net.textContent = txt; net.className = 'pill ' + cls; net.title = syncInfo.error || ''; net.style.cursor = cloud ? 'pointer' : ''; net.onclick = cloud ? () => doSync(true) : null;
+}
+function renderGate() {
+  document.getElementById('tabs').hidden = true; renderUserSelect();
+  const box = (inner) => `<div class="gate card">${inner}</div>`;
+  const conf = cloudConf();
+  if (gate === 'loading') { $view.innerHTML = box('<p class="mute">Forbinder …</p>'); return; }
+  if (gate === 'login') $view.innerHTML = box(`<h2>Log ind</h2><p class="small mute">Sindal Vinduespolering${conf?.url === 'memory' ? ' · <b>testdatabase i browseren</b>' : ''}</p>
+    <form id="gform"><label><span>E-mail</span><input name="email" type="email" autocomplete="username" required value="${esc(ui._gEmail || '')}"></label><label><span>Kodeord</span><input name="pw" type="password" autocomplete="current-password" required minlength="8"></label>
+    <div class="row"><button class="pri" value="in">Log ind</button><button value="up">Opret ny bruger</button><span class="sp"></span><button type="button" class="link" data-act="gForgot">Glemt kodeord?</button></div><p class="small" id="gerr" style="color:var(--bad)"></p></form>
+    <p class="small mute">Ny medarbejder? Opret en bruger med din egen e-mail, og indtast derefter den invitationskode, du har fået.</p>`);
+  if (gate === 'confirm') $view.innerHTML = box(`<h2>Tjek din e-mail</h2><p>Vi har sendt et link til <b>${esc(ui._gEmail)}</b>. Klik på det for at bekræfte, og log så ind her.</p><button data-act="gBack">Til login</button>`);
+  if (gate === 'recovery') $view.innerHTML = box(`<h2>Nyt kodeord</h2><form id="gform"><label><span>Nyt kodeord (mindst 8 tegn)</span><input name="pw" type="password" autocomplete="new-password" required minlength="8"></label><button class="pri" value="newpw">Gem</button><p class="small" id="gerr" style="color:var(--bad)"></p></form>`);
+  if (gate === 'onboard') $view.innerHTML = box(`<h2>Velkommen</h2><p>Du er logget ind som <b>${esc(ui._gEmail)}</b>, men er ikke tilknyttet et firma endnu.</p>
+    <form id="gform"><h3>Har du en invitationskode?</h3><div class="row"><input name="code" placeholder="Fx K7M2Q9XA" style="text-transform:uppercase;max-width:180px"><button value="code">Brug kode</button></div>
+    <h3 style="margin-top:20px">Eller opret firmaet (kun ejeren)</h3><div class="row"><input name="org" value="Sindal Vinduespolering"><button class="pri" value="org">Opret firma</button></div><p class="small" id="gerr" style="color:var(--bad)"></p></form>
+    <p><button data-act="gLogout" class="link">Log ud</button></p>`);
+  if (gate === 'firstdata') { const n = db.customers.filter((c) => !c.deleted).length;
+    $view.innerHTML = box(`<h2>Firmaet er oprettet ✓</h2><p>Hvad skal der ligge i den fælles database?</p><div class="menu">
+      ${db.settings.realData && n ? `<button class="pri" data-act="gUpload">⬆ Upload de data, der ligger på denne computer (${n} kunder)</button>` : ''}
+      <button data-act="gEmpty">Start tomt – jeg importerer bagefter</button>${!db.settings.realData ? `<button data-act="gUpload">Upload testdata (til at prøve af)</button>` : ''}</div>`); }
+  const f = document.getElementById('gform');
+  if (f) f.onsubmit = async (e) => { e.preventDefault(); const v = e.submitter?.value; const fd = Object.fromEntries(new FormData(f)); const out = document.getElementById('gerr'); out.textContent = '';
+    try {
+      if (v === 'in') { ui._gEmail = fd.email.trim(); await cloud.signIn(ui._gEmail, fd.pw); await afterLogin(); }
+      else if (v === 'up') { ui._gEmail = fd.email.trim(); if ((fd.pw || '').length < 8) throw new Error('Kodeord skal være mindst 8 tegn'); const r = await cloud.signUp(ui._gEmail, fd.pw); if (r.needsConfirm) { gate = 'confirm'; render(); } else await afterLogin(); }
+      else if (v === 'newpw') { await cloud.updatePassword(fd.pw); toast('Kodeord gemt'); await afterLogin(); }
+      else if (v === 'code') { if (!fd.code.trim()) throw new Error('Indtast koden'); await cloud.acceptInvite(fd.code); await afterLogin(true); }
+      else if (v === 'org') { await cloud.createOrg(fd.org); member = null; await afterLogin(false, true); }
+    } catch (err2) { out.textContent = danishAuthError(err2.message); } };
+}
+const danishAuthError = (m) => (/Invalid login credentials/i.test(m) ? 'Forkert e-mail eller kodeord' : /Email not confirmed/i.test(m) ? 'E-mailen er ikke bekræftet endnu – tjek din indbakke' : /already registered|already exists/i.test(m) ? 'Der findes allerede en bruger med den e-mail – log ind i stedet' : /rate limit/i.test(m) ? 'For mange forsøg – vent lidt og prøv igen' : m);
+
+async function bootCloud() {
+  const conf = cloudConf(); if (!conf) return;
+  gate = 'loading'; render();
+  try { cloud = conf.url === 'memory' ? new MemoryCloud() : await SupabaseCloud.create(conf); }
+  catch (e) { gate = null; cloud = null; toast('Kunne ikke forbinde til databasen: ' + e.message); render(); return; }
+  cloud.onAuth((ev) => { if (ev === 'PASSWORD_RECOVERY') { gate = 'recovery'; render(); } if (ev === 'SIGNED_OUT') { member = null; syncer = null; gate = 'login'; render(); } });
+  if (/type=recovery/.test(location.hash)) { gate = 'recovery'; render(); return; }
+  await afterLogin();
+}
+/** Efter login: find firma/rolle, start synkronisering. */
+async function afterLogin(joined = false, created = false) {
+  const sess = await cloud.session(); if (!sess) { gate = 'login'; return render(); }
+  ui._gEmail = sess.user.email;
+  const m = await cloud.membership(); if (!m) { gate = 'onboard'; return render(); }
+  member = { ...m, userId: sess.user.id };
+  const sk = `vindue-sync-${m.orgId}-${sess.user.id}`; let st; try { st = JSON.parse(localStorage.getItem(sk)); } catch {}
+  const first = !st?.lastPull && !st?.hashes;
+  st ||= { orgId: m.orgId }; st.orgId = m.orgId;
+  syncer = new SY.SyncEngine({ backend: cloud.backend, state: st, role: m.role }); syncer._key = sk;
+  if (created) { gate = 'firstdata'; return render(); }
+  if (first) {
+    // ny enhed/bruger: data på enheden erstattes af firmaets data
+    const n = db.customers.filter((c) => !c.deleted).length;
+    if (db.settings.realData && n && m.role === 'admin' && !joined && !confirm(`Data på denne enhed (${n} kunder) erstattes af firmaets fælles data. Fortsæt? (Tryk Annuller og tag en backup under Admin, hvis du er i tvivl.)`)) { await cloud.signOut(); return; }
+    setDb(freshDb()); db.settings.realData = true;
+  }
+  gate = null; ui.user = users()[0]; ui.tab = member.role === 'admin' ? (ui.tab || 'kalender') : 'mobil'; ui._mobDayFor = null;
+  render(); await doSync(true);
+}
+function scheduleSync() { clearTimeout(syncTimer); syncTimer = setTimeout(() => doSync(), 2500); }
+async function doSync(force) {
+  if (!syncer || gate || syncInfo.status === 'syncing') return;
+  if (!navigator.onLine && !force) return renderNet();
+  syncInfo.status = 'syncing'; renderNet();
+  try { const r = await syncer.sync(db); syncInfo.status = 'ok'; syncInfo.at = Date.now(); syncInfo.error = null;
+    localStorage.setItem(syncer._key, JSON.stringify(syncer.s));
+    try { localStorage.setItem(KEY, JSON.stringify(db)); } catch {}
+    if (r.pulled) { S.planAhead(db, D.addDays(todayIso(), 120)); render(); } else renderNet();
+  } catch (e) { syncInfo.status = 'error'; syncInfo.error = e.message; renderNet(); if (force) toast('Synkronisering fejlede: ' + e.message); }
+}
+async function logout() { if (syncer && syncer.pending(db).length && navigator.onLine) await doSync(true); await cloud.signOut(); member = null; syncer = null; gate = 'login'; render(); }
+setInterval(() => { if (syncer && document.visibilityState === 'visible') doSync(); }, 30000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') doSync(); });
+window.addEventListener('online', () => doSync());
+
+/** Admin: brugere, invitationer og forbindelse */
+async function cloudCard() {
+  const el = document.getElementById('cloudCard'); if (!el) return;
+  if (!cloud || !member) { const c = cloudConf();
+    el.innerHTML = `<h2>Fælles database og login</h2><p class="small">Appen kører <b>kun lokalt i denne browser</b>. Forbind til Supabase for at få login, medarbejderadgang og samme data på PC og telefon.</p>
+      <div class="grid"><label><span>Supabase Project URL</span><input id="cfUrl" value="${esc(c?.url || '')}" placeholder="https://xxxx.supabase.co"></label><label><span>Anon / publishable key</span><input id="cfKey" value="${esc(c?.anonKey || '')}"></label></div>
+      <div class="row"><button class="pri" data-act="cfSave">Forbind</button><button data-act="cfMemory">Prøv med testdatabase i browseren</button></div>
+      <p class="small mute">Se vindue/supabase/OPSÆTNING.md. Brug kun den offentlige anon-nøgle – aldrig service_role.</p>`; return; }
+  el.innerHTML = `<h2>Brugere og adgang</h2><p class="small mute">Firma: <b>${esc(member.orgName || '')}</b> · du er <b>${esc(member.email)}</b> (${member.role}) · ${cloudConf()?.url === 'memory' ? 'testdatabase i browseren' : 'Supabase'}</p><p class="mute small">Henter …</p>`;
+  if (member.role !== 'admin') return;
+  try {
+    const [ms, inv] = await Promise.all([cloud.members(member.orgId), cloud.invites(member.orgId)]);
+    el.innerHTML = `<h2>Brugere og adgang</h2><p class="small mute">Firma: <b>${esc(member.orgName || '')}</b> · ${cloudConf()?.url === 'memory' ? 'testdatabase i browseren' : 'Supabase'}</p>
+      <table><tr><th>Bruger</th><th>Rolle</th><th>Medarbejder i appen</th><th></th></tr>${ms.map((x) => `<tr><td>${esc(x.email || x.user_id)}</td><td>${x.role === 'admin' ? 'Admin' : 'Medarbejder'}</td><td>${esc(emp(x.employee_id)?.name || '–')}</td><td>${x.user_id === member.userId ? '<span class="small mute">dig</span>' : `<button class="bad small" data-act="cmRemove" data-id="${x.user_id}">Fjern adgang</button>`}</td></tr>`).join('')}</table>
+      <h3>Invitér</h3><div class="row"><select id="ivEmp">${db.employees.filter((e) => !e.inactive).map((e) => `<option value="${e.id}">${esc(e.name)}</option>`).join('')}</select><select id="ivRole"><option value="medarbejder">Medarbejder</option><option value="admin">Admin</option></select><button class="pri" data-act="ivCreate">Lav invitationskode</button></div>
+      <p class="small mute">Giv koden til personen. De åbner appen, opretter en bruger med deres egen e-mail og indtaster koden. Koden virker én gang i 14 dage.</p>
+      ${inv.length ? `<table><tr><th>Kode</th><th>Til</th><th>Udløber</th><th></th></tr>${inv.map((i) => `<tr><td><b class="code">${esc(i.code)}</b></td><td>${esc(emp(i.employee_id)?.name || '')} (${i.role})</td><td class="small">${esc(String(i.expires_at).slice(0, 10))}</td><td><button class="small" data-act="ivDel" data-id="${esc(i.code)}">Slet</button></td></tr>`).join('')}</table>` : ''}
+      <div class="row" style="margin-top:10px"><button data-act="syncNow">Synkronisér nu</button><button data-act="logout">Log ud</button></div>`;
+  } catch (e) { el.innerHTML += `<p class="warn-t">${esc(e.message)}</p>`; }
+}
+
 const sel = document.getElementById('user');
-function renderUserSelect() { sel.innerHTML = users().map((u) => `<option value="${u.id}" ${u.id === ui.user?.id ? 'selected' : ''}>${esc(u.name)}</option>`).join(''); }
+function renderUserSelect() { sel.hidden = !!gate; sel.innerHTML = users().map((u) => `<option value="${u.id}" ${u.id === ui.user?.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('') + (member ? `<option value="__logout">Log ud (${esc(member.email)})</option>` : ''); }
 renderUserSelect();
-sel.onchange = () => { ui.user = users().find((u) => u.id === sel.value); ui.customer = null; if (!isAdmin()) ui.tab = 'mobil'; render(); };
+sel.onchange = () => { if (sel.value === '__logout') return logout(); ui.user = users().find((u) => u.id === sel.value); ui.customer = null; if (!isAdmin()) ui.tab = 'mobil'; render(); };
 window.addEventListener('online', () => { ui.offline = false; flushOutbox(); render(); });
 window.addEventListener('offline', () => { ui.offline = true; render(); });
 // planlæg løbende 120 dage frem
 S.planAhead(db, D.addDays(todayIso(), 120));
 render();
+bootCloud();

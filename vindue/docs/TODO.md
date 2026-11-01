@@ -15,3 +15,11 @@
 - [ ] Afprøv PDF-import med rigtigt kundekartotek (kolonner, ombrudte linjer). Kartotek-PDF mangler sandsynligvis pris, næste dato og rute → skal suppleres (rute-PDF eller manuelt)
 - [ ] Betalingsservice-aftaler: hvordan e-conomic håndterer dem (SKAL VERIFICERES)
 - [ ] Kontant: automatisk indbetaling i e-conomic (SKAL VERIFICERES)
+
+## Database/login – før rigtig drift
+- [ ] MFA (TOTP) for admin (Supabase understøtter det)
+- [ ] Medarbejdere ser i dag alle kunder i firmaet – begræns til egne ruter (kræver kolonner på records + RLS)
+- [ ] Billeder til Supabase Storage i stedet for i records (mindre data pr. synk)
+- [ ] Lokalt lager: flyt fra localStorage (~5 MB) til IndexedDB
+- [ ] Konfliktvisning når to enheder ændrer samme post
+- [ ] Backup/gendannelse fra Supabase testet

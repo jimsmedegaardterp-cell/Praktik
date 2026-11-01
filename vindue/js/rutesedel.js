@@ -25,7 +25,7 @@ export function parseRouteSheetItems(items) {
     if (its.some((i) => /^Opgaver$/i.test(i.str)) && its.some((i) => /^Beløb$/i.test(i.str))) { cols = its.map((i) => ({ x: i.x, key: (COLS.find(([re]) => re.test(i.str.trim())) || [0, null])[1] })).filter((c) => c.key); continue; }
     if (!cols || /^Udskrevet den|^Total side|^I alt|^Side \d+ af \d+$|^Forventet kørsel|^Powered by/i.test(text)) continue;
     const cell = {};
-    // et tekststykke der løber ind i næste kolonne (fx "9330 Dronninglund Mads Peter Olesen") deles ved kolonnegrænsen
+    // et tekststykke der løber ind i næste kolonne (fx "9330 Dronninglund Navn Efternavn") deles ved kolonnegrænsen
     const parts = [];
     for (const it of its) {
       const nxt = cols.find((c) => c.x > it.x + 10 && c.x < it.x + (it.w || 0) - 15);
