@@ -163,6 +163,10 @@ export function addRouteOverviews(plan, overviews, db, { today }) {
     const n = norm(row.name), st = norm(row.street); if (!st) return null;
     for (const c of db.customers) { if (c.deleted || norm(c.name) !== n) continue;
       const a = db.addresses.find((x) => x.customerId === c.id && norm(x.street).startsWith(st)); if (a) return { c, a }; }
+    // reserve: samme adresse + postnr. hos præcis én kunde (navnet kan være skrevet lidt anderledes)
+    const zip = (String(row.zipCity).match(/\d{4}/) || [])[0];
+    const hits = db.addresses.filter((x) => norm(x.street).startsWith(st) && (!zip || x.street.includes(zip)) && !db.customers.find((c) => c.id === x.customerId)?.deleted);
+    if (hits.length === 1) return { c: db.customers.find((c) => c.id === hits[0].customerId), a: hits[0], byAddress: true };
     return null;
   };
   const byKey = new Map(plan.customers.map((c) => [keyOf(c.name, c.keyStreet ?? c.addresses[0].street.split(',')[0]), c]));
@@ -175,7 +179,7 @@ export function addRouteOverviews(plan, overviews, db, { today }) {
     for (const row of ov.rows) {
       let c = byKey.get(keyOf(row.name, row.street));
       if (!c) { const ex = findExisting(row);
-        if (ex) { matched++; const u = { customerId: ex.c.id, addressId: ex.a.id, ref, nr: row.nr, name: ex.c.name, anchors: db.agreements.filter((g) => g.addressId === ex.a.id && g.intervalWeeks).map((g) => ({ anchorDate: g.anchorDate, intervalWeeks: g.intervalWeeks })) };
+        if (ex) { matched++; if (ex.byAddress) plan.issues.push({ line: `${name} nr. ${row.nr}`, msg: `"${row.name}" koblet til "${ex.c.name}" på adressen`, warn: true }); const u = { customerId: ex.c.id, addressId: ex.a.id, ref, nr: row.nr, name: ex.c.name, anchors: db.agreements.filter((g) => g.addressId === ex.a.id && g.intervalWeeks).map((g) => ({ anchorDate: g.anchorDate, intervalWeeks: g.intervalWeeks })) };
           plan.routeUpdates.push(u); plan.routeOrder[ref].push({ routeNr: row.nr, existingAddressId: ex.a.id }); continue; } }
       if (!c) {
         c = { line: `${name} nr. ${row.nr}`, extId: null, name: row.name, phone: row.phone.replace(/\s/g, ''), email: '', notes: '', paymentMethod: 'bank', dupeOf: null, fromRoute: true,
@@ -193,10 +197,12 @@ export function addRouteOverviews(plan, overviews, db, { today }) {
       c.routeRef = ref; c.routeNr = row.nr; plan.routeOrder[ref].push(c);
       for (const g of c.addresses[0].agreements) g.routeRef = g.intervalWeeks ? ref : null;
     }
-    if (!existing) {
+    const emptyExisting = existing && !db.agreements.some((g) => g.routeId === existing.id);
+    if (!existing || emptyExisting) {
       const ags = [...plan.routeOrder[ref].filter((c) => c.addresses).flatMap((c) => c.addresses[0].agreements), ...plan.routeUpdates.filter((u) => u.ref === ref).flatMap((u) => u.anchors)].filter((g) => g.intervalWeeks);
       const anchor = ags.map((g) => g.anchorDate).filter(Boolean).sort()[0] || null;
-      plan.newRoutes.push({ ref, name, intervalWeeks: ags.length ? Math.min(...ags.map((g) => g.intervalWeeks)) : 4, anchorDate: anchor, customers: ov.rows.length, matched });
+      const info = { ref, name, intervalWeeks: ags.length ? Math.min(...ags.map((g) => g.intervalWeeks)) : 4, anchorDate: anchor, customers: ov.rows.length, matched };
+      if (emptyExisting) (plan.resetRoutes ||= []).push(info); else plan.newRoutes.push(info);
     }
   }
   plan.errors = plan.issues.filter((i) => !i.warn).length;
@@ -207,9 +213,11 @@ export function addRouteOverviews(plan, overviews, db, { today }) {
 export function materializeRoutes(db, plan, { uid, today, employeeId, batchId }) {
   const ids = {};
   for (const nr of plan.newRoutes || []) {
-    const r = { id: uid('r'), name: nr.name, employeeId, intervalWeeks: nr.intervalWeeks, anchorDate: nr.anchorDate || D.nextWorkday(today), importBatch: batchId };
+    const r = { id: uid('r'), name: nr.name, employeeId, intervalWeeks: nr.intervalWeeks, anchorDate: nr.anchorDate || D.nextWorkday(today), importBatch: batchId, ...(nr.anchorDate ? {} : { anchorUnknown: true }) };
     db.routes.push(r); ids[nr.ref] = r.id;
   }
+  // eksisterende, tomme ruter (fx fra en tidligere mislykket import): sæt rytme og dato ud fra kunderne
+  for (const rr of plan.resetRoutes || []) { const r = db.routes.find((x) => x.id === rr.ref); if (!r) continue; r.intervalWeeks = rr.intervalWeeks; if (rr.anchorDate) { r.anchorDate = rr.anchorDate; delete r.anchorUnknown; } }
   const resolve = (ref) => (ref?.startsWith('new:') ? ids[ref] : ref) || null;
   for (const c of plan.customers) for (const g of c.addresses[0].agreements) {
     if (g.routeRef !== undefined) g.routeId = resolve(g.routeRef);

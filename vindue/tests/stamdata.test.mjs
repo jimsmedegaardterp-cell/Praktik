@@ -109,3 +109,21 @@ test('ruteoversigt importeret EFTER kunderne sætter rute + rækkefølge på eks
   assert.ok(db.visits.filter((v) => v.customerId === karin.id && v.status === 'planlagt' && v.agreementId === db.agreements.find((g) => g.customerId === karin.id && g.intervalWeeks).id).every((v) => v.routeId === rid));
   assert.deepEqual(r.order.map((aid) => db.customers.find((c) => c.id === db.addresses.find((a) => a.id === aid).customerId).name), ['Karin Test', 'Ny Rutekunde', 'Hans Prøvesen']);
 });
+
+test('reparation: tomme ruter fra tidligere import får rytme, dato og kunder; reserve-match på adresse', () => {
+  const db = seedDb('2026-11-02'); db.customers = []; db.addresses = []; db.agreements = []; db.visits = [];
+  db.routes = [{ id: 'old', name: 'Bindslev 2', employeeId: 'e1', intervalWeeks: 4, anchorDate: '2026-11-02' }]; // tom rute med forkert dato
+  const p1 = SD.buildSkvizPlan([{ fileName: 'alle.pdf', routeId: '', customers: SD.parseStamdataItems(ITEMS) }], null, db, { today: '2026-11-02' });
+  I.applyImportPlan(db, p1, { batchId: 'a', uid, horizon: '2027-03-01', today: '2026-11-02' });
+  db.customers.find((c) => c.name === 'Hans Prøvesen').name = 'Hans J. Prøvesen'; // navn stavet anderledes
+  const p2 = SD.buildSkvizPlan([], null, db, { today: '2026-11-02' });
+  SD.addRouteOverviews(p2, [{ ...SD.parseRouteOverviewItems(OV), fileName: 'r.pdf' }], db, { today: '2026-11-02' });
+  assert.equal(p2.newRoutes.length, 0); assert.equal(p2.resetRoutes.length, 1); assert.equal(p2.routeUpdates.length, 2);
+  assert.ok(p2.issues.some((i) => /koblet til "Hans J. Prøvesen" på adressen/.test(i.msg)));
+  const ids = SD.materializeRoutes(db, p2, { uid, today: '2026-11-02', employeeId: 'e1', batchId: 'b' });
+  assert.equal(db.routes[0].anchorDate, '2026-12-15');
+  I.applyImportPlan(db, p2, { batchId: 'b', uid, horizon: '2027-03-01', today: '2026-11-02' });
+  SD.applyRouteUpdates(db, p2, ids); SD.applyRouteOrder(db, p2, ids, 'b');
+  assert.equal(db.routes[0].order.length, 3);
+  assert.equal(db.agreements.filter((g) => g.routeId === 'old').length, 4); // Karin 1 + Hans 1 + ny rutekunde 2
+});
