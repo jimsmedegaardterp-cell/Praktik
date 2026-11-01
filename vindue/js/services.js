@@ -92,7 +92,9 @@ export function moveVisit(db, user, visitId, newDate, mode) {
 export async function approveInvoices(db, user, visitIds, economic) {
   require_(user, 'invoice.approve');
   const queue = D.invoiceQueue(db.visits, db.invoiceLinks).filter((v) => visitIds.includes(v.id));
-  const groups = D.groupForInvoicing(queue, { perCustomer: db.settings.perCustomerInvoice });
+  // betaler = den kunde der faktureres (kan være en anden konto end leveringskunden)
+  const payerOf = (v) => db.customers.find((c) => c.id === v.customerId)?.billTo || v.customerId;
+  const groups = D.groupForInvoicing(queue.map((v) => ({ ...v, customerId: payerOf(v), deliveryCustomerId: v.customerId })), { perCustomer: db.settings.perCustomerInvoice });
   const results = [];
   for (const g of groups) {
     const key = D.idempotencyKey(g.map((v) => v.id));
@@ -111,7 +113,8 @@ async function pushDraft(db, user, link, economic) {
   try {
     if (!c.economicNumber) { const { externalId } = await economic.upsertCustomer(c); c.economicNumber = externalId; audit(db, user.id, 'economic.customer', c.id, { externalId }); }
     const lines = link.visitIds.map((id) => { const v = db.visits.find((x) => x.id === id); const a = db.addresses.find((x) => x.id === v.addressId);
-      return { description: `${v.service} – ${a?.street ?? ''} (${v.completion.at.slice(0, 10)})`, quantity: 1, unitNetPrice: v.price }; });
+      const dc = v.customerId !== c.id ? db.customers.find((x) => x.id === v.customerId)?.name + ', ' : '';
+      return { description: `${v.service} – ${dc}${a?.street ?? ''} (${v.completion.at.slice(0, 10)})`, quantity: 1, unitNetPrice: v.price }; });
     const { draftNumber } = await economic.createDraftInvoice({ idempotencyKey: link.idempotencyKey, customerExternalId: c.economicNumber, lines });
     Object.assign(link, { status: 'kladde', draftNumber, error: null, total: lines.reduce((s, l) => s + l.unitNetPrice, 0) });
     audit(db, user.id, 'invoice.draft', link.id, { draftNumber });

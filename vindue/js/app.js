@@ -7,7 +7,7 @@ import * as I from './import.js';
 import * as G from './gdpr.js';
 import * as SD from './stamdata.js';
 
-export const VERSION = '2026-11-01 #13';
+export const VERSION = '2026-11-01 #14';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = load();
@@ -143,6 +143,8 @@ function kundekort(c) {
       <div class="small mute">${esc(PAY[c.paymentMethod] ?? 'Bankoverførsel')} · ${esc(c.paymentTerms)} · ${c.vatLiable ? 'Momspligtig' : 'Momsfri'} · e-conomic kundenr.: ${c.economicNumber ?? '<i>ikke oprettet</i>'}</div>
       <div class="small mute">${esc(c.group || 'Privat kunder')} · ${esc(INVTYPE[c.invoiceType || 'email'])} · ${c.invoiceInterval === 'maaned' ? 'samlet pr. måned' : 'faktura ved hvert besøg'}${c.cvr ? ' · CVR ' + esc(c.cvr) : ''}</div>
       <div class="row small" style="margin-top:4px">${c.callBefore ? '<span class="pill warn">📞 Ring før besøg</span>' : ''}${c.smsBefore ? '<span class="pill">SMS før besøg</span>' : ''}${c.smsAfter ? '<span class="pill">SMS efter besøg</span>' : ''}</div>
+      ${c.billTo && cust(c.billTo) ? `<div class="small" style="margin-top:4px">💳 Faktureres via: <a href="#" data-cust="${c.billTo}">${esc(cust(c.billTo).name)}</a></div>` : ''}
+      ${(() => { const kids = db.customers.filter((x) => x.billTo === c.id && !x.deleted); return kids.length ? `<div class="small" style="margin-top:4px">💳 Betaler for ${kids.length}: ${kids.slice(0, 12).map((k) => `<a href="#" data-cust="${k.id}">${esc(k.name)}</a>`).join(', ')}${kids.length > 12 ? ' …' : ''}</div>` : ''; })()}
       ${c.rememberNext ? `<div class="warnbox">Husk næste gang: ${esc(c.rememberNext)}</div>` : ''}
       ${c.notes ? `<p>${esc(c.notes)}</p>` : ''}
     </div>
@@ -338,6 +340,7 @@ function dataCheck() {
     ['Kunder uden kundenr. (kun fundet i ruteoversigt)', live.filter((c) => !c.customerNo).map((c) => ({ c, txt: db.addresses.find((a) => a.customerId === c.id)?.street || '' }))],
     ['Ruter uden kendt dato', db.routes.filter((r) => r.anchorUnknown).map((r) => ({ r, txt: r.name }))],
     ['Kunder uden aftaler', live.filter((c) => !agOf(c).length).map((c) => ({ c, txt: db.addresses.find((a) => a.customerId === c.id)?.street || '' }))],
+    ['Faktureres via anden konto – betaler ikke fundet', live.filter((c) => c.billingSkvizId && !c.billTo).map((c) => ({ c, txt: `SkvizBiz betaler-id ${c.billingSkvizId}` }))],
     ['Kunder uden telefon og e-mail', live.filter((c) => !c.phone && !c.email).map((c) => ({ c, txt: '' }))],
   ];
 }
@@ -516,7 +519,7 @@ function faktura() {
   const q = D.invoiceQueue(db.visits, db.invoiceLinks).sort((a, b) => a.completion.at.localeCompare(b.completion.at));
   const links = [...db.invoiceLinks].reverse();
   $view.innerHTML = `<div class="card"><div class="row"><h2 class="sp">Faktureringskø (${q.length})</h2><label class="small"><input type="checkbox" id="perC" ${db.settings.perCustomerInvoice ? 'checked' : ''}> Samlefaktura pr. kunde</label></div>
-    ${q.length ? `<table><tr><th><input type="checkbox" id="all" checked></th><th>Udført</th><th>Kunde</th><th class="hide-m">Ydelse</th><th>Af</th><th>Pris</th></tr>${q.map((v) => `<tr><td><input type="checkbox" class="qv" value="${v.id}" checked></td><td>${fmt(v.completion.at.slice(0, 10))}</td><td>${esc(cust(v.customerId).name)}</td><td class="hide-m small">${esc(v.service)}${v.status === 'delvis' ? ' (delvis)' : ''}${v.completion.priceChanged ? ' <span class="pill warn">pris ændret</span>' : ''}${v.completion.note ? `<br>💬 ${esc(v.completion.note)}` : ''}</td><td>${esc(emp(v.completion.by)?.name ?? v.completion.by)}<div class="small mute">${esc(PAY[cust(v.customerId).paymentMethod] ?? '')}${v.completion.cashPaid ? ' <span class="pill ok">kontant modtaget</span>' : ''}</div></td><td>${kr(v.price)}</td></tr>`).join('')}</table>
+    ${q.length ? `<table><tr><th><input type="checkbox" id="all" checked></th><th>Udført</th><th>Kunde</th><th class="hide-m">Ydelse</th><th>Af</th><th>Pris</th></tr>${q.map((v) => `<tr><td><input type="checkbox" class="qv" value="${v.id}" checked></td><td>${fmt(v.completion.at.slice(0, 10))}</td><td>${esc(cust(v.customerId).name)}${cust(v.customerId).billTo ? `<div class="small mute">💳 faktureres via ${esc(cust(cust(v.customerId).billTo)?.name)}</div>` : ''}</td><td class="hide-m small">${esc(v.service)}${v.status === 'delvis' ? ' (delvis)' : ''}${v.completion.priceChanged ? ' <span class="pill warn">pris ændret</span>' : ''}${v.completion.note ? `<br>💬 ${esc(v.completion.note)}` : ''}</td><td>${esc(emp(v.completion.by)?.name ?? v.completion.by)}<div class="small mute">${esc(PAY[cust(v.customerId).paymentMethod] ?? '')}${v.completion.cashPaid ? ' <span class="pill ok">kontant modtaget</span>' : ''}</div></td><td>${kr(v.price)}</td></tr>`).join('')}</table>
     ${q.some((v) => v.completion.cashPaid) ? '<p class="small mute">Kontant modtaget: fakturaen oprettes som normalt; registrér indbetalingen i e-conomic (kassekladde). Automatisk registrering SKAL VERIFICERES.</p>' : ''}
     <div class="row" style="margin-top:10px"><button class="pri" data-act="approve">Godkend valgte → opret kladder i e-conomic (mock)</button><label class="small"><input type="checkbox" id="fail" ${eco.failNext ? 'checked' : ''}> Simulér timeout ved næste kald</label></div>` : '<p class="mute">Intet klar til fakturering. Registrér et besøg som udført i 📱 Dagsrute.</p>'}</div>
   <div class="card"><div class="row"><h2 class="sp">Fakturaer (e-conomic mock)</h2><button data-act="syncPay">Hent betalingsstatus</button></div>
@@ -763,7 +766,8 @@ document.addEventListener('click', async (e) => {
         const n = G.applyGdprUpdates(db, st.updates); let made = 0;
         if (st.includeNew) { const batchId = S.uid('imp'); made = I.applyImportPlan(db, { ...st.plan, customers: st.plan.customers.filter((c) => !c.dupeOf) }, { batchId, uid: S.uid, horizon: D.addDays(todayIso(), 120), today: todayIso() }).customers; }
         S.audit(db, ui.user.id, 'import.gdprUpdate', '-', { updated: n, created: made, backup: backup.length }); (db.gdprBackups ||= []).push({ at: new Date().toISOString(), backup });
-        ui.imp = null; toast(`${n} kunder opdateret${made ? `, ${made} oprettet` : ''}`); break; }
+        const bt = G.resolveBillTo(db);
+        ui.imp = null; toast(`${n} kunder opdateret${made ? `, ${made} oprettet` : ''}${bt.linked ? ` · ${bt.linked} faktureres via en anden konto` : ''}${bt.missing.length ? ` · ${bt.missing.length} betalere ikke fundet` : ''}`); break; }
       case 'stRemove': ui.imp.stams.splice(+b.dataset.i, 1); if (!ui.imp.stams.length && !ui.imp.overviews?.length) ui.imp = null; break;
       case 'ovRemove': ui.imp.overviews.splice(+b.dataset.i, 1); if (!ui.imp.stams.length && !ui.imp.overviews.length) ui.imp = null; break;
       case 'impMakeRoutes': { const pl = ui.imp.plan; let n = 0;
@@ -777,6 +781,7 @@ document.addEventListener('click', async (e) => {
         const c = I.applyImportPlan(db, st.plan, { batchId, uid: S.uid, includeDuplicates: !!st.includeDup, horizon: D.addDays(todayIso(), 120), today: todayIso() });
         const upd = st.plan.routeUpdates ? SD.applyRouteUpdates(db, st.plan, rids, S.uid) : 0;
         if (st.plan.routeOrder) SD.applyRouteOrder(db, st.plan, rids);
+        G.resolveBillTo(db);
         if (upd) setTimeout(() => toast(`${c.customers} nye kunder · ${upd} eksisterende aftaler har fået rute · ${Object.keys(rids).length} ruter oprettet`), 50);
         S.audit(db, ui.user.id, 'import.apply', batchId, { file: st.fileName, ...c, routes: Object.keys(rids).length }); ui.imp = null; toast(`${c.customers} kunder, ${c.agreements} aftaler, ${c.visits} besøg importeret`); break; }
       case 'impUndo': if (!confirm('Fortryd importen? Alle kunder fra den slettes.')) return; I.rollbackImport(db, id); S.audit(db, ui.user.id, 'import.rollback', id); toast('Import fortrudt'); break;

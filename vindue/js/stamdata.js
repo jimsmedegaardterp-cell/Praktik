@@ -113,7 +113,7 @@ export function buildSkvizPlan(stams, gdpr, db, { today }) {
     const c = { line, extId: s.extId, name: s.name, keyStreet: ad.street, phone, email: s.email, notes: '', paymentMethod: g && yes(g.cash_payment) ? 'kontant' : 'bank', dupeOf: dupe?.id || null,
       extra: { customerNo: s.extId, skvizbizId: s.extId, ean: s.ean, cvr: s.cvr, paymentDays: s.paymentDays ?? 8, paymentTerms: `Netto ${s.paymentDays ?? 8} dage`, invoiceType: media,
         invoiceInterval: g && /month/i.test(String(g.billing_frequency_2)) ? 'maaned' : 'besoeg', callBefore: g ? yes(g.call_first) : false, smsBefore: g ? yes(g.sms_first) : false, smsAfter: g ? yes(g.sms_after) : false,
-        group: g?.customer_group_id != null ? `Gruppe ${g.customer_group_id}` : 'Privat kunder', blocked: !!g?.timestamp_blocked,
+        group: g?.customer_group_id != null ? `Gruppe ${g.customer_group_id}` : 'Privat kunder', blocked: !!g?.timestamp_blocked, skvizId: g?.id ?? null, billingSkvizId: g?.billing_id ?? null,
         billing: billingDiffers ? { address: [bill.street, bill.address2].filter(Boolean).join(', '), zipCity: bill.zipCity } : null },
       addresses: [{ street, access: s.notes.join(' ').trim(), lat: Number.isFinite(lat) ? lat : null, lng: Number.isFinite(lng) ? lng : null, agreements: ags }] };
     if (ags.length > 1) plan.issues.push({ line, msg: `${s.name}: ${ags.length} aftaler lagt på samme adresse – tjek om en af dem hører til en anden adresse`, warn: true });

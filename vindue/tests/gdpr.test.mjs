@@ -67,3 +67,19 @@ test('GDPR-zip opdaterer eksisterende kunder på kundenr. uden at røre navn/adr
   assert.equal(c.invoiceType, 'ean'); assert.equal(c.ean, '5790000000000'); assert.equal(c.smsBefore, true); assert.equal(c.email, 'test@example.dk'); assert.equal(ad.lat, 57.48);
   assert.equal(c.name, before.name); assert.equal(ad.street, before.street); assert.equal(JSON.stringify(db.agreements.filter((g) => g.customerId === c.id)), before.ags);
 });
+
+test('faktureres via anden konto: billing_id → betaler; fakturaen går til betaleren', async () => {
+  const { MockEconomic } = await import('../js/adapters.js');
+  const S = await import('../js/services.js');
+  const db = seedDb('2026-11-02');
+  const [payer, kid] = db.customers; payer.customerNo = '00000018'; kid.customerNo = '00000019';
+  const files = [{ name: 'p', json: { id: 500, number: 18, name: payer.name, deleted: 'no' } }, { name: 'k', json: { id: 501, number: 19, name: kid.name, billing_id: 500, deleted: 'no' } }];
+  G.applyGdprUpdates(db, G.gdprUpdates(G.buildGdprPlan(files, db, { today: '2026-11-02' }), db));
+  assert.deepEqual(G.resolveBillTo(db), { linked: 1, missing: [] });
+  assert.equal(kid.billTo, payer.id);
+  const v = db.visits.find((x) => x.customerId === kid.id && x.status === 'planlagt');
+  S.registerVisit(db, { id: 'u1', role: 'admin', employeeId: 'e1' }, v.id, { result: 'udfoert', opId: 'b1' });
+  const [link] = await S.approveInvoices(db, { id: 'u1', role: 'admin' }, [v.id], new MockEconomic(db.mock.economic));
+  assert.equal(link.customerId, payer.id);
+  assert.match(Object.values(db.mock.economic.drafts)[0].lines[0].description, new RegExp(kid.name));
+});
