@@ -48,3 +48,5 @@
 | 45 | 2026-11-01 | Brugere i topbjælken = appens medarbejdere (ikke hårdkodet); medarbejdere oprettes/omdøbes/fjernes under Admin; mindst én admin; fjernede beholdes til historik/provision | "Mads" var testdata og var låst fast |
 | 46 | 2026-11-01 | Ruteoversigter kan importeres efter kunderne: eksisterende kunder (navn + adresse) får rute på faste aftaler og planlagte besøg samt rækkefølge | Ejer importerede kunder uden ruter |
 | 47 | 2026-11-01 | Tomme ruter (fx fra import med gammel version) får rytme og dato ved ny import af ruteoversigter; reserve-match på adresse + postnr. når navn afviger; ukendt rutedato vises som "ukendt"; versionsnummer i topbjælken; "Slet ruter uden kunder" | Ejers import blev kørt med cachet gammel version |
+| 48 | 2026-11-01 | Cache-busting: import map i index.html giver alle JS-moduler `?v=N`; ved hver udgivelse hæves N og VERSION i app.js | Browseren kørte gammel kode efter opdatering (GitHub Pages cacher 10 min) |
+| 49 | 2026-11-01 | Admin → Ruter: "Genberegn rytme og dato ud fra kunderne" | Reparation af ruter uden at importere igen |

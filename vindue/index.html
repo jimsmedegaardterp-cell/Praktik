@@ -6,7 +6,7 @@
 <title>Sindal Vinduespolering</title>
 <meta name="theme-color" content="#1f5f8b">
 <link rel="manifest" href="manifest.json">
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=6">
 </head>
 <body>
 <header class="top">
@@ -20,6 +20,20 @@
 <main id="view"></main>
 <dialog id="dlg"><form method="dialog" id="dlgBody"></form></dialog>
 <div id="toast" class="toast" hidden></div>
-<script type="module" src="js/app.js"></script>
+<!-- Versionsnummer i adresserne tvinger browseren til at hente nyeste kode efter en opdatering.
+     Ved ny udgivelse: hæv v= her og VERSION i js/app.js. -->
+<script type="importmap">
+{ "imports": {
+    "./js/adapters.js": "./js/adapters.js?v=6",
+    "./js/app.js": "./js/app.js?v=6",
+    "./js/domain.js": "./js/domain.js?v=6",
+    "./js/gdpr.js": "./js/gdpr.js?v=6",
+    "./js/import.js": "./js/import.js?v=6",
+    "./js/seed.js": "./js/seed.js?v=6",
+    "./js/services.js": "./js/services.js?v=6",
+    "./js/stamdata.js": "./js/stamdata.js?v=6"
+} }
+</script>
+<script type="module" src="js/app.js?v=6"></script>
 </body>
 </html>
