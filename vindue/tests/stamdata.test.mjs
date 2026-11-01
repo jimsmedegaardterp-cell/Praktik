@@ -133,3 +133,15 @@ test('kunde uden telefon: e-mail havner ikke i telefonfeltet', () => {
     t(1, 694, L, 'Tlf.: post@example.dk'), t(1, 694, R, 'Betalingsbetingelser: d.d. + 8 dage')];
   const [c] = SD.parseStamdataItems(it); assert.equal(c.phone, ''); assert.equal(c.email, 'post@example.dk');
 });
+
+test('lang aftalebeskrivelse lander ikke i interval-kolonnen', () => {
+  const base = [t(1, 763, L, 'Kundenr. 00000050 - Test Lade'), t(1, 750, L, 'Leveringsadresse:'), t(1, 750, R, 'Faktureringsadresse:'), t(1, 739, L, 'Test Lade'), t(1, 728, L, 'Vej 2'), t(1, 717, L, '9870 Sindal'),
+    t(1, 694, L, 'Tlf.: 20112233'), t(1, 694, R, 'Betalingsbetingelser: d.d. + 8 dage'),
+    t(1, 660, L, 'Aftaler med kunden'), t(1, 660, 286.3, 'Interval'), t(1, 660, 357.2, 'Næste gang'), t(1, 660, 428.2, 'Pris ex moms'), t(1, 660, 520.7, 'Tid'),
+    { str: 'Den ene side af laden, som vender ud mod vejen. På huset er taget tæt på tagrenden og', x: 59.5, y: 648, w: 420, page: 1 },
+    t(1, 648, 286.3, 'Hver 8. uge'), t(1, 648, 357.2, '15/12-2026'), { str: 'kr. 400,00', x: 448.8, y: 648, w: 44.5, page: 1 }, t(1, 648, 516.3, '0:30'),
+    { str: 'skal derfor gøres med stige', x: 59.5, y: 637, w: 120, page: 1 }];
+  const [c] = SD.parseStamdataItems(base);
+  assert.equal(c.agreements.length, 1); assert.equal(c.agreements[0].interval, 'Hver 8. uge');
+  assert.match(c.agreements[0].service, /^Den ene side af laden.*stige$/);
+});

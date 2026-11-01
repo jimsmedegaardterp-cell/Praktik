@@ -13,6 +13,7 @@ import * as D from './domain.js';
 import { parsePrice, parseDate, parseInterval, parseDuration } from './import.js';
 
 const NONE = /^ikke oplyst$/i;
+const FITS = { service: /./, interval: /^(hver|ikke fast|\d+\s*(uge|uger|md|måned))/i, next: /^(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|-)$/, price: /^(kr\.?\s*)?-?[\d.]+,\d{2}$|^kr\.?\s*[\d.,]+$/i, dur: /^\d{1,2}:\d{2}$/ };
 const val = (s) => { const v = String(s ?? '').replace(/^[^:]*:\s*/, '').trim(); return NONE.test(v) ? '' : v; };
 
 /** items: [{str,x,y,w,page}] fra pdf.js → kunder */
@@ -51,7 +52,12 @@ export function parseStamdataItems(items) {
     if (mode === 'notes') { c.notes.push(text); continue; }
     if (mode === 'agr') {
       const row = {};
-      for (const it of its) { const center = it.x + (it.w || 0) / 2; let k = cols[0].key; for (const col of cols) if (col.x <= center + 2) k = col.key; row[k] = row[k] ? row[k] + ' ' + it.str : it.str; }
+      for (const it of its) {
+        const center = it.x + (it.w || 0) / 2; let k = cols[0].key; for (const col of cols) if (col.x <= center + 2) k = col.key;
+        // lang beskrivelse kan række ind over talkolonnerne – kun tekst der ligner værdien må lande der
+        if (!FITS[k]?.test(it.str.trim())) { k = cols[0].key; for (const col of cols) if (col.x <= it.x + 2) k = col.key; if (!FITS[k]?.test(it.str.trim())) k = 'service'; }
+        row[k] = row[k] ? row[k] + ' ' + it.str : it.str;
+      }
       if (!row.interval && !row.next && !row.price && c.agreements.length) c.agreements[c.agreements.length - 1].service += ' ' + (row.service || '');
       else c.agreements.push({ service: (row.service || 'Vinduesvask').trim(), interval: row.interval || '', next: row.next || '', price: row.price || '', dur: row.dur || '' });
     }
