@@ -156,7 +156,15 @@ const keyOf = (name, street) => `${String(name).toLowerCase().replace(/\s+/g, ' 
  * (rytme = mindste interval på ruten, dato = tidligste "næste gang" blandt rutens kunder).
  */
 export function addRouteOverviews(plan, overviews, db, { today }) {
-  plan.newRoutes = []; plan.routeOrder = {};
+  plan.newRoutes = []; plan.routeOrder = {}; plan.routeUpdates = [];
+  const norm = (x) => String(x || '').toLowerCase().replace(/[\s,.]+/g, ' ').trim();
+  // Eksisterende kunder i appen (fx importeret tidligere) – match på navn + adresse
+  const findExisting = (row) => {
+    const n = norm(row.name), st = norm(row.street); if (!st) return null;
+    for (const c of db.customers) { if (c.deleted || norm(c.name) !== n) continue;
+      const a = db.addresses.find((x) => x.customerId === c.id && norm(x.street).startsWith(st)); if (a) return { c, a }; }
+    return null;
+  };
   const byKey = new Map(plan.customers.map((c) => [keyOf(c.name, c.keyStreet ?? c.addresses[0].street.split(',')[0]), c]));
   for (const ov of overviews) {
     const name = ov.routeName || ov.fileName.replace(/\.pdf$/i, '');
@@ -166,6 +174,9 @@ export function addRouteOverviews(plan, overviews, db, { today }) {
     let matched = 0;
     for (const row of ov.rows) {
       let c = byKey.get(keyOf(row.name, row.street));
+      if (!c) { const ex = findExisting(row);
+        if (ex) { matched++; const u = { customerId: ex.c.id, addressId: ex.a.id, ref, nr: row.nr, name: ex.c.name, anchors: db.agreements.filter((g) => g.addressId === ex.a.id && g.intervalWeeks).map((g) => ({ anchorDate: g.anchorDate, intervalWeeks: g.intervalWeeks })) };
+          plan.routeUpdates.push(u); plan.routeOrder[ref].push({ routeNr: row.nr, existingAddressId: ex.a.id }); continue; } }
       if (!c) {
         c = { line: `${name} nr. ${row.nr}`, extId: null, name: row.name, phone: row.phone.replace(/\s/g, ''), email: '', notes: '', paymentMethod: 'bank', dupeOf: null, fromRoute: true,
           extra: { invoiceType: 'email', invoiceInterval: 'besoeg', paymentDays: 8, paymentTerms: 'Netto 8 dage', group: 'Privat kunder' },
@@ -183,7 +194,7 @@ export function addRouteOverviews(plan, overviews, db, { today }) {
       for (const g of c.addresses[0].agreements) g.routeRef = g.intervalWeeks ? ref : null;
     }
     if (!existing) {
-      const ags = plan.routeOrder[ref].flatMap((c) => c.addresses[0].agreements).filter((g) => g.intervalWeeks);
+      const ags = [...plan.routeOrder[ref].filter((c) => c.addresses).flatMap((c) => c.addresses[0].agreements), ...plan.routeUpdates.filter((u) => u.ref === ref).flatMap((u) => u.anchors)].filter((g) => g.intervalWeeks);
       const anchor = ags.map((g) => g.anchorDate).filter(Boolean).sort()[0] || null;
       plan.newRoutes.push({ ref, name, intervalWeeks: ags.length ? Math.min(...ags.map((g) => g.intervalWeeks)) : 4, anchorDate: anchor, customers: ov.rows.length, matched });
     }
@@ -213,10 +224,24 @@ export function applyRouteOrder(db, plan, ids, batchId) {
     const rid = ref.startsWith('new:') ? ids[ref] : ref; const r = db.routes.find((x) => x.id === rid); if (!r) continue;
     const order = [];
     for (const pc of [...cs].sort((a, b) => a.routeNr - b.routeNr)) {
+      if (pc.existingAddressId) { order.push(pc.existingAddressId); continue; }
       const cust = db.customers.find((c) => c.importBatch === batchId && c.name === pc.name && (pc.extId ? c.customerNo === pc.extId : true));
       const ad = cust && db.addresses.find((a) => a.customerId === cust.id);
       if (ad) order.push(ad.id);
     }
     r.order = [...order, ...(r.order || []).filter((a) => !order.includes(a))];
   }
+}
+
+/** Sæt rute på eksisterende kunders faste aftaler og deres planlagte besøg. Returnerer antal ændrede aftaler. */
+export function applyRouteUpdates(db, plan, ids) {
+  let n = 0;
+  for (const u of plan.routeUpdates || []) {
+    const rid = u.ref.startsWith('new:') ? ids[u.ref] : u.ref; if (!rid) continue;
+    for (const g of db.agreements.filter((x) => x.addressId === u.addressId && x.intervalWeeks)) {
+      if (g.routeId !== rid) { g.prevRouteId = g.routeId ?? null; g.routeId = rid; n++; }
+      for (const v of db.visits) if (v.agreementId === g.id && (v.status === 'planlagt' || v.status === 'udsat')) v.routeId = rid;
+    }
+  }
+  return n;
 }
