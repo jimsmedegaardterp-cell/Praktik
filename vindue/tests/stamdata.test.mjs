@@ -238,3 +238,14 @@ test('ruteoversigt med forkortede navne ("Andelsboligforeningen Museu...") koble
   I.applyImportPlan(db, plan, { batchId: 'x', uid, horizon: '2028-01-01', today: '2026-11-02' });
   assert.ok(db.agreements.every((g) => db.routes.find((r) => r.id === g.routeId)?.name === 'Tagrenderens'));
 });
+
+test('ruteoversigt: forkortet navn og adresse i ét tekststykke ("Navn... Vej 1") deles korrekt', () => {
+  const it = [t(1, 556, 168.8, 'Komplet ruteoversigt for "Tagrenderens" (udskrevet fra SkvizBiz den 01/11-2026)'), ...RH.map(([s, x]) => t(1, 529.6, x, s)),
+    t(1, 515.9, 40.9, '1'), { str: 'Landbrug ved Johnny Jørgen... Stabækvej 1', x: 51, y: 515.9, w: 165, page: 1 }, t(1, 515.9, 277.8, '9800 Hjørring'), t(1, 515.9, 377, '28111051'),
+    t(1, 515.6, 532.9, 'Rens af stald'), t(1, 515.6, 660.5, 'Hver 4. uge'), { str: '840,00', x: 749.4, y: 515.6, w: 24.5, page: 1 }, { str: '00:55', x: 790.7, y: 515.6, w: 20, page: 1 },
+    t(1, 504.6, 40.9, '2'), { str: 'Ejerforeningen Skjoldborgsvej...Skjoldborgsvej 11A', x: 51, y: 504.6, w: 190, page: 1 }, t(1, 504.6, 277.8, '9800 Hjørring'),
+    t(1, 504.3, 532.9, 'Tagrenderens'), t(1, 504.3, 660.5, 'Hver 26. uge'), { str: '2.720,00', x: 741, y: 504.3, w: 33, page: 1 }, { str: '02:30', x: 790.7, y: 504.3, w: 20, page: 1 }];
+  const r = SD.parseRouteOverviewItems(it);
+  assert.deepEqual(r.rows.map((x) => [x.name, x.street, x.zipCity]), [['Landbrug ved Johnny Jørgen...', 'Stabækvej 1', '9800 Hjørring'], ['Ejerforeningen Skjoldborgsvej...', 'Skjoldborgsvej 11A', '9800 Hjørring']]);
+  assert.equal(r.rows[0].agreements[0].price, '840,00');
+});

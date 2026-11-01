@@ -145,7 +145,18 @@ export function parseRouteOverviewItems(items) {
     if (its.some((i) => /^Kundenavn$/i.test(i.str))) { cols = its.map((i) => ({ x: i.x, key: (RCOLS.find(([re]) => re.test(i.str)) || [0, null])[1] })).filter((c) => c.key); continue; }
     if (!cols || /^Side \d+ af \d+$|^Powered by/i.test(text.trim())) continue;
     const cell = {};
-    for (const it of its) { const center = it.x + (it.w || 0) / 2; let k = cols[0].key; for (const c of cols) if (c.x <= center + 2) k = c.key; cell[k] = cell[k] ? cell[k] + ' ' + it.str : it.str; }
+    // Forkortede navne ("Landbrug ved Johnny Jørgen...") skrives i samme tekststykke som adressen
+    // ("Landbrug ved Johnny Jørgen... Stabækvej 1") – del stykket ved "..." eller ved kolonnegrænsen.
+    const parts = [];
+    for (const it of its) {
+      const w = it.w || it.str.length * 4.4;
+      const nxt = cols.find((c) => c.x > it.x + 10 && c.x < it.x + w - 8);
+      const dots = it.str.search(/(\.\.\.|…)/);
+      if (nxt && dots > 0) { const k = dots + (it.str[dots] === '…' ? 1 : 3); const a = it.str.slice(0, k).trim(), b = it.str.slice(k).trim();
+        if (a && b) { parts.push({ ...it, str: a, w: nxt.x - it.x - 2 }, { ...it, str: b, x: nxt.x, w: Math.max(4, w - (nxt.x - it.x)) }); continue; } }
+      parts.push(it);
+    }
+    for (const it of parts) { const center = it.x + (it.w || 0) / 2; let k = cols[0].key; for (const c of cols) if (c.x <= center + 2) k = c.key; cell[k] = cell[k] ? cell[k] + ' ' + it.str : it.str; }
     if (cell.nr && /^\d+$/.test(cell.nr.trim())) { cur = { nr: +cell.nr, name: cell.name || '', street: cell.street || '', zipCity: cell.zipCity || '', phone: cell.phone || '', notes: cell.notes || '', agreements: [] }; rows.push(cur); }
     else if (!cur) continue;
     else { for (const k of ['name', 'street', 'zipCity']) if (cell[k]) cur[k] += ' ' + cell[k]; if (cell.notes) cur.notes += ' ' + cell.notes; }
