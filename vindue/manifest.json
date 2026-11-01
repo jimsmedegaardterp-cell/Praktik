@@ -1,6 +1,6 @@
 {
-  "name": "Vinduesdrift",
-  "short_name": "Vinduer",
+  "name": "Sindal Vinduespolering",
+  "short_name": "Sindal Vindue",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

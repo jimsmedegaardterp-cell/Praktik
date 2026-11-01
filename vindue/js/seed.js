@@ -56,9 +56,9 @@ export function seedDb(todayIso) {
   db.agreements.push({ id: uid('ag'), customerId: cf, addressId: af, routeId: null, service: 'Vinduesvask', price: 450, intervalWeeks: 0, durationMin: 45, anchorDate: todayIso, seasonMonths: [], active: true });
 
   db.templates = {
-    varsel: 'Hej {navn}. Vi kommer og pudser dine vinduer i morgen ({dato}). Svar på denne SMS hvis det ikke passer. Mvh. Vinduespudseren',
-    forsinket: 'Hej {navn}. Vi er lidt forsinket i dag og forventer at være hos dig ca. kl. {tid}. Mvh. Vinduespudseren',
-    aflyst: 'Hej {navn}. Vi må desværre aflyse besøget {dato} pga. vejret. Vi kommer {nydato}. Mvh. Vinduespudseren',
+    varsel: 'Hej {navn}. Vi kommer og pudser dine vinduer i morgen ({dato}). Svar på denne SMS hvis det ikke passer. Mvh. Sindal Vinduespolering',
+    forsinket: 'Hej {navn}. Vi er lidt forsinket i dag og forventer at være hos dig ca. kl. {tid}. Mvh. Sindal Vinduespolering',
+    aflyst: 'Hej {navn}. Vi må desværre aflyse besøget {dato} pga. vejret. Vi kommer {nydato}. Mvh. Sindal Vinduespolering',
   };
   planAhead(db, addDays(todayIso, 120), addDays(todayIso, -28));
   return db;

@@ -1,4 +1,4 @@
-# Vinduesdrift – prototype
+# Sindal Vinduespolering – driftsapp (prototype)
 
 Driftsapp til vinduespudserfirma (erstatning for SkvizBiz på sigt). **Prototype: kun testdata og mock-integrationer – ingen rigtige SMS eller fakturaer.**
 

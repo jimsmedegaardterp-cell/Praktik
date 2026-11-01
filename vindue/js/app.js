@@ -272,7 +272,7 @@ function moveDialog(id, newDate) {
   async (f) => {
     if (D.isClosedDay(f.date, db.closedDays) && !confirm('Datoen er en lukkedag/weekend. Flyt alligevel?')) return false;
     S.moveVisit(db, ui.user, id, f.date, f.mode);
-    if (f.notify) await S.sendSms(db, ui.user, { customerId: v.customerId, text: `Hej ${cust(v.customerId).name.split(' ')[0]}. Vores besøg er flyttet til ${fmt(f.date)}. Svar gerne hvis det ikke passer. Mvh. Vinduespudseren` }, sms);
+    if (f.notify) await S.sendSms(db, ui.user, { customerId: v.customerId, text: `Hej ${cust(v.customerId).name.split(' ')[0]}. Vores besøg er flyttet til ${fmt(f.date)}. Svar gerne hvis det ikke passer. Mvh. Sindal Vinduespolering` }, sms);
     toast(f.mode === 'shift' ? 'Serien er forskudt' : 'Besøget er flyttet');
   });
 }
@@ -301,7 +301,7 @@ function bulkDialog(vs, title) {
 }
 /** Liste med ét tryk pr. kunde → åbner telefonens SMS-app. Logges på kundekortet. */
 function smsListDialog(visits, newDate, title, tplOverride) {
-  const tpl = tplOverride || (newDate ? db.templates.aflyst : 'Hej {navn}. Vi må desværre aflyse vinduespudsningen {dato}. Vi kommer igen ved næste planlagte besøg. Mvh. Vinduespudseren');
+  const tpl = tplOverride || (newDate ? db.templates.aflyst : 'Hej {navn}. Vi må desværre aflyse vinduespudsningen {dato}. Vi kommer igen ved næste planlagte besøg. Mvh. Sindal Vinduespolering');
   ui._smsList = visits.map((v) => { const c = cust(v.customerId); return { v, c, text: D.renderTemplate(tpl, { navn: c.name.split(' ')[0], dato: fmt(v.plannedDate), nydato: newDate ? fmt(newDate) : '' }) }; });
   openDlg(`<h2>${esc(title || 'Giv kunderne besked')}</h2><p class="small mute">Tryk på hver kunde – telefonens SMS-app åbner med teksten.</p>
     ${ui._smsList.map((x, i) => `<div class="row" style="border-bottom:1px solid var(--line);padding:6px 0"><div class="sp"><b>${esc(x.c.name)}</b><div class="small mute">${esc(x.text)}</div></div><a class="btn pri" data-smsi="${i}" href="${smsLink(D.normalizePhone(x.c.phone), x.text)}">📱 Send</a></div>`).join('') || '<p class="mute">Ingen</p>'}`, null, 'Færdig');
@@ -424,7 +424,7 @@ function mobil() {
   ${stops.map((v) => { const c = cust(v.customerId), a = addr(v.addressId); const done = v.status !== 'planlagt' || pending.has(v.id); const tel = D.normalizePhone(c.phone);
     return `<div class="stop ${done ? 'done' : ''}"><div class="row"><h3 class="sp">${esc(c.name)}</h3>${pending.has(v.id) ? '<span class="pill warn">Venter på sync</span>' : pill(v.status)}</div>
     <div>${esc(a.street)}</div>${a.access ? `<div class="small">🔑 ${esc(a.access)}</div>` : ''}${c.rememberNext ? `<div class="small" style="color:var(--warn)">⚠ Husk: ${esc(c.rememberNext)}</div>` : ''}${c.callBefore ? '<div class="small" style="color:var(--warn)">📞 Ring før besøg</div>' : ''}<div class="small mute">${esc(v.service)} · ${kr(v.price)} · ${v.durationMin ?? 15} min</div>
-    <div class="quick"><a class="btn" target="_blank" rel="noopener" href="${mapsDirections(a.street)}">🧭 Kør</a><a class="btn" href="tel:${tel}">📞 Ring</a><a class="btn" href="${smsLink(tel, `Hej ${c.name.split(' ')[0]}, vi er på vej og er hos dig om ca. 15 min. Mvh. Vinduespudseren`)}">💬 På vej</a></div>
+    <div class="quick"><a class="btn" target="_blank" rel="noopener" href="${mapsDirections(a.street)}">🧭 Kør</a><a class="btn" href="tel:${tel}">📞 Ring</a><a class="btn" href="${smsLink(tel, `Hej ${c.name.split(' ')[0]}, vi er på vej og er hos dig om ca. 15 min. Mvh. Sindal Vinduespolering`)}">💬 På vej</a></div>
     ${c.paymentMethod === 'kontant' ? `<div class="small"><span class="pill warn">💰 Betaler kontant · ${kr(v.price * 1.25)} inkl. moms</span></div>` : ''}
     ${v.completion?.cashPaid ? '<div class="small"><span class="pill ok">Kontant modtaget</span></div>' : ''}
     ${done ? '' : `<div class="big">${c.paymentMethod === 'kontant' ? `<button class="udfoert" data-act="reg" data-r="udfoert" data-cash="1" data-id="${v.id}">✓ Udført + betalt kontant</button><button data-act="reg" data-r="udfoert" data-id="${v.id}" style="grid-column:1/-1">✓ Udført – ikke betalt endnu</button>` : `<button class="udfoert" data-act="reg" data-r="udfoert" data-id="${v.id}">✓ Udført</button>`}
@@ -618,11 +618,11 @@ document.addEventListener('click', async (e) => {
       case 'sendSms': { const tx = document.getElementById('smsText'); if (!tx.value.trim()) return; b.disabled = true; const m = await S.sendSms(db, ui.user, { customerId: id, text: tx.value.trim(), clientRef: b.dataset.ref || (b.dataset.ref = S.uid('sms')) }, sms); toast(m.status === 'fejlet' ? 'Fejl: ' + m.error : 'Sendt (mock)'); setTimeout(() => S.markDelivered(db, m.providerId, 'leveret') || save(), 1500); break; }
       case 'visit': return visitDialog(id);
       case 'moveFromDlg': document.getElementById('dlg').close(); return moveDialog(id);
-      case 'cancelVisit': { const v = db.visits.find((x) => x.id === id); document.getElementById('dlg').close(); return openDlg(`<h2>Aflys besøg ${fmt(v.plannedDate)}</h2><label><span>Årsag</span><input name="note" required></label><label><input type="checkbox" name="notify"> Send SMS til kunden (mock)</label>`, async (f) => { S.registerVisit(db, ui.user, id, { result: 'aflyst', opId: S.uid('op'), note: f.note }); if (f.notify) await S.sendSms(db, ui.user, { customerId: v.customerId, text: `Hej ${cust(v.customerId).name.split(' ')[0]}. Vi må desværre aflyse besøget ${fmt(v.plannedDate)}. Mvh. Vinduespudseren` }, sms); }); }
+      case 'cancelVisit': { const v = db.visits.find((x) => x.id === id); document.getElementById('dlg').close(); return openDlg(`<h2>Aflys besøg ${fmt(v.plannedDate)}</h2><label><span>Årsag</span><input name="note" required></label><label><input type="checkbox" name="notify"> Send SMS til kunden (mock)</label>`, async (f) => { S.registerVisit(db, ui.user, id, { result: 'aflyst', opId: S.uid('op'), note: f.note }); if (f.notify) await S.sendSms(db, ui.user, { customerId: v.customerId, text: `Hej ${cust(v.customerId).name.split(' ')[0]}. Vi må desværre aflyse besøget ${fmt(v.plannedDate)}. Mvh. Sindal Vinduespolering` }, sms); }); }
       case 'wk': ui.weekStart = b.dataset.d === '0' ? mondayOf(todayIso()) : D.addDays(ui.weekStart, +b.dataset.d); break;
       case 'dd': ui.day = D.addDays(ui.day, +b.dataset.d); break;
       case 'notifyWeek': { const vs = db.visits.filter((v) => v.status === 'planlagt' && v.plannedDate >= ui.weekStart && v.plannedDate <= D.addDays(ui.weekStart, 6) && (!ui.calRoute || v.routeId === ui.calRoute));
-        return smsListDialog(vs, null, `Varsel til ugens ${vs.length} kunder`, 'Hej {navn}. Vi kommer og pudser dine vinduer {dato}. Svar hvis det ikke passer. Mvh. Vinduespudseren'); }
+        return smsListDialog(vs, null, `Varsel til ugens ${vs.length} kunder`, 'Hej {navn}. Vi kommer og pudser dine vinduer {dato}. Svar hvis det ikke passer. Mvh. Sindal Vinduespolering'); }
       case 'up': case 'down': { const st = ui._stops; const i = +b.dataset.i; const j = act === 'up' ? i - 1 : i + 1; if (j < 0 || j >= st.length) return; [st[i], st[j]] = [st[j], st[i]]; setOrder(st.map((v) => v.addressId)); break; }
       case 'applySuggest': setOrder(ui._sug.map((a) => a.id)); toast('Ny fast rækkefølge gemt'); break;
       case 'reg': return regDialog(id, b.dataset.r, b.dataset.cash);
@@ -673,7 +673,7 @@ document.addEventListener('click', async (e) => {
       case 'bookVisit': { const a = db.agreements.find((x) => x.id === id); return openDlg(`<h2>Book besøg – ${esc(cust(a.customerId).name)}</h2><p class="small">${esc(a.service)} · ${esc(addr(a.addressId)?.street)}</p><label><span>Dato</span><input type="date" name="date" required value="${D.nextWorkday(D.addDays(todayIso(), 1), db.closedDays)}"></label><label><span>Rute (valgfri)</span><select name="routeId"><option value="">Ingen</option>${db.routes.map((r) => `<option value="${r.id}" ${r.id === a.routeId ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</select></label>`, (f) => { const v = D.manualVisit(a, f.date, db.visits); v.routeId = f.routeId || null; db.visits.push(v); S.audit(db, ui.user.id, 'visit.book', v.id); toast('Besøg booket'); }); }
       case 'print': window.print(); return;
       case 'routesAll': ui.route = null; ui.sel = new Set(); break;
-      case 'backup': download(`vinduesdrift-backup-${todayIso()}.json`, db); S.audit(db, ui.user.id, 'backup.export', '-'); break;
+      case 'backup': download(`sindal-vinduespolering-backup-${todayIso()}.json`, db); S.audit(db, ui.user.id, 'backup.export', '-'); break;
       case 'planMore': toast(`${S.planAhead(db, D.addDays(todayIso(), 183))} nye besøg planlagt`); break;
       case 'reset': if (!confirm('Slet alle demodata og start forfra?')) return; localStorage.removeItem(KEY); localStorage.removeItem(KEY + '-ui'); location.reload(); return;
       case 'addClosed': { const d = document.getElementById('cd').value; if (d && !db.closedDays.includes(d)) { db.closedDays.push(d); db.closedDays.sort(); db.visits.forEach((v) => { if (v.status === 'planlagt' && v.plannedDate === d) v.plannedDate = D.nextWorkday(d, db.closedDays); }); } break; }
