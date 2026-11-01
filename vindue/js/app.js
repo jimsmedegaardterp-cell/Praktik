@@ -8,7 +8,7 @@ import * as G from './gdpr.js';
 import * as SD from './stamdata.js';
 import * as RS from './rutesedel.js';
 
-export const VERSION = '2026-11-01 #17';
+export const VERSION = '2026-11-01 #18';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = load();
@@ -40,7 +40,11 @@ const addr = (id) => db.addresses.find((a) => a.id === id);
 const route = (id) => db.routes.find((r) => r.id === id);
 const routeWhen = (r) => `hver ${r.intervalWeeks}. uge · næste ${fmt(D.nextRouteDate(r, todayIso()) || todayIso())}`;
 /** Første dag (fra i dag) hvor ruten har planlagte besøg; ellers rutens beregnede dato. */
-const nextRouteDay = (r, from = todayIso()) => db.visits.filter((v) => v.routeId === r.id && v.plannedDate >= from && (v.status === 'planlagt' || v.status === 'udsat')).map((v) => v.plannedDate).sort()[0] || D.nextRouteDate(r, from);
+/** Dage hvor ruten har planlagte/udsatte besøg (sorteret). */
+const routeDays = (r) => [...new Set(db.visits.filter((v) => v.routeId === r.id && (v.status === 'planlagt' || v.status === 'udsat')).map((v) => v.plannedDate))].sort();
+/** Den dag ruten skal åbne på: første fremtidige dag med besøg; ellers seneste dag med åbne (ikke færdigmeldte) besøg; ellers rytmen. */
+const nextRouteDay = (r, from = todayIso()) => { const ds = routeDays(r); return ds.find((d) => d >= from) || ds.filter((d) => d < from).pop() || D.nextRouteDate(r, from); };
+const openPastDay = (r, from = todayIso()) => routeDays(r).filter((d) => d < from).pop() || null;
 const mins = (vs) => vs.filter((v) => v.status !== 'aflyst').reduce((s, v) => s + (v.durationMin ?? 15), 0);
 const agrDesc = (a) => a.intervalWeeks ? `Hver ${a.intervalWeeks}. uge` : 'Ikke fast';
 const emp = (id) => db.employees.find((e) => e.id === id);
@@ -469,7 +473,7 @@ function ruteOversigt() {
     ${['M', 'T', 'O', 'T', 'F'].map((dn, i) => `<tr><td class="hm">${dn}</td>${weeks.map((w) => { const d = D.addDays(w, i); const n = load.get(d) || 0; return `<td title="${fmt(d)}: ${n} besøg" style="background:${n ? `rgba(31,95,139,${0.15 + 0.85 * n / maxN})` : 'var(--chip)'}"></td>`; }).join('')}</tr>`).join('')}</table></div>
     <p class="small mute">Belastning pr. dag de næste 12 måneder (mørkere = flere besøg).</p></div>
   <div class="card"><table class="clickable"><tr><th>Rutenavn</th><th>Medarbejder</th><th>Rytme</th><th>Størrelse</th><th>Næste</th><th style="text-align:right">Oms./år</th><th style="text-align:right">Inkl. moms</th><th>Tid næste gang</th></tr>
-    ${rows.map((x) => `<tr data-route="${x.r.id}"><td><b>${esc(x.r.name)}</b></td><td>${esc(emp(x.r.employeeId)?.name)}</td><td>hver ${x.r.intervalWeeks}. uge</td><td>${x.n} kunder</td><td>${x.r.anchorUnknown ? '<span style="color:var(--bad)">ukendt – sæt dato under Admin</span>' : x.next ? fmt(x.next) + ' ' + x.next.slice(0, 4) : '–'}</td><td style="text-align:right">${kr(Math.round(x.year))}</td><td style="text-align:right">${kr(Math.round(x.year * 1.25))}</td><td>${D.hm(x.min)}</td></tr>`).join('')}
+    ${rows.map((x) => `<tr data-route="${x.r.id}"><td><b>${esc(x.r.name)}</b></td><td>${esc(emp(x.r.employeeId)?.name)}</td><td>hver ${x.r.intervalWeeks}. uge</td><td>${x.n} kunder</td><td>${(() => { const op = openPastDay(x.r); return op ? `<span style="color:var(--bad)">${fmt(op)} ${op.slice(0, 4)} – åbne besøg</span><br>` : ''; })()}${x.r.anchorUnknown ? '<span style="color:var(--bad)">ukendt – sæt dato under Admin</span>' : x.next ? fmt(x.next) + ' ' + x.next.slice(0, 4) : '–'}</td><td style="text-align:right">${kr(Math.round(x.year))}</td><td style="text-align:right">${kr(Math.round(x.year * 1.25))}</td><td>${D.hm(x.min)}</td></tr>`).join('')}
     <tr><td colspan="5"><b>Total</b></td><td style="text-align:right"><b>${kr(Math.round(tot))}</b></td><td style="text-align:right"><b>${kr(Math.round(tot * 1.25))}</b></td><td></td></tr></table>
     <p class="small mute">Oms./år er beregnet ud fra aftalernes pris, interval og sæson.</p></div>`;
 }
@@ -803,8 +807,10 @@ document.addEventListener('click', async (e) => {
         if (upd) setTimeout(() => toast(`${c.customers} nye kunder · ${upd} eksisterende aftaler har fået rute · ${Object.keys(rids).length} ruter oprettet`), 50);
         S.audit(db, ui.user.id, 'import.apply', batchId, { file: st.fileName, ...c, routes: Object.keys(rids).length }); ui.imp = null; toast(`${c.customers} kunder, ${c.agreements} aftaler, ${c.visits} besøg importeret`); break; }
       case 'impUndo': if (!confirm('Fortryd importen? Alle kunder fra den slettes.')) return; I.rollbackImport(db, id); S.audit(db, ui.user.id, 'import.rollback', id); toast('Import fortrudt'); break;
-      case 'rnext': { const r = route(ui.route); const dir = +b.dataset.d; let d = D.addDays(ui.day, dir);
-        for (let i = 0; i < 400 && !D.routeRuns(r, d) && !db.visits.some((v) => v.routeId === r.id && v.plannedDate === d); i++) d = D.addDays(d, dir); ui.day = d; ui._routeDayFor = r.id + d; break; }
+      case 'rnext': { const r = route(ui.route); const dir = +b.dataset.d; const ds = routeDays(r);
+        let d = dir > 0 ? ds.find((x) => x > ui.day) : ds.filter((x) => x < ui.day).pop();
+        if (!d) { d = D.addDays(ui.day, dir); for (let i = 0; i < 400 && !D.routeRuns(r, d); i++) d = D.addDays(d, dir); }
+        ui.day = d; ui._routeDayFor = r.id + d; break; }
       case 'rmode': ui.routeMode = b.dataset.m; break;
       case 'fmSet': for (const v of ui._stops) if (ui.sel.has(v.id) && v.status === 'planlagt') ui._draft[v.id] = { ...(ui._draft[v.id] || {}), result: b.dataset.r }; break;
       case 'fmSplit': return splitDialog(ui._stops.filter((v) => ui.sel.has(v.id) && v.status === 'planlagt'));
