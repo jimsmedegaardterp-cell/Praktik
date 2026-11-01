@@ -71,3 +71,5 @@
 | 68 | 2026-11-01 | Ekstra opgaver (tekst + pris) pr. besøg → egne fakturalinjer og med i provisionsgrundlag | Ejers ønske |
 | 69 | 2026-11-01 | Billeder pr. adresse (skaleret til maks 1280 px JPEG) vises i dagsrute og færdigmelding; gemmes i browseren indtil server-database | Ejers ønske; lagerplads er begrænset (~5 MB) |
 | 70 | 2026-11-01 | "Faste ruter" er en rubrik under Kunder; print af rutesedel direkte fra kalenderen; dagsrute har kun beskrivelse, billeder, ekstra opgaver og Udført/Betalt/Udsæt + "SMS til morgendagens rute"; nyt design uden vandret scroll | Ejers ønske |
+| 71 | 2026-11-01 | Dagsplan pr. dag på tværs af faste ruter: "som faste ruter" / "optimal for hele dagen" / "manuel"; gemmes i db.dayPlans[dato] – faste ruter røres ikke; dagsruten følger planen | Ejers ønske |
+| 72 | 2026-11-01 | Køretider fra Google Maps Routes API (computeRoutes, optimizeWaypointOrder, ≤ 25 mellemstop pr. kald, deles i bidder); browsernøgle under Admin, begrænses til domænet; uden nøgle luftlinje-skøn. Endpoint/felter/priser SKAL VERIFICERES – testet med simuleret svar | Ejers ønske om realistisk kørselstid |

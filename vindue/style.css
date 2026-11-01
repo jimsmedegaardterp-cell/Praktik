@@ -129,3 +129,4 @@ dialog::backdrop{background:rgba(15,20,30,.45)}
 
 @media (max-width:640px){main{padding:12px}.hide-m{display:none}td,th{padding:7px 4px}.top{padding:8px 12px}.tag{display:none}.tabs{padding:6px 8px}}
 @media print{.top,.tabs,.noprint,.toast,.alerts{display:none!important}body{background:#fff;color:#000}main{padding:0;max-width:none}.card{border:0;padding:0;box-shadow:none}.sheet td,.sheet th{padding:3px 4px;font-size:11px}}
+.icon.on{color:var(--pri);background:var(--pri-soft)}

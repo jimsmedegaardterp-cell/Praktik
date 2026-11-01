@@ -7,8 +7,9 @@ import * as I from './import.js';
 import * as G from './gdpr.js';
 import * as SD from './stamdata.js';
 import * as RS from './rutesedel.js';
+import * as DP from './dayplan.js';
 
-export const VERSION = '2026-11-01 #22';
+export const VERSION = '2026-11-01 #23';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = load();
@@ -66,8 +67,8 @@ const TABS = [
 function renderTabs() {
   const tabs = TABS.filter(([, , adm]) => !adm || isAdmin());
   if (ui.tab === 'overblik') ui.tab = 'kalender';
-  if (!tabs.some(([k]) => k === ui.tab) && !(ui.tab === 'ruter' && isAdmin())) ui.tab = tabs[0][0];
-  const active = ui.tab === 'ruter' ? 'kunder' : ui.tab;
+  if (!tabs.some(([k]) => k === ui.tab) && !((ui.tab === 'ruter' || ui.tab === 'dag') && isAdmin())) ui.tab = tabs[0][0];
+  const active = ui.tab === 'ruter' ? 'kunder' : ui.tab === 'dag' ? 'kalender' : ui.tab;
   const unread = db.smsMessages.filter((m) => m.dir === 'ind' && !m.read).length;
   document.getElementById('tabs').innerHTML = tabs.map(([k, n]) => `<button data-tab="${k}" class="${active === k ? 'on' : ''}">${n}${k === 'sms' && unread ? ` <span class="pill bad">${unread}</span>` : ''}</button>`).join('');
 }
@@ -77,7 +78,7 @@ function render() {
   renderTabs();
   const tag = document.querySelector('.tag'); if (tag) tag.textContent = (db.settings.realData ? 'PROTOTYPE · data gemmes kun i denne browser' : 'PROTOTYPE · testdata') + ' · version ' + VERSION;
   const net = document.getElementById('net'); net.textContent = ui.offline ? `Offline${ui.outbox.length ? ` · ${ui.outbox.length} i kø` : ''}` : 'Online'; net.className = 'pill ' + (ui.offline ? 'bad' : 'ok');
-  ({ overblik, kunder, kalender, ruter, mobil, faktura, sms: beskeder, import: importView, admin })[ui.tab]();
+  ({ overblik, kunder, kalender, ruter, dag: dagsplan, mobil, faktura, sms: beskeder, import: importView, admin })[ui.tab]();
   save();
 }
 
@@ -307,7 +308,7 @@ function kalender() {
   <div class="cal">
     <div class="week">${days.map((d) => { const vs = wv.filter((v) => v.plannedDate === d); const closed = D.isClosedDay(d, db.closedDays);
       const groups = new Map(); for (const v of vs) { const k = v.routeId || ''; groups.set(k, [...(groups.get(k) || []), v]); }
-      return `<div class="day ${closed ? 'closed' : ''} ${d === t ? 'today' : ''}" data-day="${d}"><div class="dayhead"><b>${fmt(d)}</b>${vs.some((v) => v.status === 'planlagt') ? `<button class="icon" data-act="dayMenu" data-d="${d}" title="Flyt/aflys/udfør hele dagen">⋯</button>` : ''}</div>${closed ? '<div class="small mute">Lukkedag</div>' : ''}
+      return `<div class="day ${closed ? 'closed' : ''} ${d === t ? 'today' : ''}" data-day="${d}"><div class="dayhead"><b>${fmt(d)}</b><span class="sp"></span>${vs.length ? `<button class="icon ${db.dayPlans?.[d] ? 'on' : ''}" data-act="dayPlan" data-d="${d}" title="Dagsplan: rækkefølge og køretid for hele dagen">🗺${db.dayPlans?.[d]?.legs ? ` <span class="small">${D.hm(Math.round(DP.sumLegs(db.dayPlans[d].legs).sec / 60))}</span>` : ''}</button>` : ''}${vs.some((v) => v.status === 'planlagt') ? `<button class="icon" data-act="dayMenu" data-d="${d}" title="Flyt/aflys/udfør hele dagen">⋯</button>` : ''}</div>${closed ? '<div class="small mute">Lukkedag</div>' : ''}
         ${[...groups.entries()].map(([rid, gv]) => { const r = route(rid); const order = r?.order || []; gv.sort((a, b) => ((order.indexOf(a.addressId) + 1 || 999) - (order.indexOf(b.addressId) + 1 || 999)));
           const allDone = gv.every((v) => v.status !== 'planlagt' && v.status !== 'udsat');
           return `<div class="rblock ${allDone ? 'done' : ''}"><div class="rhead" ${r ? `data-route="${r.id}" data-day="${d}" title="Åbn færdigmelding"` : ''}><b>${esc(r?.name ?? 'Uden rute')}</b><span class="badge">${gv.length}</span></div>
@@ -427,6 +428,42 @@ function issuesDialog(batchId) {
     ${groups.map(([title, f]) => { const g = rows.filter((r) => !used.has(r.key) && f(r)); g.forEach((r) => used.add(r.key)); if (!g.length) return '';
       return `<details ${title === 'Skal tjekkes' ? 'open' : ''}><summary><b>${title}</b> (${g.filter((r) => !r.done).length} uløste)</summary><table>${g.map((r) => { const c = findCust(r.line) || nameIn(r.msg);
         return `<tr class="small" style="opacity:${r.done ? .45 : 1}"><td style="color:var(${r.warn ? '--warn' : '--bad'})">${esc(r.msg)}</td><td>${c ? `<a href="#" data-cust="${c.id}">Åbn kunde</a>` : `<span class="mute">${esc(r.line)}</span>`}</td><td><button type="button" data-act="issueDone" data-k="${r.key}">${r.done ? '✓ Løst' : 'Markér løst'}</button></td></tr>`; }).join('')}</table></details>`; }).join('') || '<p class="mute">Ingen advarsler.</p>'}`, null, 'Luk');
+}
+
+/* ---------------- Dagsplan (på tværs af faste ruter) ---------------- */
+const startPoint = () => { const st = db.settings.start; return st?.address ? { street: st.address, lat: st.lat ?? null, lng: st.lng ?? null } : null; };
+function dagsplan() {
+  const day = ui.planDay || todayIso(); db.dayPlans ||= {}; const saved = db.dayPlans[day];
+  const vs = db.visits.filter((v) => v.plannedDate === day && v.status !== 'aflyst' && v.status !== 'forgaeves');
+  const byId = new Map(vs.map((v) => [v.id, v])); const A = (v) => addr(v.addressId) || {};
+  const st = startPoint();
+  const orders = { ruter: DP.routeOrder(vs, db.routes), optimal: DP.localOptimal(vs, A, st) };
+  ui._planMode ||= saved?.mode || 'ruter';
+  if (!ui._manual || ui._manualDay !== day) { ui._manual = saved?.order?.filter((id) => byId.has(id)) || [...orders.ruter]; ui._manualDay = day; }
+  for (const v of vs) if (!ui._manual.includes(v.id)) ui._manual.push(v.id);
+  orders.manuel = ui._manual;
+  const g = ui._google?.[day + ui._planMode];
+  const order = (g?.order || orders[ui._planMode]).filter((id) => byId.has(id));
+  const legsFor = (o) => DP.estimateLegs(o.map((id) => A(byId.get(id))), st);
+  const sumFor = (o) => DP.sumLegs(legsFor(o));
+  const cur = g ? DP.sumLegs(g.legs) : sumFor(order); const work = mins(vs);
+  const modeBtn = (k, t) => { const x = ui._google?.[day + k] ? DP.sumLegs(ui._google[day + k].legs) : sumFor(orders[k]);
+    return `<button data-act="planMode" data-v="${k}" class="${ui._planMode === k ? 'on' : ''}">${t}<span class="small mute"> · ${D.hm(Math.round(x.sec / 60))} t${ui._google?.[day + k] ? ' (Google)' : ''}</span></button>`; };
+  const gm = []; const pts = order.map((id) => A(byId.get(id)).street); for (let i = 0; i < pts.length; i += 9) gm.push(mapsRoute(pts.slice(i, i + 10)));
+  $view.innerHTML = `<div class="toolbar noprint"><button data-act="planBack">← Kalender</button><h2 class="sp">Dagsplan ${fmt(day)} ${day.slice(0, 4)}</h2><button data-act="print">🖨 Udskriv</button></div>
+  <div class="card"><div class="toolbar noprint"><div class="seg">${modeBtn('ruter', 'Som faste ruter')}${modeBtn('optimal', 'Optimal for hele dagen')}${modeBtn('manuel', 'Manuel')}</div></div>
+    <div class="row small"><span>${vs.length} besøg</span><span>Arbejde <b>${D.hm(work)}</b></span><span>Kørsel <b>${D.hm(Math.round(cur.sec / 60))}</b> (${Math.round(cur.m / 1000)} km)${cur.unknown ? ` <span class="warn-t">· ${cur.unknown} ben uden koordinater</span>` : ''}</span><span>I alt <b>${D.hm(work + Math.round(cur.sec / 60))}</b></span>
+      <span class="pill ${g ? 'ok' : ''}">${g ? 'Køretider fra Google Maps' : 'Skøn: luftlinje × 1,3 ved 50 km/t'}</span></div>
+    ${st ? '' : '<div class="warnbox noprint">Sæt firmaets startadresse under Admin → Kørsel, så turen regnes fra og til den.</div>'}
+    <div class="toolbar noprint" style="margin-top:10px">${db.settings.googleKey ? `<button data-act="planGoogle">🗺 Beregn med Google Maps${ui._planMode === 'optimal' ? ' (optimér)' : ''}</button>` : '<span class="small mute">Google Maps-nøgle ikke sat (Admin → Kørsel) – bruger skøn.</span>'}
+      <span class="sp"></span>${saved ? `<span class="pill ok">Dagsplan gemt (${saved.mode === 'optimal' ? 'optimal' : saved.mode === 'manuel' ? 'manuel' : 'som ruter'})</span><button data-act="planClear">Fjern dagsplan</button>` : ''}<button class="pri" data-act="planSave">Brug denne rækkefølge for dagen</button></div>
+    <table><tr><th class="w1">#</th><th>Kunde</th><th class="hide-m">Rute</th><th class="hide-m">Tid</th><th class="w1 noprint"></th></tr>
+    ${order.map((id, i) => { const v = byId.get(id); const c = cust(v.customerId); const leg = (g?.legs || legsFor(order))[i + (st ? 0 : -1)];
+      return `<tr><td>${i + 1}</td><td><b>${esc(c.name)}</b><div class="small">${esc(A(v).street)}</div>${leg?.sec != null && (st || i) ? `<div class="small mute">🚗 ${Math.round(leg.sec / 60)} min · ${(leg.m / 1000).toFixed(1)} km hertil</div>` : ''}</td><td class="hide-m"><span class="pill">${esc(route(v.routeId)?.name ?? 'Uden rute')}</span></td><td class="hide-m">${D.hm(v.durationMin ?? 15)}</td>
+        <td class="noprint">${ui._planMode === 'manuel' ? `<button class="icon" data-act="planUp" data-i="${i}">↑</button><button class="icon" data-act="planDown" data-i="${i}">↓</button>` : ''}</td></tr>`; }).join('')}</table>
+    <div class="toolbar noprint" style="margin-top:10px">${gm.map((u, k) => `<a class="btn" target="_blank" rel="noopener" href="${u}">Åbn i Google Maps${gm.length > 1 ? ` (del ${k + 1})` : ''} ↗</a>`).join('')}</div>
+    <p class="small mute">Dagsplanen ændrer kun rækkefølgen på denne dag. De faste ruter og kundernes aftaler er uændrede. Dagsruten følger den gemte dagsplan.</p></div>`;
+  ui._planOrder = order;
 }
 
 /* ---------------- Ruter & kort ---------------- */
@@ -562,7 +599,8 @@ function mobil() {
   const dayStops = (d) => [...myRoutes.flatMap((r) => routeStops(r.id, d)), ...(isAdmin() ? db.visits.filter((v) => !v.routeId && v.plannedDate === d) : [])];
   // første gang: i dag, ellers næste dag med besøg
   if (ui._mobDayFor !== ui.user.id) { ui._mobDayFor = ui.user.id; if (!dayStops(ui.day).length) { const nx = [...new Set(db.visits.filter((v) => v.plannedDate >= todayIso() && v.status === 'planlagt').map((v) => v.plannedDate))].sort().find((d) => dayStops(d).length); if (nx) ui.day = nx; } }
-  const day = ui.day; const stops = dayStops(day);
+  const day = ui.day; const stops = dayStops(day); const plan = db.dayPlans?.[day];
+  if (plan?.order) stops.sort((a, b) => (plan.order.indexOf(a.id) + 1 || 9999) - (plan.order.indexOf(b.id) + 1 || 9999));
   const pending = new Set(ui.outbox.map((o) => o.visitId)); const dr = vdraft();
   const left = stops.filter((v) => (v.status === 'planlagt' || v.status === 'udsat') && !pending.has(v.id));
   $view.innerHTML = `<div class="mob-head"><button data-act="dd" data-d="-1" aria-label="Forrige dag">‹</button><div class="sp"><b>${fmt(day)} ${day.slice(0, 4)}</b><div class="small mute">${stops.length - left.length}/${stops.length} færdige · ${D.hm(mins(stops))} t</div></div><button data-act="dd" data-d="1" aria-label="Næste dag">›</button></div>
@@ -784,6 +822,11 @@ function admin() {
     <div class="card"><h2>Data & backup</h2><div class="row"><button data-act="backup">Download backup (JSON)</button><label class="btn">Gendan…<input type="file" id="restore" accept=".json" hidden></label><button data-act="planMore">Planlæg 6 mdr. frem</button><button class="bad" data-act="reset">Nulstil til testdata</button><button class="bad" data-act="wipe">Start tomt (til rigtige data)</button></div>
       <p class="small mute">Prototypen gemmer i denne browser (localStorage). ${db.customers.length} kunder · ${db.visits.length} besøg · ${db.audit.length} logposter.</p></div>
   </div>
+  <div class="card"><h2>Kørsel og Google Maps</h2>
+    <div class="grid"><label><span>Firmaets startadresse (her starter og slutter dagen)</span><input id="stAddr" value="${esc(db.settings.start?.address || '')}" placeholder="Vej 1, 9870 Sindal"></label>
+      <label><span>Koordinater for startadresse (valgfrit, "57.47, 10.21" – højreklik i Google Maps)</span><input id="stLL" value="${db.settings.start?.lat != null ? db.settings.start.lat + ', ' + db.settings.start.lng : ''}"></label>
+      <label><span>Google Maps API-nøgle (Routes API)</span><input id="gKey" type="password" value="${esc(db.settings.googleKey || '')}" placeholder="AIza…"></label></div>
+    <p class="small mute">Uden nøgle bruges et skøn (luftlinje × 1,3 ved 50 km/t). Med nøgle hentes rigtige køretider og optimal rækkefølge fra Google. Opret nøglen i Google Cloud, slå <b>Routes API</b> til, og begræns nøglen til <b>${esc(location.host || 'dit domæne')}</b>. Google tager betaling pr. beregning efter en gratis kvote – priser SKAL VERIFICERES. Nøglen gemmes kun i denne browser.</p></div>
   <div class="card"><h2>Medarbejdere</h2>
     <table><tr><th>Navn</th><th>Rolle</th><th>Provision %</th><th>Ruter</th><th></th></tr>${db.employees.filter((e) => !e.inactive).map((e) => `<tr><td><input data-ef="name" data-e="${e.id}" value="${esc(e.name)}"></td>
       <td><select data-ef="role" data-e="${e.id}"><option value="admin" ${e.role === 'admin' ? 'selected' : ''}>Ejer/admin</option><option value="medarbejder" ${e.role !== 'admin' ? 'selected' : ''}>Medarbejder</option></select></td>
@@ -802,6 +845,10 @@ function admin() {
   document.getElementById('comMonth').onchange = (e) => { ui.comMonth = e.target.value; render(); };
   document.getElementById('comVat').onchange = (e) => { db.settings.commissionInclVat = e.target.checked; S.audit(db, ui.user.id, 'commission.vat', '-', { inclVat: e.target.checked }); render(); };
   $view.querySelectorAll('[data-rate]').forEach((i) => (i.onchange = () => { const v = Number(i.value); if (!(v >= 0 && v <= 100)) return toast('Ugyldig sats'); const e = emp(i.dataset.rate); e.commissionRate = v / 100; S.audit(db, ui.user.id, 'commission.rate', e.id, { rate: v }); render(); }));
+  const saveStart = () => { const ll = (document.getElementById('stLL').value.match(/(-?\d+(?:[.,]\d+)?)\s*[,; ]\s*(-?\d+(?:[.,]\d+)?)/) || []);
+    db.settings.start = { address: document.getElementById('stAddr').value.trim(), lat: ll[1] ? +ll[1].replace(',', '.') : null, lng: ll[2] ? +ll[2].replace(',', '.') : null }; save(); toast('Startadresse gemt'); };
+  document.getElementById('stAddr').onchange = saveStart; document.getElementById('stLL').onchange = saveStart;
+  document.getElementById('gKey').onchange = (e) => { db.settings.googleKey = e.target.value.trim(); S.audit(db, ui.user.id, 'settings.googleKey', '-', { set: !!db.settings.googleKey }); save(); toast(db.settings.googleKey ? 'Nøgle gemt' : 'Nøgle fjernet'); };
   $view.querySelectorAll('[data-ef]').forEach((el) => (el.onchange = () => { const e = emp(el.dataset.e); const f = el.dataset.ef;
     if (f === 'role' && el.value !== 'admin' && db.employees.filter((x) => !x.inactive && x.role === 'admin').length === 1 && e.role === 'admin') { toast('Der skal være mindst én admin'); return render(); }
     e[f] = f === 'commissionRate' ? Math.min(100, Math.max(0, +el.value || 0)) / 100 : el.value.trim(); S.audit(db, ui.user.id, 'employee.edit', e.id, { [f]: e[f] }); render(); }));
@@ -912,6 +959,22 @@ document.addEventListener('click', async (e) => {
       case 'photo': { const a = addr(b.dataset.a); const ph = a?.photos?.find((x) => x.id === b.dataset.src); if (!ph) return;
         return openDlg(`<img src="${ph.src}" style="width:100%;border-radius:10px" alt="">${ph.caption ? `<p>${esc(ph.caption)}</p>` : ''}`, null, 'Luk'); }
       case 'photoDel': { const a = addr(b.dataset.a); if (!confirm('Slet billedet?')) return; a.photos = a.photos.filter((x) => x.id !== b.dataset.p); break; }
+      case 'dayPlan': ui.tab = 'dag'; ui.planDay = b.dataset.d; ui._planMode = db.dayPlans?.[b.dataset.d]?.mode || 'ruter'; break;
+      case 'planBack': ui.tab = 'kalender'; break;
+      case 'planMode': ui._planMode = b.dataset.v; if (b.dataset.v === 'manuel' && !db.dayPlans?.[ui.planDay]) ui._manual = [...ui._planOrder]; break;
+      case 'planUp': case 'planDown': { const m = ui._manual; const i = m.indexOf(ui._planOrder[+b.dataset.i]); const j = act === 'planUp' ? i - 1 : i + 1; if (j < 0 || j >= m.length) return; [m[i], m[j]] = [m[j], m[i]]; delete ui._google?.[ui.planDay + 'manuel']; break; }
+      case 'planSave': { const day = ui.planDay; const g = ui._google?.[day + ui._planMode]; db.dayPlans ||= {};
+        db.dayPlans[day] = { mode: ui._planMode, order: [...ui._planOrder], legs: g?.legs || null, source: g ? 'google' : 'skøn', at: new Date().toISOString() };
+        if (ui._planMode === 'manuel') ui._manual = [...ui._planOrder];
+        S.audit(db, ui.user.id, 'dayplan.save', day, { mode: ui._planMode, source: g ? 'google' : 'skøn' }); toast('Dagsplan gemt – dagsruten følger den'); break; }
+      case 'planClear': delete db.dayPlans[ui.planDay]; ui._manual = null; toast('Dagsplan fjernet – dagen følger de faste ruter'); break;
+      case 'planGoogle': { const day = ui.planDay; const st = startPoint(); const ids = [...ui._planOrder]; const A = (id) => addr(db.visits.find((v) => v.id === id).addressId);
+        b.disabled = true; b.textContent = 'Beregner …';
+        try { const r = await DP.googleDay(db.settings.googleKey, { start: st, stops: ids.map(A), optimize: ui._planMode === 'optimal' });
+          (ui._google ||= {})[day + ui._planMode] = { order: r.order.map((k) => ids[k]), legs: r.legs };
+          if (ui._planMode === 'manuel') ui._manual = r.order.map((k) => ids[k]);
+          S.audit(db, ui.user.id, 'google.routes', day, { stops: ids.length }); toast('Køretider hentet fra Google Maps'); }
+        catch (err) { toast(err.message); } break; }
       case 'printRoute': ui.tab = 'ruter'; ui.route = b.dataset.r; ui.day = b.dataset.d; ui._routeDayFor = ui.route + ui.day; ui.routeMode = 'sheet'; render(); setTimeout(() => window.print(), 300); return;
       case 'smsTomorrow': { const nd = D.nextWorkday(D.addDays(todayIso(), 1), db.closedDays);
         const mine = db.visits.filter((v) => v.plannedDate === nd && v.status === 'planlagt' && (isAdmin() || route(v.routeId)?.employeeId === ui.user.employeeId));
