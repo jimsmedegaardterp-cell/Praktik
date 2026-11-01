@@ -152,10 +152,13 @@ const ovT = (title, rows) => { const it = [t(1, 556, 168.8, `Komplet ruteoversig
     r.agr.forEach(([s, iv, pr, ti], i) => { const yy = y - 0.3 - i * 11.6; it.push(t(1, yy, 532.9, s), t(1, yy, 660.5, iv), { str: pr, x: 773.9 - pr.length * 4.1, y: yy, w: pr.length * 4.1, page: 1 }, { str: ti, x: 790.7, y: yy, w: 20, page: 1 }); });
     y -= 11.6 * Math.max(r.agr.length, 1); }
   return { ...SD.parseRouteOverviewItems(it), fileName: title + '.pdf' }; };
-const STAM2 = [...kunde(1, 763, '00000009', 'Inge Prøve', ['Skovvej 31', '9800 Hjørring'], ['Alt på huset'], [['Vinduesvask', 'Hver 4. uge', '07/12-2026', 'kr. 180,00', '0:15'], ['Tagrenderens', 'Hver 52. uge', '08/12-2026', 'kr. 200,00', '0:20']]),
+const STAM2 = [...kunde(2, 763, '00000020', 'Hjørring Fast', ['Fastvej 1', '9800 Hjørring'], [], [['Vinduesvask', 'Hver 4. uge', '07/12-2026', 'kr. 150,00', '0:10']]),
+  ...kunde(2, 560, '00000021', 'Tag Fast', ['Tagvej 2', '9800 Hjørring'], [], [['Tagrender', 'Hver 52. uge', '08/12-2026', 'kr. 300,00', '0:30']]),...kunde(1, 763, '00000009', 'Inge Prøve', ['Skovvej 31', '9800 Hjørring'], ['Alt på huset'], [['Vinduesvask', 'Hver 4. uge', '07/12-2026', 'kr. 180,00', '0:15'], ['Tagrenderens', 'Hver 52. uge', '08/12-2026', 'kr. 200,00', '0:20']]),
   ...kunde(1, 560, '00000005', 'Esther Test', ['Bakken 38', '9881 Bindslev'], [], [['Vinduesvask', 'Hver 4. uge', '09/12-2026', 'kr. 276,00', '0:13'], ['Vinduesvask Doravej 5', 'Hver 4. uge', '09/12-2026', 'kr. 232,00', '0:13']])];
-const OV_H = ovT('Hjørring', [{ nr: 1, name: 'Inge Prøve', street: 'Skovvej 31', zip: '9800 Hjørring', agr: [['Vinduesvask', 'Hver 4. uge', '180,00', '00:15']] }]);
-const OV_T = ovT('Tagrenderens', [{ nr: 1, name: 'Inge Prøve', street: 'Skovvej 31', zip: '9800 Hjørring', agr: [['Tagrenderens', 'Hver 52. uge', '200,00', '00:20']] }]);
+// Rækkerne viser ALLE kundens aftaler – ruten afgøres af datoerne. Andre kunder fastlægger rutedagene.
+const INGE_AGR = [['Vinduesvask', 'Hver 4. uge', '180,00', '00:15'], ['Tagrenderens', 'Hver 52. uge', '200,00', '00:20']];
+const OV_H = ovT('Hjørring', [{ nr: 1, name: 'Inge Prøve', street: 'Skovvej 31', zip: '9800 Hjørring', agr: INGE_AGR }, { nr: 2, name: 'Hjørring Fast', street: 'Fastvej 1', zip: '9800 Hjørring', agr: [['Vinduesvask', 'Hver 4. uge', '150,00', '00:10']] }]);
+const OV_T = ovT('Tagrenderens', [{ nr: 1, name: 'Inge Prøve', street: 'Skovvej 31', zip: '9800 Hjørring', agr: INGE_AGR }, { nr: 2, name: 'Tag Fast', street: 'Tagvej 2', zip: '9800 Hjørring', agr: [['Tagrender', 'Hver 52. uge', '300,00', '00:30']] }]);
 const OV_B = ovT('Bindslev 2', [{ nr: 1, name: 'Esther Test', street: 'Bakken 38', zip: '9881 Bindslev', agr: [['Vinduesvask', 'Hver 4. uge', '276,00', '00:13']] },
   { nr: 2, name: 'Esther Test', street: 'Doravej 5', zip: '9881 Bindslev', agr: [['Vinduesvask Doravej 5', 'Hver 4. uge', '232,00', '00:13']] }]);
 
@@ -163,7 +166,7 @@ test('aftaler kobles til hver sin rute; aftale på anden adresse flyttes dertil'
   const db = seedDb('2026-11-02'); db.customers = []; db.addresses = []; db.agreements = []; db.visits = []; db.routes = [];
   const plan = SD.buildSkvizPlan([{ fileName: 'alle.pdf', routeId: '', customers: SD.parseStamdataItems(STAM2) }], null, db, { today: '2026-11-02' });
   SD.addRouteOverviews(plan, [OV_T, OV_H, OV_B], db, { today: '2026-11-02' }); // bemærk: Tagrenderens læses før Hjørring
-  assert.equal(plan.customers.length, 2, 'ingen dubletter');
+  assert.equal(plan.customers.length, 4, 'ingen dubletter');
   const ids = SD.materializeRoutes(db, plan, { uid, today: '2026-11-02', employeeId: 'e1', batchId: 'x' });
   I.applyImportPlan(db, plan, { batchId: 'x', uid, horizon: '2027-03-01', today: '2026-11-02' }); SD.applyRouteOrder(db, plan, ids);
   const rn = (id) => db.routes.find((r) => r.id === id)?.name;

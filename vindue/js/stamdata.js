@@ -203,86 +203,106 @@ export function addRouteOverviews(plan, overviews, db, { today }) {
     const hits = db.addresses.filter((x) => normS(x.street).startsWith(st) && (!zip || x.street.includes(zip)) && !db.customers.find((c) => c.id === x.customerId)?.deleted);
     if (hits.length === 1) return { c: db.customers.find((c) => c.id === hits[0].customerId), a: hits[0], byAddress: true };
     const byName = db.customers.filter((c) => !c.deleted && normS(c.name) === n);
-    if (byName.length === 1) return { c: byName[0], a: null }; // samme kunde, anden adresse
+    if (byName.length === 1) return { c: byName[0], a: null };
     return null;
   };
   const byKey = new Map(plan.customers.map((c) => [keyOf(c.name, c.keyStreet ?? c.addresses[0].street.split(',')[0]), c]));
   const byName = new Map(); for (const c of plan.customers) { const k = normS(c.name); byName.set(k, byName.has(k) ? null : c); }
-  const usedPlan = new Map(); // plan-kunde → Set af brugte aftaler
-  const exState = new Map(); // eksisterende kunde-id → { used:Set, refs:Set }
-  const pcRefs = new Map();  // plan-kunde → Set af rute-refs
+  const routes = []; // { ref, name, existing }
+  const apps = [];   // forekomster: { ref, nr, line, row, kind:'plan'|'ex'|'new', c, ex, cands:[aftaler] }
   const stats = { rows: 0, matched: 0 };
 
+  // 1) find kunden og kandidat-aftaler for hver række (rækken kan vise ALLE kundens aftaler)
   for (const ov of overviews) {
     const name = ov.routeName || ov.fileName.replace(/\.pdf$/i, '');
     const existing = db.routes.find((r) => r.name.toLowerCase() === name.toLowerCase());
     const ref = existing ? existing.id : `new:${name}`;
-    plan.routeOrder[ref] = []; let matched = 0;
+    routes.push({ ref, name, existing, rows: ov.rows.length, matched: 0 }); plan.routeOrder[ref] = [];
     for (const row of ov.rows) {
       stats.rows++; const line = `${name} nr. ${row.nr}`; const rAgs = rowAgreements(row);
-      let c = byKey.get(keyOf(row.name, row.street)); let addrIdx = 0;
-      if (!c) { const cn = byName.get(normS(row.name)); if (cn) { c = cn; addrIdx = -1; } }
-      if (c) {
-        matched++; stats.matched++;
-        const used = usedPlan.get(c) || new Set(); usedPlan.set(c, used);
-        if (addrIdx === -1) addrIdx = c.addresses.findIndex((a) => normS(a.street).startsWith(normS(row.street)));
-        const all = c.addresses.flatMap((a) => a.agreements);
-        const hit = matchAgreements(all.filter((g) => g.intervalWeeks || rAgs.some((r) => !r.intervalWeeks)), rAgs, used);
-        if (addrIdx === -1) { // rækken har en anden adresse end kunden i stamdata → flyt de matchede aftaler dertil
-          const na = { street: [row.street, row.zipCity].filter(Boolean).join(', '), access: row.notes, lat: null, lng: null, agreements: [] };
-          for (const g of hit) for (const a of c.addresses) { const k = a.agreements.indexOf(g); if (k >= 0) { a.agreements.splice(k, 1); na.agreements.push(g); } }
-          c.addresses.push(na); addrIdx = c.addresses.length - 1;
-          plan.issues.push({ line, msg: `${c.name}: ${hit.length} aftale(r) flyttet til ${row.street}`, warn: true });
-        }
-        if (!hit.length && rAgs.length) plan.issues.push({ line, msg: `${c.name}: rutens aftale "${rAgs[0].service}" (${rAgs[0].price} kr) blev ikke genkendt blandt kundens aftaler`, warn: true });
-        for (const g of hit) if (g.intervalWeeks) g.routeRef = ref;
-        if (!c.phone && row.phone) c.phone = row.phone.replace(/\s/g, '');
-        if (!c.addresses[addrIdx].access && row.notes) c.addresses[addrIdx].access = row.notes;
-        (pcRefs.get(c) || pcRefs.set(c, new Set()).get(c)).add(ref);
-        plan.routeOrder[ref].push({ pc: c, addrIdx, nr: row.nr });
-        continue;
-      }
+      let c = byKey.get(keyOf(row.name, row.street)) || byName.get(normS(row.name)) || null;
+      if (c) { const all = c.addresses.flatMap((a) => a.agreements); apps.push({ ref, nr: row.nr, line, row, kind: 'plan', c, cands: matchAgreements(all, rAgs) }); stats.matched++; routes.at(-1).matched++; continue; }
       const ex = findExisting(row);
-      if (ex) {
-        matched++; stats.matched++;
-        if (ex.byAddress) plan.issues.push({ line, msg: `"${row.name}" koblet til "${ex.c.name}" på adressen`, warn: true });
-        const st = exState.get(ex.c.id) || { used: new Set(), refs: new Set() }; exState.set(ex.c.id, st); st.refs.add(ref);
-        const cands = db.agreements.filter((g) => g.customerId === ex.c.id && g.active !== false);
-        const hit = matchAgreements(cands, rAgs, st.used);
-        const u = { customerId: ex.c.id, name: ex.c.name, ref, nr: row.nr, agreementIds: hit.filter((g) => g.intervalWeeks).map((g) => g.id), addressId: ex.a?.id || null,
-          newAddress: ex.a ? null : { street: [row.street, row.zipCity].filter(Boolean).join(', '), access: row.notes },
-          anchors: hit.filter((g) => g.intervalWeeks).map((g) => ({ anchorDate: g.anchorDate, intervalWeeks: g.intervalWeeks })) };
-        if (!hit.length && rAgs.length) plan.issues.push({ line, msg: `${ex.c.name}: rutens aftale "${rAgs[0].service}" blev ikke genkendt`, warn: true });
-        plan.routeUpdates.push(u); plan.routeOrder[ref].push({ update: u, nr: row.nr });
-        continue;
-      }
-      // kun i ruteoversigten → ny kunde
+      if (ex) { if (ex.byAddress) plan.issues.push({ line, msg: `"${row.name}" koblet til "${ex.c.name}" på adressen`, warn: true });
+        apps.push({ ref, nr: row.nr, line, row, kind: 'ex', c: ex.c, exAddr: ex.a, cands: matchAgreements(db.agreements.filter((g) => g.customerId === ex.c.id && g.active !== false), rAgs) }); stats.matched++; routes.at(-1).matched++; continue; }
       c = { line, extId: null, name: row.name, phone: row.phone.replace(/\s/g, ''), email: '', notes: '', paymentMethod: 'bank', dupeOf: null, fromRoute: true,
         extra: { invoiceType: 'email', invoiceInterval: 'besoeg', paymentDays: 8, paymentTerms: 'Netto 8 dage', group: 'Privat kunder' },
-        addresses: [{ street: [row.street, row.zipCity].filter(Boolean).join(', '), access: row.notes, lat: null, lng: null, agreements: rAgs.map((g) => ({ ...g, anchorDate: null, routeRef: g.intervalWeeks ? ref : null })) }] };
-      plan.customers.push(c); byKey.set(keyOf(row.name, row.street), c); pcRefs.set(c, new Set([ref]));
-      plan.routeOrder[ref].push({ pc: c, addrIdx: 0, nr: row.nr });
+        addresses: [{ street: [row.street, row.zipCity].filter(Boolean).join(', '), access: row.notes, lat: null, lng: null, agreements: rAgs.map((g) => ({ ...g, anchorDate: null })) }] };
+      plan.customers.push(c); byKey.set(keyOf(row.name, row.street), c);
+      apps.push({ ref, nr: row.nr, line, row, kind: 'plan', c, cands: c.addresses[0].agreements, isNew: true });
       plan.issues.push({ line, msg: `${row.name}: ikke fundet i stamdata – oprettes uden kundenr.; første besøg = rutens næste dato`, warn: true });
     }
-    // rutens rytme og dato
-    const emptyExisting = existing && !db.agreements.some((g) => g.routeId === existing.id);
-    if (!existing || emptyExisting) {
-      const ags = [...plan.customers.flatMap((c) => c.addresses.flatMap((a) => a.agreements)).filter((g) => g.routeRef === ref), ...plan.routeUpdates.filter((u) => u.ref === ref).flatMap((u) => u.anchors)].filter((g) => g.intervalWeeks);
-      const anchor = ags.map((g) => g.anchorDate).filter(Boolean).sort()[0] || null;
-      const info = { ref, name, intervalWeeks: ags.length ? Math.min(...ags.map((g) => g.intervalWeeks)) : 4, anchorDate: anchor, customers: ov.rows.length, matched };
-      if (emptyExisting) (plan.resetRoutes ||= []).push(info); else plan.newRoutes.push(info);
+  }
+  // 2) hvilke ruter er hver fast aftale kandidat til?
+  const candRefs = new Map(); // aftale → Set(ref)
+  for (const a of apps) for (const g of a.cands) if (g.intervalWeeks) (candRefs.get(g) || candRefs.set(g, new Set()).get(g)).add(a.ref);
+  // kundens faste aftaler, der slet ikke blev genkendt: kandidat til alle kundens ruter
+  const custApps = new Map(); for (const a of apps) (custApps.get(a.c) || custApps.set(a.c, []).get(a.c)).push(a);
+  for (const [c, as] of custApps) {
+    const all = as[0].kind === 'ex' ? db.agreements.filter((g) => g.customerId === c.id && g.active !== false) : c.addresses.flatMap((x) => x.agreements);
+    for (const g of all) if (g.intervalWeeks && !candRefs.has(g)) candRefs.set(g, new Set(as.map((x) => x.ref)));
+  }
+  const assign = new Map(); // aftale → ref
+  for (const [g, refs] of candRefs) if (refs.size === 1) assign.set(g, [...refs][0]);
+  // 3) rutens rytme/dato ud fra de entydige aftaler
+  const rInfo = new Map();
+  for (const r of routes) {
+    const ags = [...assign].filter(([, ref]) => ref === r.ref).map(([g]) => g).filter((g) => g.intervalWeeks && g.anchorDate);
+    const iv = r.existing && db.agreements.some((g) => g.routeId === r.existing.id) ? r.existing.intervalWeeks : (ags.length ? Math.min(...ags.map((g) => g.intervalWeeks)) : 4);
+    const anchor = r.existing && db.agreements.some((g) => g.routeId === r.existing.id) ? r.existing.anchorDate : (ags.map((g) => g.anchorDate).sort()[0] || null);
+    rInfo.set(r.ref, { intervalWeeks: iv, anchorDate: anchor });
+  }
+  // 4) aftaler på flere ruter: vælg ruten hvis datoer passer med aftalens næste gang; ellers navnelighed
+  const words = (x) => normS(x).split(' ').filter((w) => w.length > 3);
+  for (const [g, refs] of candRefs) {
+    if (refs.size < 2) continue;
+    const list = [...refs]; const fits = list.filter((ref) => { const ri = rInfo.get(ref); return ri.anchorDate && g.anchorDate && D.routeRuns(ri, g.anchorDate) && g.intervalWeeks % ri.intervalWeeks === 0; });
+    let pick = fits.length === 1 ? fits[0] : null;
+    if (!pick) { const pool = fits.length ? fits : list; const sw = words(g.service);
+      const named = pool.filter((ref) => { const rn = routes.find((r) => r.ref === ref).name; return words(rn).some((w) => sw.some((x) => x.startsWith(w.slice(0, 6)) || w.startsWith(x.slice(0, 6)))); });
+      pick = named.length === 1 ? named[0] : null;
+      if (!pick) { pick = pool[0]; const c = apps.find((a) => a.cands.includes(g) || (candRefs.get(g) && a.ref === pool[0]))?.c;
+        plan.issues.push({ line: c?.line || c?.name || '', msg: `${c?.name ?? ''}: aftalen "${g.service}" kan høre til ${list.map((r) => routes.find((x) => x.ref === r).name).join(' / ')} – lagt på ${routes.find((x) => x.ref === pick).name}, tjek den`, warn: true }); } }
+    assign.set(g, pick);
+  }
+  // 5) adresser: række med anden adresse end kundens → aftaler der nævner adressen (eller kun står i denne række) flyttes dertil
+  for (const a of apps) {
+    if (a.kind !== 'plan' || a.isNew) continue;
+    const st = normS(a.row.street); const c = a.c;
+    let idx = c.addresses.findIndex((x) => normS(x.street).startsWith(st));
+    if (idx >= 0) { a.addrIdx = idx; continue; }
+    const others = apps.filter((x) => x.c === c && x !== a);
+    const move = a.cands.filter((g) => normS(g.service).includes(st) || !others.some((o) => o.cands.includes(g)));
+    if (!move.length) { a.addrIdx = 0; continue; }
+    const na = { street: [a.row.street, a.row.zipCity].filter(Boolean).join(', '), access: a.row.notes, lat: null, lng: null, agreements: [] };
+    for (const g of move) for (const ad of c.addresses) { const k = ad.agreements.indexOf(g); if (k >= 0) { ad.agreements.splice(k, 1); na.agreements.push(g); } }
+    c.addresses.push(na); a.addrIdx = c.addresses.length - 1;
+    plan.issues.push({ line: a.line, msg: `${c.name}: ${move.length} aftale(r) flyttet til ${a.row.street}`, warn: true });
+  }
+  // 6) skriv resultatet: plan-aftaler får routeRef; eksisterende kunder får opdateringer; rækkefølge
+  for (const [g, ref] of assign) if (!g.id) g.routeRef = ref;
+  for (const a of apps) {
+    const mine = [...assign].filter(([g, ref]) => ref === a.ref && (a.kind === 'ex' ? g.customerId === a.c.id : a.c.addresses.some((x) => x.agreements.includes(g)))).map(([g]) => g);
+    if (a.kind === 'plan') {
+      if (!a.c.phone && a.row.phone) a.c.phone = a.row.phone.replace(/\s/g, '');
+      const own = mine.filter((g) => a.cands.includes(g));
+      const idx = a.isNew ? 0 : a.addrIdx ?? (own.length ? a.c.addresses.findIndex((x) => x.agreements.includes(own[0])) : 0);
+      if (!a.c.addresses[idx].access && a.row.notes) a.c.addresses[idx].access = a.row.notes;
+      plan.routeOrder[a.ref].push({ pc: a.c, addrIdx: idx, nr: a.nr });
+    } else {
+      const u = { customerId: a.c.id, name: a.c.name, ref: a.ref, nr: a.nr, agreementIds: mine.map((g) => g.id), addressId: a.exAddr?.id || null,
+        newAddress: a.exAddr ? null : { street: [a.row.street, a.row.zipCity].filter(Boolean).join(', '), access: a.row.notes },
+        anchors: mine.map((g) => ({ anchorDate: g.anchorDate, intervalWeeks: g.intervalWeeks })) };
+      if (!u.addressId && !mine.length) u.addressId = db.addresses.find((x) => x.customerId === a.c.id)?.id || null;
+      plan.routeUpdates.push(u); plan.routeOrder[a.ref].push({ update: u, nr: a.nr });
     }
   }
-  // Faste aftaler uden rute: står kunden kun på én rute, hører de til den
-  for (const [c, refs] of pcRefs) for (const g of c.addresses.flatMap((a) => a.agreements)) {
-    if (!g.intervalWeeks || g.routeRef !== undefined) continue;
-    if (refs.size === 1) g.routeRef = [...refs][0];
-    else plan.issues.push({ line: c.line, msg: `${c.name}: aftalen "${g.service}" står ikke på nogen af kundens ruter – tildel rute manuelt`, warn: true });
-  }
-  for (const [cid, st] of exState) {
-    if (st.refs.size !== 1) continue;
-    const u = plan.routeUpdates.find((x) => x.customerId === cid);
-    for (const g of db.agreements.filter((x) => x.customerId === cid && x.intervalWeeks && !st.used.has(x))) if (!u.agreementIds.includes(g.id)) u.agreementIds.push(g.id);
+  for (const r of routes) {
+    const emptyExisting = r.existing && !db.agreements.some((g) => g.routeId === r.existing.id);
+    if (r.existing && !emptyExisting) continue;
+    const ri = rInfo.get(r.ref);
+    const info = { ref: r.ref, name: r.name, intervalWeeks: ri.intervalWeeks, anchorDate: ri.anchorDate, customers: r.rows, matched: r.matched };
+    if (emptyExisting) (plan.resetRoutes ||= []).push(info); else plan.newRoutes.push(info);
   }
   plan.routeStats = stats;
   plan.errors = plan.issues.filter((i) => !i.warn).length;
