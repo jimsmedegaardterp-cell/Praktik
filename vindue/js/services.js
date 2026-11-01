@@ -53,6 +53,21 @@ export function registerVisit(db, user, visitId, payload) {
   return r;
 }
 
+/**
+ * Færdigmelding af en hel rute (som i SkvizBiz). entries: [{ visitId, result, cashAmount, service, note, split }]
+ * result 'aaben' = ikke udført endnu (røres ikke). opId er fast pr. besøg → gentagelse giver ingen dobbeltregistrering.
+ */
+export function finishRoute(db, user, entries) {
+  const out = { done: 0, skipped: 0, conflicts: [] };
+  for (const e of entries) {
+    if (!e.result || e.result === 'aaben') { out.skipped++; continue; }
+    const r = registerVisit(db, user, e.visitId, { result: e.result, opId: 'fm:' + e.visitId, cashAmount: Number(e.cashAmount) || 0, service: e.service, note: e.note, split: e.split });
+    if (r.conflict) out.conflicts.push(r.conflict); else if (r.changed) out.done++;
+  }
+  audit(db, user.id, 'route.finish', '-', out);
+  return out;
+}
+
 export function moveVisit(db, user, visitId, newDate, mode) {
   require_(user, 'visit.move');
   const v = db.visits.find((x) => x.id === visitId);

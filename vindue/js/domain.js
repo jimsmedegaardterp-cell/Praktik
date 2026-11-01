@@ -56,7 +56,7 @@ export function rhythmDate(agreement, k) { return addDays(agreement.anchorDate, 
 export function inSeason(agreement, iso) { return !agreement.seasonMonths?.length || agreement.seasonMonths.includes(month(iso)); }
 
 export function generateVisits(agreement, fromIso, toIso_, existing = [], extraClosed = []) {
-  if (!agreement.active) return [];
+  if (!agreement.active || !agreement.intervalWeeks) return []; // 0 = "Ikke fast"
   const have = new Set(existing.map((v) => v.id));
   const out = [];
   const step = agreement.intervalWeeks * 7;
@@ -70,7 +70,7 @@ export function generateVisits(agreement, fromIso, toIso_, existing = [], extraC
     out.push({
       id, agreementId: agreement.id, customerId: agreement.customerId, addressId: agreement.addressId,
       routeId: agreement.routeId, seriesIndex: k, rhythmDate: r, plannedDate: nextWorkday(r, extraClosed),
-      status: 'planlagt', price: agreement.price, service: agreement.service, completion: null, history: [],
+      status: 'planlagt', price: agreement.price, service: agreement.service, durationMin: agreement.durationMin ?? 15, completion: null, history: [],
     });
   }
   return out;
@@ -86,7 +86,7 @@ export const isBillable = (v) => BILLABLE.has(v.status);
  * Registrér resultat præcis én gang. opId (genereres på klienten ved tryk) gør gentagne kald
  * (dobbelttryk, offline-genforsøg) til no-ops. Returnerer { visit, changed }.
  */
-export function completeVisit(visit, { result, opId, by, at, note = '', price, cashPaid = false }) {
+export function completeVisit(visit, { result, opId, by, at, note = '', price, cashPaid = false, cashAmount = 0, service, split }) {
   if (!RESULTS[result]) throw new Error(`Ukendt resultat: ${result}`);
   if (visit.completion) {
     if (visit.completion.opId === opId) return { visit, changed: false }; // samme handling gentaget
@@ -97,8 +97,8 @@ export function completeVisit(visit, { result, opId, by, at, note = '', price, c
   }
   const p = price ?? visit.price;
   const next = {
-    ...visit, status: result, price: p,
-    completion: { opId, by, at, note, result, priceChanged: p !== visit.price, originalPrice: visit.price, cashPaid: !!cashPaid && BILLABLE.has(result) },
+    ...visit, status: result, price: p, service: service || visit.service, split: split ?? visit.split,
+    completion: { opId, by, at, note, result, priceChanged: p !== visit.price, originalPrice: visit.price, cashPaid: (!!cashPaid || cashAmount > 0) && BILLABLE.has(result), cashAmount: BILLABLE.has(result) ? cashAmount : 0 },
     history: [...visit.history, { at, by, action: result, note, price: p }],
   };
   return { visit: next, changed: true };
@@ -199,7 +199,11 @@ export function matchInbound(phone, customers) {
 }
 
 /* ---------------- Provision ---------------- */
-/** Grundlag er konfigurerbart; standard: udført beløb ekskl. moms pr. udførende medarbejder. */
+/**
+ * Provision pr. medarbejder. Har besøget en fordeling (visit.split = [{employeeId, pct}]) bruges den
+ * (som "Fordeling af kunde" i SkvizBiz – resten tilfalder firmaet). Ellers: udførende medarbejder × sats.
+ * Grundlag: udført beløb ekskl. moms (konfigurerbart), periode efter udførelsesdato.
+ */
 export function commission(visits, { rate = 0.35, rates = {}, from, to, inclVat = false, vatRate = 0.25 } = {}) {
   const per = {};
   for (const v of visits) {
@@ -207,33 +211,42 @@ export function commission(visits, { rate = 0.35, rates = {}, from, to, inclVat 
     const d = v.completion.at.slice(0, 10);
     if ((from && d < from) || (to && d > to)) continue;
     const base = inclVat ? v.price * (1 + vatRate) : v.price;
-    const e = (per[v.completion.by] ||= { base: 0, visits: 0 });
-    e.base += base; e.visits += 1;
+    const split = v.split?.length ? v.split : [{ employeeId: v.completion.by, pct: (rates[v.completion.by] ?? rate) * 100 }];
+    for (const sp of split) {
+      if (!sp.pct) continue;
+      const e = (per[sp.employeeId] ||= { base: 0, visits: 0, commission: 0 });
+      e.base += base; e.visits += 1; e.commission += base * sp.pct / 100;
+    }
   }
-  for (const k in per) { per[k].rate = rates[k] ?? rate; per[k].commission = Math.round(per[k].base * per[k].rate * 100) / 100; }
+  for (const k in per) { per[k].commission = Math.round(per[k].commission * 100) / 100; per[k].rate = per[k].base ? per[k].commission / per[k].base : 0; }
   return per;
 }
 
-/* ---------------- Rutecyklus ----------------
- * Ruter kører i en cyklus på N uger (settings.cycleWeeks) regnet fra settings.cycleStart (en mandag).
- * route.cycleWeek = 1..N (eller null = hver uge), route.weekday = 0..4.
+/* ---------------- Ruter ----------------
+ * En rute kører hver route.intervalWeeks uge fra route.anchorDate (fx "Bindslev", hver 4. uge, næste 11/11).
+ * Kunder på ruten har interval = et multiplum af rutens (4u, 8u, 12u …). Som i SkvizBiz.
  */
-export function cycleWeekOf(iso, settings) {
-  const n = settings.cycleWeeks || 1;
-  const w = Math.floor(diffDays(settings.cycleStart, addDays(iso, -weekday(iso))) / 7);
-  return (((w % n) + n) % n) + 1;
+export function routeRuns(route, iso) {
+  if (!route?.anchorDate || !route.intervalWeeks) return false;
+  const d = diffDays(route.anchorDate, iso); const step = route.intervalWeeks * 7;
+  return ((d % step) + step) % step === 0;
 }
-export function routeRuns(route, iso, settings) {
-  return weekday(iso) === route.weekday && (!route.cycleWeek || cycleWeekOf(iso, settings) === route.cycleWeek);
+export function nextRouteDate(route, fromIso) {
+  if (!route?.anchorDate || !route.intervalWeeks) return null;
+  const step = route.intervalWeeks * 7; const d = diffDays(route.anchorDate, fromIso);
+  return addDays(fromIso, (((-d % step) + step) % step));
 }
-export function nextRouteDate(route, fromIso, settings) {
-  let d = fromIso;
-  for (let i = 0; i < 7 * 53; i++, d = addDays(d, 1)) if (routeRuns(route, d, settings)) return d;
-  return null;
+export function agreementFitsRoute(agreement, route) {
+  if (!route || !agreement.intervalWeeks) return true;
+  return routeRuns(route, agreement.anchorDate) && agreement.intervalWeeks % route.intervalWeeks === 0;
 }
-/** Advarsel hvis aftalen ikke følger rutens cyklus. */
-export function agreementFitsRoute(agreement, route, settings) {
-  if (!route) return true;
-  const step = route.cycleWeek ? settings.cycleWeeks : 1;
-  return routeRuns(route, agreement.anchorDate, settings) && agreement.intervalWeeks % step === 0;
+/** Enkeltbesøg ("Ikke fast"-kunder eller ekstra besøg). Id indeholder dato → samme dag kan ikke bookes to gange. */
+export function manualVisit(agreement, dateIso, existing = []) {
+  const id = `${agreement.id}@${dateIso}`;
+  if (existing.some((v) => v.id === id)) throw new Error('Der er allerede booket et besøg den dag');
+  return { id, agreementId: agreement.id, customerId: agreement.customerId, addressId: agreement.addressId, routeId: agreement.routeId,
+    seriesIndex: -1, rhythmDate: dateIso, plannedDate: dateIso, status: 'planlagt', price: agreement.price, service: agreement.service,
+    durationMin: agreement.durationMin ?? 15, completion: null, history: [], manual: true };
 }
+export const hm = (min) => `${Math.floor(min / 60)}:${String(Math.round(min % 60)).padStart(2, '0')}`;
+export const annualRevenue = (ag) => (ag.active && ag.intervalWeeks ? (ag.price * 52) / ag.intervalWeeks * (ag.seasonMonths?.length ? ag.seasonMonths.length / 12 : 1) : 0);

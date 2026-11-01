@@ -21,3 +21,10 @@
 | 18 | 2026-11-01 | SMS-varsel dagen før: liste på Overblik med ét tryk pr. kunde (egen telefon), logges | Ejerens svar |
 | 19 | 2026-11-01 | Vejr: knap pr. dag – flyt (behold rytme) / flyt og forskyd / spring over + SMS-liste | Ejerens svar: vælges hver gang |
 | 20 | 2026-11-01 | Medarbejdere ser pris og kundens telefon, ikke provision eller andres ruter | Ejerens svar |
+| 21 | 2026-11-01 | Ruter har egen rytme + næste dato (erstatter cyklusuge/ugedag) – som "faste ruter" i SkvizBiz | Ejerens screenshots |
+| 22 | 2026-11-01 | Tid pr. besøg på aftalen; dag/rute/uge viser timer, oms./time, kørsel | Ejerens screenshots |
+| 23 | 2026-11-01 | "Ikke fast"-aftaler (interval 0) bookes manuelt | Ejerens screenshots |
+| 24 | 2026-11-01 | Færdigmelding pr. rute: status pr. kunde, kontantbeløb, opgave, provisionsfordeling, Gem til senere / Gem og færdigmeld (idempotent) | Ejerens screenshots |
+| 25 | 2026-11-01 | Provision kan fordeles pr. besøg mellem medarbejdere (resten = firma); standard = rutens medarbejders sats; ejer 0 % | Ejerens screenshots |
+| 26 | 2026-11-01 | Vejr-funktion fjernet; i stedet "Flyt / aflys…" på valgte kunder eller hel dag | Ejerens svar |
+| 27 | 2026-11-01 | Ejerens screenshots indeholder rigtige kundedata – bruges kun som skærmreference, gemmes ikke i repo | GDPR |

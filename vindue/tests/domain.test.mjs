@@ -168,14 +168,33 @@ test('provision med individuel sats og periode', () => {
   assert.equal(r.e1.commission, 140); assert.equal(r.e2.commission, 80);
 });
 
-test('rutecyklus', () => {
-  const st = { cycleWeeks: 4, cycleStart: '2026-11-02' };
-  const r = { weekday: 2, cycleWeek: 3 };
-  assert.equal(D.cycleWeekOf('2026-11-02', st), 1); assert.equal(D.cycleWeekOf('2026-11-29', st), 4); assert.equal(D.cycleWeekOf('2026-11-30', st), 1);
-  assert.equal(D.cycleWeekOf('2026-10-26', st), 4, 'før start');
-  assert.equal(D.nextRouteDate(r, '2026-11-02', st), '2026-11-18');
-  assert.equal(D.nextRouteDate(r, '2026-11-19', st), '2026-12-16');
-  assert.ok(D.agreementFitsRoute({ anchorDate: '2026-11-18', intervalWeeks: 8 }, r, st));
-  assert.ok(!D.agreementFitsRoute({ anchorDate: '2026-11-18', intervalWeeks: 6 }, r, st));
-  assert.ok(D.agreementFitsRoute({ anchorDate: '2026-11-06', intervalWeeks: 1 }, { weekday: 4, cycleWeek: null }, st));
+test('ruter med egen rytme + Ikke fast', () => {
+  const r = { anchorDate: '2026-11-11', intervalWeeks: 4 };
+  assert.ok(D.routeRuns(r, '2026-12-09')); assert.ok(D.routeRuns(r, '2026-10-14')); assert.ok(!D.routeRuns(r, '2026-11-18'));
+  assert.equal(D.nextRouteDate(r, '2026-11-12'), '2026-12-09'); assert.equal(D.nextRouteDate(r, '2026-11-11'), '2026-11-11'); assert.equal(D.nextRouteDate(r, '2026-10-01'), '2026-10-14');
+  assert.ok(D.agreementFitsRoute({ anchorDate: '2026-12-09', intervalWeeks: 8 }, r));
+  assert.ok(!D.agreementFitsRoute({ anchorDate: '2026-12-09', intervalWeeks: 6 }, r));
+  const ag0 = { ...ag, intervalWeeks: 0, durationMin: 45 };
+  assert.equal(D.generateVisits(ag0, '2026-01-01', '2027-01-01').length, 0);
+  const mv = D.manualVisit(ag0, '2026-11-20'); assert.equal(mv.durationMin, 45);
+  assert.throws(() => D.manualVisit(ag0, '2026-11-20', [mv]), /allerede/);
+  assert.equal(D.hm(252), '4:12');
+});
+
+test('provision med fordeling pr. besøg', () => {
+  const v = [{ status: 'udfoert', price: 176, completion: { by: 'e1', at: '2026-11-02T10:00:00Z' }, split: [{ employeeId: 'e2', pct: 35 }] },
+    { status: 'udfoert', price: 100, completion: { by: 'e2', at: '2026-11-02T10:00:00Z' }, split: [{ employeeId: 'e2', pct: 20 }, { employeeId: 'e3', pct: 20 }] }];
+  const r = D.commission(v);
+  assert.equal(r.e2.commission, 81.6); assert.equal(r.e3.commission, 20); assert.equal(r.e1, undefined);
+});
+
+test('færdigmelding af rute: idempotent, kontant og fordeling', () => {
+  const db = seedDb('2026-11-02');
+  const vs = db.visits.filter((v) => v.routeId === 'r1' && v.status === 'planlagt').slice(0, 3);
+  const entries = [{ visitId: vs[0].id, result: 'udfoert', cashAmount: 285, split: [{ employeeId: 'e2', pct: 35 }] }, { visitId: vs[1].id, result: 'forgaeves' }, { visitId: vs[2].id, result: 'aaben' }];
+  const r1 = S.finishRoute(db, admin, entries); const r2 = S.finishRoute(db, admin, entries);
+  assert.equal(r1.done, 2); assert.equal(r2.done, 0); assert.equal(r2.conflicts.length, 0);
+  const v0 = db.visits.find((v) => v.id === vs[0].id);
+  assert.ok(v0.completion.cashPaid); assert.equal(v0.completion.cashAmount, 285); assert.equal(v0.split[0].pct, 35);
+  assert.equal(db.visits.find((v) => v.id === vs[2].id).status, 'planlagt');
 });

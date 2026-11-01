@@ -6,13 +6,13 @@ import * as D from './domain.js';
 export const FIELDS = {
   extId: 'Kundenr. (SkvizBiz)', name: 'Navn *', phone: 'Telefon/mobil', email: 'E-mail',
   street: 'Adresse *', zip: 'Postnr.', city: 'By', service: 'Ydelse', price: 'Pris', intervalWeeks: 'Interval (uger)',
-  nextDate: 'Næste besøg', route: 'Rute', access: 'Adgang/nøgle', notes: 'Bemærkning', paymentMethod: 'Betalingsform',
+  nextDate: 'Næste besøg', durationMin: 'Tid pr. besøg', route: 'Rute', access: 'Adgang/nøgle', notes: 'Bemærkning', paymentMethod: 'Betalingsform',
 };
 const GUESS = {
   extId: /kunde.?n|kundenummer|^id$|^nr\.?$/i, name: /^navn|kundenavn|^name/i, phone: /tlf|telefon|mobil|phone/i, email: /mail/i,
   street: /adresse|vej|gade|street|address/i, zip: /post.?n|zip/i, city: /^by$|city|bynavn/i, service: /ydelse|opgave|service|produkt/i,
   price: /pris|beløb|price|amount/i, intervalWeeks: /interval|frekvens|hver/i, nextDate: /næste|next|dato|date/i,
-  route: /rute|route|område/i, access: /adgang|nøgle|kode/i, notes: /bemærk|note|kommentar/i, paymentMethod: /betaling|payment/i,
+  route: /rute|route|område/i, durationMin: /^tid$|varighed|minutter|tidsforbrug/i, access: /adgang|nøgle|kode/i, notes: /bemærk|note|kommentar/i, paymentMethod: /betaling|payment/i,
 };
 
 /** CSV-parser: håndterer ; , eller tab, citationstegn og linjeskift i felter. */
@@ -59,8 +59,15 @@ export function parseDate(s) {
 const iso = (y, mo, d) => (mo >= 1 && mo <= 12 && d >= 1 && d <= 31 ? `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}` : NaN);
 export function parseInterval(s) {
   if (s == null || String(s).trim() === '') return null; s = String(s).toLowerCase();
+  if (/ikke fast|efter aftale|ring|tilkald/.test(s)) return 0;
   if (/måned|mdr/.test(s)) { const n = Number((s.match(/\d+/) || [1])[0]); return n * 4; } // tilnærmet: 1 md ≈ 4 uger (markeres)
   const n = Number((s.match(/\d+/) || [])[0]); return Number.isFinite(n) && n > 0 ? n : NaN;
+}
+export function parseDuration(s) {
+  if (s == null || String(s).trim() === '') return null; s = String(s).trim();
+  let m = s.match(/^(\d{1,2}):(\d{2})/); if (m) return +m[1] * 60 + +m[2];
+  m = s.match(/^(\d+)\s*(min|m)?$/i); if (m) return +m[1];
+  return NaN;
 }
 export function parsePaymentMethod(s) {
   s = String(s || '').toLowerCase();
@@ -95,17 +102,22 @@ export function buildImportPlan(parsed, mapping, db, { defaultRouteId, today }) 
     const zip = get(r, 'zip'), city = get(r, 'city');
     const street = [streetRaw, [zip, city].filter(Boolean).join(' ')].filter(Boolean).join(', ');
     const price = parsePrice(get(r, 'price')); if (Number.isNaN(price)) plan.issues.push({ line, msg: `Ukendt pris "${get(r, 'price')}"` });
-    const intRaw = get(r, 'intervalWeeks'); const interval = parseInterval(intRaw);
+    const intRaw = get(r, 'intervalWeeks'); const interval = parseInterval(intRaw) ?? 0;
+    if (!intRaw) plan.issues.push({ line, msg: 'Intet interval – oprettes som "Ikke fast"', warn: true });
     if (Number.isNaN(interval)) plan.issues.push({ line, msg: `Ukendt interval "${intRaw}"` });
     else if (/måned|mdr/i.test(intRaw)) plan.issues.push({ line, msg: `"${intRaw}" omregnet til ${interval} uger – kontrollér`, warn: true });
     const next = parseDate(get(r, 'nextDate')); if (Number.isNaN(next)) plan.issues.push({ line, msg: `Ukendt dato "${get(r, 'nextDate')}"` });
-    const routeName = get(r, 'route'); const route = routeName ? db.routes.find((x) => x.name.toLowerCase().includes(routeName.toLowerCase())) : null;
+    const routeName = get(r, 'route'); const rn = routeName.toLowerCase();
+    const route = routeName ? (db.routes.find((x) => x.name.toLowerCase() === rn) || db.routes.find((x) => x.name.toLowerCase().split(' – ')[0] === rn)) : null;
     if (routeName && !route) plan.issues.push({ line, msg: `Rute "${routeName}" findes ikke – bruger standardrute`, warn: true });
     const ad = c.addresses.find((a) => a.street.toLowerCase() === street.toLowerCase()) || (() => { const a = { street, access: get(r, 'access'), agreements: [] }; c.addresses.push(a); return a; })();
-    if (interval && !Number.isNaN(interval)) {
-      ad.agreements.push({ service: get(r, 'service') || 'Vinduespudsning', price: Number.isNaN(price) ? 0 : price ?? 0, intervalWeeks: interval,
-        anchorDate: next && !Number.isNaN(next) ? next : (D.nextRouteDate(route || db.routes.find((x) => x.id === defaultRouteId) || {}, today, db.settings) || today), routeId: route?.id || defaultRouteId, line });
-    } else if (!intRaw) plan.issues.push({ line, msg: 'Intet interval – kunden oprettes uden fast aftale', warn: true });
+    const dur = parseDuration(get(r, 'durationMin')); if (Number.isNaN(dur)) plan.issues.push({ line, msg: `Ukendt tid "${get(r, 'durationMin')}"`, warn: true });
+    if (interval != null && !Number.isNaN(interval)) {
+      const rt = route || db.routes.find((x) => x.id === defaultRouteId);
+      ad.agreements.push({ service: get(r, 'service') || 'Vinduespudsning', price: Number.isNaN(price) ? 0 : price ?? 0, intervalWeeks: interval, durationMin: dur && !Number.isNaN(dur) ? dur : 15,
+        anchorDate: next && !Number.isNaN(next) ? next : (D.nextRouteDate(rt, today) || today), routeId: interval ? rt?.id || null : route?.id || null, line });
+      if (interval && rt && next && !Number.isNaN(next) && !D.agreementFitsRoute({ anchorDate: next, intervalWeeks: interval }, rt)) plan.issues.push({ line, msg: `Næste besøg/interval passer ikke med ruten "${rt.name}"`, warn: true });
+    }
   });
   plan.errors = plan.issues.filter((i) => !i.warn).length;
   return plan;
@@ -124,7 +136,7 @@ export function applyImportPlan(db, plan, { batchId, uid, includeDuplicates = fa
       const a = { id: uid('adr'), customerId: c.id, street: pa.street, access: pa.access, lat: null, lng: null, importBatch: batchId };
       db.addresses.push(a); counts.addresses++;
       for (const g of pa.agreements) {
-        const ag = { id: uid('ag'), customerId: c.id, addressId: a.id, routeId: g.routeId, service: g.service, price: g.price, intervalWeeks: g.intervalWeeks,
+        const ag = { id: uid('ag'), customerId: c.id, addressId: a.id, routeId: g.routeId, service: g.service, price: g.price, intervalWeeks: g.intervalWeeks, durationMin: g.durationMin,
           anchorDate: g.anchorDate, seasonMonths: [], active: true, importBatch: batchId };
         db.agreements.push(ag); counts.agreements++;
         const vs = D.generateVisits(ag, today && today > g.anchorDate ? today : g.anchorDate, horizon, [], db.closedDays); vs.forEach((v) => (v.importBatch = batchId));
