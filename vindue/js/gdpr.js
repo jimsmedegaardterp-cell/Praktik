@@ -110,3 +110,34 @@ export function buildGdprPlan(files, db, { today }) {
   plan.errors = plan.issues.filter((i) => !i.warn).length;
   return plan;
 }
+
+/**
+ * Opdatering af kunder, der allerede er i appen (match på kundenr.). Kun felter fra GDPR-udtrækket,
+ * som stamdata/ruteoversigt ikke har; navn, adresse, aftaler og ruter røres ikke.
+ * Tomme felter i appen udfyldes (tlf., e-mail, koordinater); flag (SMS før/efter, ring før, fakturatype, EAN, kontant) sættes fra SkvizBiz.
+ */
+export function gdprUpdates(plan, db) {
+  const byNo = new Map(db.customers.filter((c) => !c.deleted).map((c) => [String(c.customerNo || c.skvizbizId || ''), c]));
+  const ups = [];
+  for (const pc of plan.customers) {
+    const c = pc.extId && byNo.get(pc.extId); if (!c) continue;
+    const set = {}; const x = pc.extra;
+    const want = { invoiceType: x.invoiceType, invoiceInterval: x.invoiceInterval, smsBefore: x.smsBefore, smsAfter: x.smsAfter, callBefore: x.callBefore, paymentDays: x.paymentDays, paymentTerms: x.paymentTerms, blocked: x.blocked, skvizId: x.skvizId };
+    if (x.ean) want.ean = x.ean; if (x.cvr) want.cvr = x.cvr; if (x.createdAt) want.createdAt = x.createdAt;
+    if (pc.paymentMethod === 'kontant') want.paymentMethod = 'kontant';
+    if (!c.phone && pc.phone) want.phone = pc.phone; if (!c.email && pc.email) want.email = pc.email;
+    for (const [k, v] of Object.entries(want)) if (v !== undefined && v !== null && c[k] !== v) set[k] = v;
+    const ad = db.addresses.find((a) => a.customerId === c.id);
+    const geo = ad && ad.lat == null && pc.addresses[0].lat != null ? { addressId: ad.id, lat: pc.addresses[0].lat, lng: pc.addresses[0].lng } : null;
+    if (Object.keys(set).length || geo) ups.push({ customerId: c.id, name: c.name, set, geo });
+  }
+  return ups;
+}
+export function applyGdprUpdates(db, ups) {
+  for (const u of ups) {
+    const c = db.customers.find((x) => x.id === u.customerId); if (!c) continue;
+    Object.assign(c, u.set);
+    if (u.geo) { const a = db.addresses.find((x) => x.id === u.geo.addressId); if (a) Object.assign(a, { lat: u.geo.lat, lng: u.geo.lng }); }
+  }
+  return ups.length;
+}

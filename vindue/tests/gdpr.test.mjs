@@ -55,3 +55,15 @@ test('GDPR-plan: felter, aftaler, slettede, følsomme felter ignoreres', () => {
   assert.ok(db.visits.some((v) => v.importBatch === 'g1' && v.plannedDate === '2026-11-11'));
   I.rollbackImport(db, 'g1'); assert.equal(db.customers.length, n);
 });
+
+test('GDPR-zip opdaterer eksisterende kunder på kundenr. uden at røre navn/adresse/aftaler', () => {
+  const db = seedDb('2026-11-02'); const c = db.customers[0]; c.customerNo = '00000002'; c.email = ''; c.smsBefore = false;
+  const ad = db.addresses.find((a) => a.customerId === c.id); ad.lat = null; ad.lng = null;
+  const before = { name: c.name, street: ad.street, ags: JSON.stringify(db.agreements.filter((g) => g.customerId === c.id)) };
+  const plan = G.buildGdprPlan([{ name: 'a', json: K1 }, { name: 'b', json: K2 }], db, { today: '2026-11-02' });
+  const ups = G.gdprUpdates(plan, db);
+  assert.equal(ups.length, 1); assert.equal(ups[0].customerId, c.id);
+  G.applyGdprUpdates(db, ups);
+  assert.equal(c.invoiceType, 'ean'); assert.equal(c.ean, '5790000000000'); assert.equal(c.smsBefore, true); assert.equal(c.email, 'test@example.dk'); assert.equal(ad.lat, 57.48);
+  assert.equal(c.name, before.name); assert.equal(ad.street, before.street); assert.equal(JSON.stringify(db.agreements.filter((g) => g.customerId === c.id)), before.ags);
+});
