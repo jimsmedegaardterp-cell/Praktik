@@ -7,7 +7,7 @@ import * as I from './import.js';
 import * as G from './gdpr.js';
 import * as SD from './stamdata.js';
 
-export const VERSION = '2026-11-01 #12';
+export const VERSION = '2026-11-01 #13';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = load();
@@ -93,7 +93,8 @@ function overblik() {
     <div class="card"><div class="mute">Åbne fakturaer</div><div class="kpi">${open.length}</div><div class="small mute">${kr(open.reduce((s, l) => s + (l.remainder ?? l.total * 1.25), 0))} inkl. moms</div></div>
   </div>
   ${errs ? `<div class="warnbox">⚠️ ${errs} integrationsfejl – se Fakturering/Beskeder.</div>` : ''}
-  ${dbl.length ? `<div class="warnbox">⚠️ ${dbl.length} mulige dobbeltbookinger (samme adresse samme dag).</div>` : ''}
+  ${dbl.length ? `<div class="warnbox">⚠️ ${dbl.length} mulige dobbeltbookinger (samme adresse samme dag – samme opgave to gange eller to forskellige ruter). <button data-act="showDbl">Vis</button></div>` : ''}
+  ${(() => { const n = dataCheck().slice(0, 4).reduce((s, [, it]) => s + it.length, 0); return n ? `<div class="warnbox">📋 ${n} ting at tjekke i kunde- og rutedata (aftaler uden rute, mulige dubletter …). <button data-act="showCheck">Vis</button></div>` : ''; })()}
   ${overdue.length ? `<div class="warnbox">⚠️ ${overdue.length} besøg i fortiden er ikke registreret. <button data-act="showOverdue">Vis</button></div>` : ''}
   ${varselCard()}
   <div class="card"><h2>Dagens ruter – ${fmt(t)}</h2>${dayTable(today)}</div>
@@ -322,6 +323,48 @@ function logManualSms(c, text, clientRef) {
   if (clientRef && db.smsMessages.some((m) => m.clientRef === clientRef)) return;
   db.smsMessages.push({ id: S.uid('m'), clientRef, dir: 'ud', customerId: c.id, phone: D.normalizePhone(c.phone), text, kind: 'service', status: 'sendt fra telefon', at: new Date().toISOString(), by: ui.user.id, ...D.smsParts(text) });
   S.audit(db, ui.user.id, 'sms.manual', c.id); save();
+}
+
+/** Datakontrol: finder ting der bør rettes – direkte i data, uden import. */
+function dataCheck() {
+  const live = db.customers.filter((c) => !c.deleted);
+  const agOf = (c) => db.agreements.filter((g) => g.customerId === c.id && g.active !== false);
+  const norm = (x) => String(x || '').toLowerCase().replace(/[\s,.]+/g, ' ').trim();
+  const byAddr = new Map(); for (const a of db.addresses) { const c = cust(a.customerId); if (!c || c.deleted) continue; const k = norm(a.street); byAddr.set(k, [...(byAddr.get(k) || []), c]); }
+  const dupes = [...byAddr.values()].map((cs) => [...new Set(cs)]).filter((cs) => cs.length > 1);
+  return [
+    ['Faste aftaler uden rute (kommer ikke på nogen rute)', live.flatMap((c) => agOf(c).filter((g) => g.intervalWeeks && !g.routeId).map((g) => ({ c, txt: `${g.service} · hver ${g.intervalWeeks}. uge · ${kr(g.price)}` })))],
+    ['Mulige dubletkunder (samme adresse)', dupes.map((cs) => ({ c: cs[0], txt: cs.map((x) => `${x.name}${x.customerNo ? ' #' + x.customerNo : ' (uden kundenr.)'}`).join('  ·  '), others: cs.slice(1) }))],
+    ['Kunder uden kundenr. (kun fundet i ruteoversigt)', live.filter((c) => !c.customerNo).map((c) => ({ c, txt: db.addresses.find((a) => a.customerId === c.id)?.street || '' }))],
+    ['Ruter uden kendt dato', db.routes.filter((r) => r.anchorUnknown).map((r) => ({ r, txt: r.name }))],
+    ['Kunder uden aftaler', live.filter((c) => !agOf(c).length).map((c) => ({ c, txt: db.addresses.find((a) => a.customerId === c.id)?.street || '' }))],
+    ['Kunder uden telefon og e-mail', live.filter((c) => !c.phone && !c.email).map((c) => ({ c, txt: '' }))],
+  ];
+}
+function checkDialog() {
+  const sec = dataCheck();
+  openDlg(`<h2>Datakontrol</h2><p class="small mute">Klik på en kunde for at rette. Listen opdateres, når du åbner den igen.</p>
+    ${sec.map(([title, items], i) => `<details ${i < 2 && items.length ? 'open' : ''}><summary><b>${title}</b> (${items.length})</summary>${items.length ? `<table>${items.slice(0, 300).map((x) => `<tr class="small"><td>${x.c ? `<a href="#" data-cust="${x.c.id}">${esc(x.c.name)}</a>` : `<a href="#" data-route="${x.r.id}">${esc(x.r.name)}</a>`}${(x.others || []).map((o) => ` · <a href="#" data-cust="${o.id}">${esc(o.name)}</a>`).join('')}</td><td>${esc(x.txt)}</td></tr>`).join('')}</table>` : '<p class="small mute">Ingen 👍</p>'}</details>`).join('')}
+    ${(db.imports || []).some((b) => b.issues?.length) ? '<p><button type="button" data-act="showIssues">Vis advarsler fra importen</button></p>' : ''}`, null, 'Luk');
+}
+function dblDialog() {
+  const groups = D.findDoubleBookings(db.visits.filter((v) => v.plannedDate >= todayIso()));
+  openDlg(`<h2>Mulige dobbeltbookinger (${groups.length})</h2><p class="small mute">Samme adresse samme dag med samme opgave to gange, eller på to forskellige ruter. Aflys det besøg, der er forkert, eller ret aftalen på kundekortet.</p>
+    ${groups.map((ids) => { const vs = ids.map((id) => db.visits.find((v) => v.id === id)); const c = cust(vs[0].customerId);
+      return `<div class="card" style="padding:10px"><div class="row"><b class="sp"><a href="#" data-cust="${c.id}">${esc(c.name)}</a> · ${fmt(vs[0].plannedDate)} ${vs[0].plannedDate.slice(0, 4)}</b></div><div class="small mute">${esc(addr(vs[0].addressId)?.street)}</div>
+      <table>${vs.map((v) => `<tr class="small"><td>${esc(v.service)}</td><td>${esc(route(v.routeId)?.name ?? 'Enkeltbesøg')}</td><td>${kr(v.price)}</td><td>${v.manual ? 'manuelt booket' : 'fast aftale'}</td><td>${v.status === 'planlagt' ? `<button type="button" class="bad" data-act="dblCancel" data-id="${v.id}">Aflys dette</button>` : pill(v.status)}</td></tr>`).join('')}</table></div>`; }).join('') || '<p class="mute">Ingen.</p>'}`, null, 'Luk');
+}
+function issuesDialog(batchId) {
+  const bs = (db.imports || []).filter((b) => !b.rolledBack && b.issues?.length && (!batchId || b.batchId === batchId));
+  const rows = bs.flatMap((b) => b.issues.map((i, k) => ({ ...i, key: b.batchId + ':' + k })));
+  const findCust = (line) => { const no = (String(line).match(/^(\d{8})/) || [])[1]; return no ? db.customers.find((c) => c.customerNo === no) : null; };
+  const nameIn = (msg) => db.customers.find((c) => c.name && String(msg).startsWith(c.name + ':')) || db.customers.find((c) => c.name && String(msg).includes('"' + c.name + '"'));
+  const groups = [['Skal tjekkes', (i) => !i.warn || /kan høre til|ikke genkendt|ingen af kundens ruter|ukendt/.test(i.msg)], ['Flyttet / koblet automatisk', (i) => /flyttet til|koblet til/.test(i.msg)], ['Kun i ruteoversigt (uden kundenr.) – mulige dubletter', (i) => /ikke fundet i stamdata/.test(i.msg)], ['Øvrige', () => true]];
+  const used = new Set();
+  openDlg(`<h2>Advarsler fra importen</h2><p class="small mute">Klik på kunden for at rette, og markér som løst. "Ingen aftaler" og "flere aftaler" er ofte i orden.</p>
+    ${groups.map(([title, f]) => { const g = rows.filter((r) => !used.has(r.key) && f(r)); g.forEach((r) => used.add(r.key)); if (!g.length) return '';
+      return `<details ${title === 'Skal tjekkes' ? 'open' : ''}><summary><b>${title}</b> (${g.filter((r) => !r.done).length} uløste)</summary><table>${g.map((r) => { const c = findCust(r.line) || nameIn(r.msg);
+        return `<tr class="small" style="opacity:${r.done ? .45 : 1}"><td style="color:var(${r.warn ? '--warn' : '--bad'})">${esc(r.msg)}</td><td>${c ? `<a href="#" data-cust="${c.id}">Åbn kunde</a>` : `<span class="mute">${esc(r.line)}</span>`}</td><td><button type="button" data-act="issueDone" data-k="${r.key}">${r.done ? '✓ Løst' : 'Markér løst'}</button></td></tr>`; }).join('')}</table></details>`; }).join('') || '<p class="mute">Ingen advarsler.</p>'}`, null, 'Luk');
 }
 
 /* ---------------- Ruter & kort ---------------- */
@@ -579,7 +622,7 @@ function importView() {
       <div style="max-height:360px;overflow:auto;margin-top:10px"><table><tr><th>Navn</th><th>Telefon</th><th>Adresse</th><th>Aftale</th><th>Betaling</th></tr>${plan.customers.slice(0, 300).map((c) => c.addresses.map((a, j) => `<tr class="small" style="${c.dupeOf ? 'opacity:.5' : ''}"><td>${j ? '' : esc(c.name)}</td><td>${j ? '' : esc(c.phone)}</td><td>${esc(a.street)}</td><td>${a.agreements.map((g) => `${esc(g.service)} · ${g.price ? kr(g.price) : '<span style="color:var(--warn)">pris mangler</span>'} · ${agrDesc(g)}${g.intervalWeeks ? ' · fra ' + fmt(g.anchorDate) : ''}`).join('<br>') || '<span class="mute">ingen</span>'}</td><td>${j ? '' : PAY[c.paymentMethod]}</td></tr>`).join('')).join('')}</table></div>
       <div class="row" style="margin-top:10px"><button class="pri" data-act="impApply" ${plan.errors ? '' : ''}>Importér ${plan.customers.filter((c) => st.includeDup || !c.dupeOf).length} kunder</button><button data-act="impCancel">Annuller</button>${plan.errors ? '<span class="small" style="color:var(--bad)">Rækker med fejl importeres med de felter der kunne læses – ret gerne filen først.</span>' : ''}</div></div>`;
   }
-  if (batches.length) html += `<div class="card"><h2>Tidligere importer</h2><table>${batches.map((b) => `<tr><td>${fmtTs(b.at)}</td><td>${b.counts.customers} kunder · ${b.counts.agreements} aftaler · ${b.counts.visits} besøg</td><td>${b.rolledBack ? '<span class="pill">fortrudt</span>' : `<button class="bad" data-act="impUndo" data-id="${b.batchId}">Fortryd</button>`}</td></tr>`).join('')}</table></div>`;
+  if (batches.length) html += `<div class="card"><h2>Tidligere importer</h2><table>${batches.map((b) => `<tr><td>${fmtTs(b.at)}</td><td>${b.counts.customers} kunder · ${b.counts.agreements} aftaler · ${b.counts.visits} besøg${b.issues?.length ? ` · <a href="#" data-act="showIssues" data-id="${b.batchId}">${b.issues.filter((i) => !i.done).length} advarsler</a>` : ''}</td><td>${b.rolledBack ? '<span class="pill">fortrudt</span>' : `<button class="bad" data-act="impUndo" data-id="${b.batchId}">Fortryd</button>`}</td></tr>`).join('')}</table></div>`;
   $view.innerHTML = html;
   document.getElementById('impFile').onchange = async (e) => { const f = e.target.files[0]; if (!f) return;
     try { toast('Læser fil …'); const parsed = await readTable(f); if (!parsed.headers.length) throw new Error('Filen er tom'); ui.imp = { fileName: f.name, parsed, mapping: I.guessMapping(parsed.headers), route: db.routes[0].id }; render(); } catch (err) { toast(err.message); } };
@@ -641,7 +684,7 @@ function admin() {
   <div class="card"><h2>Ruter</h2>
     <table><tr><th>Navn</th><th>Medarbejder</th><th>Hver … uge</th><th>Næste dato</th></tr>${db.routes.map((r) => `<tr><td><input data-rf="name" data-r="${r.id}" value="${esc(r.name)}"></td><td><select data-rf="employeeId" data-r="${r.id}">${db.employees.filter((x) => !x.inactive).map((e) => `<option value="${e.id}" ${e.id === r.employeeId ? 'selected' : ''}>${esc(e.name)}</option>`).join('')}</select></td>
       <td><input type="number" min="1" max="52" data-rf="intervalWeeks" data-r="${r.id}" value="${r.intervalWeeks}" style="width:70px"></td><td><input type="date" data-rf="anchorDate" data-r="${r.id}" value="${D.nextRouteDate(r, todayIso())}"></td></tr>`).join('')}</table>
-    <div class="row" style="margin-top:8px"><button data-act="addRoute">+ Rute</button><button data-act="delEmptyRoutes">Slet ruter uden kunder</button><button data-act="recalcRoutes">Genberegn rytme og dato ud fra kunderne</button></div>
+    <div class="row" style="margin-top:8px"><button data-act="showCheck">Datakontrol</button><button data-act="addRoute">+ Rute</button><button data-act="delEmptyRoutes">Slet ruter uden kunder</button><button data-act="recalcRoutes">Genberegn rytme og dato ud fra kunderne</button></div>
     <p class="small mute">Ændring af rutens dato/rytme flytter ikke eksisterende besøg automatisk – brug Kalender (flyt/forskyd) eller ret aftalerne.</p></div>
   <div class="card"><h2>SMS-skabeloner</h2>${Object.entries(db.templates).map(([k, v]) => `<label><span>${esc(k)} – felter: {navn} {dato} {tid} {nydato}</span><textarea data-tpl="${k}">${esc(v)}</textarea></label>`).join('')}</div>
   <div class="card"><h2>Lukkedage (ferie mv.)</h2><p class="small mute">Helligdage beregnes automatisk. Besøg på lukkedage flyttes til næste arbejdsdag ved planlægning.</p><div class="row"><input type="date" id="cd"><button data-act="addClosed">Tilføj</button></div><div class="small">${db.closedDays.map((d) => `<span class="pill">${d} <a href="#" data-act="rmClosed" data-d="${d}">×</a></span>`).join(' ')}</div></div>
@@ -774,6 +817,11 @@ document.addEventListener('click', async (e) => {
         S.audit(db, ui.user.id, 'route.recalc', '-', { n }); toast(n ? `${n} ruter fik ny rytme/dato – tjek dem mod SkvizBiz` : 'Ruterne passer allerede med kunderne'); break; }
       case 'delEmptyRoutes': { const empty = db.routes.filter((r) => !db.agreements.some((g) => g.routeId === r.id) && !db.visits.some((v) => v.routeId === r.id)); if (!empty.length) return toast('Ingen tomme ruter');
         if (!confirm(`Slet ${empty.length} ruter uden kunder?`)) return; db.routes = db.routes.filter((r) => !empty.includes(r)); S.audit(db, ui.user.id, 'route.deleteEmpty', '-', { n: empty.length }); toast(`${empty.length} ruter slettet`); break; }
+      case 'showDbl': return dblDialog();
+      case 'showCheck': return checkDialog();
+      case 'dblCancel': { const v = db.visits.find((x) => x.id === id); if (!confirm(`Aflys ${v.service} ${fmt(v.plannedDate)}?`)) return; S.registerVisit(db, ui.user, id, { result: 'aflyst', opId: 'dbl:' + id, note: 'Dobbeltbooking' }); save(); document.getElementById('dlg').close(); render(); return dblDialog(); }
+      case 'showIssues': return issuesDialog(id);
+      case 'issueDone': { const [bid, k] = b.dataset.k.split(':'); const it = db.imports.find((x) => x.batchId === bid).issues[+k]; it.done = !it.done; save(); b.textContent = it.done ? '✓ Løst' : 'Markér løst'; b.closest('tr').style.opacity = it.done ? .45 : 1; return; }
       case 'empAdd': db.employees.push({ id: S.uid('e'), name: 'Ny medarbejder', role: 'medarbejder', commissionRate: db.settings.commissionRate }); break;
       case 'empDel': { const e = emp(id); if (e.role === 'admin' && db.employees.filter((x) => !x.inactive && x.role === 'admin').length === 1) return toast('Der skal være mindst én admin');
         const rs = db.routes.filter((r) => r.employeeId === id); if (!confirm(`Fjern ${e.name}?${rs.length ? ` ${rs.length} ruter flyttes til dig.` : ''} Historik og provision bevares.`)) return;

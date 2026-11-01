@@ -151,8 +151,11 @@ test('provision 35 % ekskl. moms', () => {
   assert.equal(D.commission(v).e2.commission, 140);
 });
 
-test('dobbeltbooking findes', () => {
-  assert.equal(D.findDoubleBookings([{ id: 1, addressId: 'a', plannedDate: 'd', status: 'planlagt' }, { id: 2, addressId: 'a', plannedDate: 'd', status: 'planlagt' }]).length, 1);
+test('dobbeltbooking: kun samme opgave to gange eller to ruter samme dag', () => {
+  const v = (id, service, routeId) => ({ id, addressId: 'a', plannedDate: 'd', status: 'planlagt', service, routeId });
+  assert.equal(D.findDoubleBookings([v(1, 'Vinduesvask', 'r'), v(2, 'Vinduesvask', 'r')]).length, 1);
+  assert.equal(D.findDoubleBookings([v(1, 'Vinduesvask', 'r'), v(2, '+ Orangeriet', 'r')]).length, 0, 'to forskellige opgaver på samme rute er normalt');
+  assert.equal(D.findDoubleBookings([v(1, 'Vinduesvask', 'r1'), v(2, 'Tagrender', 'r2')]).length, 1, 'to ruter samme dag er mistænkeligt');
 });
 
 test('GDPR-sletning bevarer fakturalinks men fjerner persondata', async () => {
