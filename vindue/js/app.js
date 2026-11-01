@@ -12,7 +12,7 @@ import * as SY from './sync.js';
 import { SupabaseCloud, MemoryCloud } from './cloud.js';
 import { SUPABASE } from './config.js';
 
-export const VERSION = '2026-11-01 #27';
+export const VERSION = '2026-11-01 #28';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = load();
