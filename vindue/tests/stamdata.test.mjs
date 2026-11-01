@@ -194,3 +194,32 @@ test('samme rettelse når ruteoversigter importeres efter kunderne', () => {
   const dora = db.agreements.find((g) => g.service === 'Vinduesvask Doravej 5');
   assert.match(db.addresses.find((a) => a.id === dora.addressId).street, /^Doravej 5/); assert.equal(rn(dora.routeId), 'Bindslev 2');
 });
+
+// To kunder med samme navn: leveringskonto (Stabækvej, faktureres via betaler) + betalerkonto (Mosevej) – som "Landbrug ved Johnny Jørgensen"
+const kundeB = (page, y0, no, name, addr, bill, agr) => { const it = kunde(page, y0, no, name, addr, [], agr);
+  // erstat faktureringsadresse-kolonnen med betalerens adresse
+  return it.map((x) => (x.x === R && addr.includes(x.str) ? { ...x, str: bill[addr.indexOf(x.str)] } : x)); };
+const STAM3 = [...kundeB(1, 763, '00000038', 'Landbrug Test', ['Stabækvej 1', '9800 Hjørring'], ['Mosevej 9', '9870 Sindal'], [['Rens af staldbygninger', 'Hver 4. uge', '11/11-2026', 'kr. 840,00', '0:55']]),
+  ...kunde(1, 560, '00000730', 'Landbrug Test', ['Mosevej 9', '9870 Sindal'], [], [['Vinduesvask', 'Hver 4. uge', '07/12-2026', 'kr. 300,00', '0:20']]),
+  ...kunde(2, 763, '00000040', 'Bind Fast', ['Bvej 1', '9881 Bindslev'], [], [['Vinduesvask', 'Hver 4. uge', '11/11-2026', 'kr. 100,00', '0:10']]),
+  ...kunde(2, 560, '00000041', 'Myg Fast', ['Mvej 1', '9870 Sindal'], [], [['Vinduesvask', 'Hver 4. uge', '07/12-2026', 'kr. 100,00', '0:10']])];
+const LB_AGR = [['Rens af staldbygninger', 'Hver 4. uge', '840,00', '00:55'], ['Vinduesvask', 'Hver 4. uge', '300,00', '00:20']];
+const OV_B2 = ovT('Bindslev 2', [{ nr: 1, name: 'Bind Fast', street: 'Bvej 1', zip: '9881 Bindslev', agr: [['Vinduesvask', 'Hver 4. uge', '100,00', '00:10']] }, { nr: 2, name: 'Landbrug Test', street: 'Mosevej 9', zip: '9870 Sindal', agr: LB_AGR }]);
+const OV_M2 = ovT('Mygdal 2', [{ nr: 1, name: 'Landbrug Test', street: 'Mosevej 9', zip: '9870 Sindal', agr: LB_AGR }, { nr: 2, name: 'Myg Fast', street: 'Mvej 1', zip: '9870 Sindal', agr: [['Vinduesvask', 'Hver 4. uge', '100,00', '00:10']] }]);
+
+test('to kunder med samme navn (leveringskonto + betaler): aftaler på hver sin rute, ingen enkeltbesøg, betaler koblet', () => {
+  const db = seedDb('2026-11-02'); db.customers = []; db.addresses = []; db.agreements = []; db.visits = []; db.routes = [];
+  const plan = SD.buildSkvizPlan([{ fileName: 'alle.pdf', routeId: '', customers: SD.parseStamdataItems(STAM3) }], null, db, { today: '2026-11-02' });
+  SD.addRouteOverviews(plan, [OV_M2, OV_B2], db, { today: '2026-11-02' });
+  assert.equal(plan.customers.length, 4);
+  const ids = SD.materializeRoutes(db, plan, { uid, today: '2026-11-02', employeeId: 'e1', batchId: 'x' });
+  I.applyImportPlan(db, plan, { batchId: 'x', uid, horizon: '2027-03-01', today: '2026-11-02' }); SD.applyRouteOrder(db, plan, ids);
+  assert.equal(SD.linkBillingFromStamdata(db, plan), 1);
+  const rn = (id) => db.routes.find((r) => r.id === id)?.name;
+  const stald = db.agreements.find((g) => g.price === 840), vask = db.agreements.find((g) => g.price === 300);
+  assert.equal(rn(stald.routeId), 'Bindslev 2'); assert.equal(rn(vask.routeId), 'Mygdal 2');
+  assert.ok(!db.visits.some((v) => !v.routeId), 'ingen enkeltbesøg');
+  const lev = db.customers.find((c) => c.customerNo === '00000038'), bet = db.customers.find((c) => c.customerNo === '00000730');
+  assert.equal(lev.billTo, bet.id);
+  const b2 = db.routes.find((r) => r.name === 'Bindslev 2'); assert.equal(db.addresses.find((a) => a.id === b2.order[1]).customerId, lev.id, 'Bindslev 2 viser leveringsadressen');
+});
