@@ -65,3 +65,4 @@
 | 62 | 2026-11-01 | Rute åbner på første fremtidige dag med besøg, ellers seneste dag med åbne besøg; Forrige/Næste gang går mellem dage med besøg; rutelisten viser åbne datoer i rødt | Tagrenderens åbnede på en tom dag |
 | 63 | 2026-11-01 | Faste aftaler uden rute er gyldige (som i SkvizBiz): planlægges på egen dato, vises som "Uden rute" i kalender og i admins dagsrute; datakontrol viser dem kun til orientering | Ejer: Svømmehallen/Valhal har interval men ingen rute |
 | 64 | 2026-11-01 | Flere kunder på samme adresse er normalt – kun orientering i datakontrol, tæller ikke med | Ejers svar |
+| 65 | 2026-11-01 | Ruteoversigt: forkortet navn og adresse i samme PDF-tekststykke ("Navn... Vej 1") deles efter "..." | De 13 "kunder uden kundenr." |
