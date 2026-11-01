@@ -9,7 +9,7 @@ import * as SD from './stamdata.js';
 import * as RS from './rutesedel.js';
 import * as DP from './dayplan.js';
 
-export const VERSION = '2026-11-01 #24';
+export const VERSION = '2026-11-01 #25';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = load();
@@ -199,7 +199,7 @@ function kundekort(c) {
 const msgHtml = (m) => `<div class="msg ${m.dir}">${esc(m.text)}<div class="meta">${fmtTs(m.at)} · ${m.dir === 'ud' ? esc(m.status) + (m.parts > 1 ? ` · ${m.parts} dele` : '') + (m.error ? ' · ' + esc(m.error) : '') : esc(m.phone)}</div></div>`;
 
 const GROUPS = ['Privat kunder', 'Erhverv', 'Offentlig', 'Boligforening'];
-const INVTYPE = { email: 'Email PDF (A4-faktura)', sms: 'Faktura på SMS', ean: 'EAN (offentlig)', print: 'Papir' };
+const INVTYPE = { email: 'Email PDF (A4-faktura)', sms: 'Faktura på SMS', ean: 'EAN (offentlig)', print: 'Papir (A4-faktura udleveres)' };
 const yn = (name, val) => `<select name="${name}"><option value="0" ${!val ? 'selected' : ''}>Nej</option><option value="1" ${val ? 'selected' : ''}>Ja</option></select>`;
 function customerForm(c) {
   const isNew = !c; c ||= { name: '', phone: '', email: '', notes: '', paymentTerms: 'Netto 8 dage', paymentDays: 8, vatLiable: true, marketingConsent: false, group: 'Privat kunder', invoiceType: 'email', invoiceInterval: 'besoeg' };
@@ -304,7 +304,8 @@ function kalender() {
   $view.innerHTML = `${alertsStrip()}
   <div class="toolbar"><div class="seg"><button data-act="wk" data-d="-7">‹</button><button data-act="wk" data-d="0">I dag</button><button data-act="wk" data-d="7">›</button></div>
     <h2 class="sp">Uge ${D.isoWeek(ws)} <span class="mute small">${fmt(ws)} – ${fmt(D.addDays(ws, 4))} ${ws.slice(0, 4)}</span></h2>
-    ${ui.calSel?.size ? `<span class="pill">${ui.calSel.size} ruter valgt</span><button class="pri" data-act="printSel">🖨 Udskriv valgte</button><button data-act="clearSel">Ryd</button>` : `<span class="small mute hide-m">Ctrl+klik på ruter for at vælge flere</span>`}<button data-act="selWeek">Vælg alle i ugen</button>
+    ${ui.visSel?.size ? `<span class="pill">${ui.visSel.size} kunder valgt</span><button data-act="moveSelVisits">Flyt valgte kunder …</button><button data-act="clearVisSel">Ryd</button>` : ''}
+    ${ui.calSel?.size ? `<span class="pill">${ui.calSel.size} ruter valgt</span><button class="pri" data-act="printSel">🖨 Udskriv valgte</button><button data-act="clearSel">Ryd</button>` : `<span class="small mute hide-m">Ctrl+klik: vælg ruter eller kunder</span>`}<button data-act="selWeek">Vælg alle i ugen</button>
     <select id="calRoute"><option value="">Alle ruter</option>${db.routes.map((r) => `<option value="${r.id}" ${rf === r.id ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</select></div>
   <div class="cal">
     <div class="week">${days.map((d) => { const vs = wv.filter((v) => v.plannedDate === d); const closed = D.isClosedDay(d, db.closedDays);
@@ -313,9 +314,9 @@ function kalender() {
         ${[...groups.entries()].map(([rid, gv]) => { const r = route(rid); const order = r?.order || []; gv.sort((a, b) => ((order.indexOf(a.addressId) + 1 || 999) - (order.indexOf(b.addressId) + 1 || 999)));
           const allDone = gv.every((v) => v.status !== 'planlagt' && v.status !== 'udsat');
           const key = (r?.id || '') + '|' + d;
-          return `<div class="rblock ${allDone ? 'done' : ''} ${r && ui.calSel?.has(key) ? 'sel' : ''}" ${r ? `data-rsel="${key}"` : ''}>${r ? `<div class="grip" data-act="routeMenu" data-r="${r.id}" data-d="${d}" draggable="true" data-dragroute="${key}" title="Klik: muligheder · Træk: flyt ruten · Ctrl+klik: vælg">⋮⋮</div>` : ''}<div class="rhead" ${r ? `data-route="${r.id}" data-day="${d}" title="Åbn færdigmelding"` : ''}><b>${esc(r?.name ?? 'Uden rute')}</b><span class="badge">${gv.length}</span></div>
+          return `<div class="rblock ${allDone ? 'done' : ''} ${r && ui.calSel?.has(key) ? 'sel' : ''}" ${r ? `data-rsel="${key}"` : ''}>${r ? `<div class="grip" data-act="routeMenu" data-r="${r.id}" data-d="${d}" draggable="true" data-dragroute="${key}" title="Klik: muligheder · Træk: flyt ruten · Ctrl+klik: vælg">⋮⋮</div>` : ''}<div class="rhead" ${r ? `data-route="${r.id}" data-day="${d}" draggable="true" data-dragroute="${key}" title="Klik: færdigmeld · Træk: flyt hele ruten"` : ''}><b>${esc(r?.name ?? 'Uden rute')}</b><span class="badge">${gv.length}</span></div>
           <div class="rmeta"><span>${D.hm(mins(gv))} t · ${kr(gv.filter((v) => v.status !== 'aflyst').reduce((s2, v) => s2 + D.visitTotal(v), 0))}</span>${r ? `<button class="icon" data-act="printRoute" data-r="${r.id}" data-d="${d}" title="Udskriv rutesedel">🖨</button>` : ''}</div>
-          ${gv.map((v) => `<div class="vline ${v.status}" draggable="${v.status === 'planlagt' || v.status === 'udsat'}" data-visit="${v.id}">${esc(cust(v.customerId)?.name)}</div>`).join('')}</div>`; }).join('')}</div>`; }).join('')}</div>
+          ${gv.map((v) => `<div class="vline ${v.status} ${ui.visSel?.has(v.id) ? 'vsel' : ''}" draggable="${v.status === 'planlagt' || v.status === 'udsat'}" data-visit="${v.id}">${esc(cust(v.customerId)?.name)}</div>`).join('')}</div>`; }).join('')}</div>`; }).join('')}</div>
     <aside class="econ"><h3>Total for uge ${D.isoWeek(ws)}</h3>
       <dl><dt>Antal besøg</dt><dd>${e.n}</dd><dt>Planlagt omsætning</dt><dd>${kr(Math.round(e.sum))}</dd><dt>Inkl. moms</dt><dd>${kr(Math.round(e.sum * 1.25))}</dd>
       <dt>Tidsforbrug</dt><dd>${D.hm(e.min)} t</dd><dt>Forventet kørsel</dt><dd>${D.hm(e.drive)} t (${e.km} km)</dd><dt>Provision</dt><dd>${kr(Math.round(e.prov))}</dd>
@@ -325,13 +326,14 @@ function kalender() {
       <p class="small mute">Kørsel = luftlinje × 1,3 ved 50 km/t. Træk et navn til en anden dag for at flytte.</p></aside>
   </div>`;
   document.getElementById('calRoute').onchange = (ev) => { ui.calRoute = ev.target.value; render(); };
-  $view.querySelectorAll('.vline[draggable=true]').forEach((ch) => ch.addEventListener('dragstart', (ev) => ev.dataTransfer.setData('text/plain', ch.dataset.visit)));
-  $view.querySelectorAll('.grip[data-dragroute]').forEach((g) => g.addEventListener('dragstart', (ev) => { ev.stopPropagation(); ev.dataTransfer.setData('text/plain', 'route:' + g.dataset.dragroute); }));
+  $view.querySelectorAll('.vline[draggable=true]').forEach((ch) => ch.addEventListener('dragstart', (ev) => ev.dataTransfer.setData('text/plain', ui.visSel?.has(ch.dataset.visit) && ui.visSel.size > 1 ? 'many:' + [...ui.visSel].join(',') : ch.dataset.visit)));
+  $view.querySelectorAll('[data-dragroute]').forEach((g) => g.addEventListener('dragstart', (ev) => { ev.stopPropagation(); ev.dataTransfer.setData('text/plain', 'route:' + g.dataset.dragroute); }));
   $view.querySelectorAll('.day').forEach((d) => {
     d.addEventListener('dragover', (ev) => { ev.preventDefault(); d.classList.add('drop'); });
     d.addEventListener('dragleave', () => d.classList.remove('drop'));
     d.addEventListener('drop', (ev) => { ev.preventDefault(); d.classList.remove('drop'); const id = ev.dataTransfer.getData('text/plain');
-      if (id.startsWith('route:')) { const [rid, from] = id.slice(6).split('|'); if (from !== d.dataset.day) bulkDialog(db.visits.filter((v) => v.routeId === rid && v.plannedDate === from), `Flyt ${route(rid).name} fra ${fmt(from)}`, d.dataset.day); }
+      if (id.startsWith('many:')) { const vs2 = id.slice(5).split(',').map((x) => db.visits.find((v) => v.id === x)).filter(Boolean); ui.visSel = new Set(); bulkDialog(vs2, `Flyt ${vs2.length} kunder`, d.dataset.day); }
+      else if (id.startsWith('route:')) { const [rid, from] = id.slice(6).split('|'); if (from !== d.dataset.day) bulkDialog(db.visits.filter((v) => v.routeId === rid && v.plannedDate === from), `Flyt ${route(rid).name} fra ${fmt(from)}`, d.dataset.day); }
       else if (id) moveDialog(id, d.dataset.day); });
   });
 }
@@ -445,10 +447,44 @@ function routeSheetHtml(r, day) {
       return `<tr class="${v.status === 'aflyst' ? 'struck' : ''}"><td>${i + 1}</td><td>${esc(a.street)}</td><td>${esc(c?.name)}</td><td>${esc(c?.phone)}</td><td>${c?.paymentMethod === 'kontant' ? '✓' : ''}</td><td style="text-align:right">${kr(D.visitTotal(v))}</td><td class="small">${esc(a.access)}${c?.rememberNext ? `<br><b>Husk: ${esc(c.rememberNext)}</b>` : ''}${c?.callBefore ? '<br><b>Ring før besøg</b>' : ''}</td><td class="small">${esc(v.service)} (${ag?.intervalWeeks ? ag.intervalWeeks + 'u' : 'enkelt'})</td><td>${D.hm(v.durationMin ?? 15)}</td></tr>`; }).join('')}
     <tr><td colspan="5"><b>I alt (ekskl. moms)</b></td><td style="text-align:right"><b>${kr(total)}</b></td><td colspan="2"></td><td><b>${D.hm(mins(stops))}</b></td></tr></table></div>`;
 }
+/** Ét ark pr. dag med alle valgte ruter (følger dagsplanen hvis den findes). */
+function daySheetHtml(day, rids) {
+  const plan = db.dayPlans?.[day];
+  let stops = rids.flatMap((rid) => routeStops(rid, day));
+  if (plan?.order) stops.sort((a, b) => (plan.order.indexOf(a.id) + 1 || 9999) - (plan.order.indexOf(b.id) + 1 || 9999));
+  const total = stops.filter((v) => v.status !== 'aflyst').reduce((s2, v) => s2 + D.visitTotal(v), 0);
+  const km = plan?.legs ? Math.round(DP.sumLegs(plan.legs).m / 1000) : Math.round(routeKm(stops.map((v) => addr(v.addressId)).filter(Boolean)) * 1.3);
+  const names = rids.map((rid) => route(rid)?.name).filter(Boolean);
+  let lastR = null;
+  return `<div class="sheet-page"><h2>${fmt(day)} ${day.slice(0, 4)} uge ${D.isoWeek(day)} – ${names.length > 1 ? 'Ruter' : 'Rute'}: ${esc(names.join(', '))}</h2>
+    <div class="small mute">Udskrevet ${fmtTs(new Date().toISOString())} · ${stops.length} besøg · arbejde ${D.hm(mins(stops))} t · kørsel ca. ${km} km${plan ? ' · rækkefølge fra dagsplan' : ''}</div>
+    <table><tr><th>Nr</th><th>Adresse</th><th>Navn</th><th>Tlf.</th><th>Kont.</th><th style="text-align:right">Beløb</th><th>Bemærkninger</th><th>Opgave</th><th>Tid</th></tr>
+    ${stops.map((v, i) => { const c = cust(v.customerId), a = addr(v.addressId) || {}; const ag = db.agreements.find((x) => x.id === v.agreementId);
+      const sub = !plan && names.length > 1 && v.routeId !== lastR ? `<tr class="subhead"><td colspan="9"><b>${esc(route(v.routeId)?.name)}</b></td></tr>` : ''; lastR = v.routeId;
+      return `${sub}<tr class="${v.status === 'aflyst' ? 'struck' : ''}"><td>${i + 1}</td><td>${esc(a.street)}</td><td>${esc(c?.name)}</td><td>${esc(c?.phone)}</td><td>${c?.paymentMethod === 'kontant' ? '✓' : ''}</td><td style="text-align:right">${kr(D.visitTotal(v))}</td><td class="small">${esc(a.access)}${c?.rememberNext ? `<br><b>Husk: ${esc(c.rememberNext)}</b>` : ''}${c?.callBefore ? '<br><b>Ring før besøg</b>' : ''}</td><td class="small">${esc(v.service)} (${ag?.intervalWeeks ? ag.intervalWeeks + 'u' : 'enkelt'})</td><td>${D.hm(v.durationMin ?? 15)}</td></tr>`; }).join('')}
+    <tr><td colspan="5"><b>I alt (ekskl. moms)</b></td><td style="text-align:right"><b>${kr(total)}</b></td><td colspan="2"></td><td><b>${D.hm(mins(stops))}</b></td></tr></table></div>`;
+}
+/** A4-faktura til kunder med fakturatype "Papir". Fakturanummer tildeles af e-conomic. */
+function invoiceHtml(v) {
+  const c = cust(v.customerId); const payer = (c.billTo && cust(c.billTo)) || c; const a = addr(v.addressId) || {}; const pa = db.addresses.find((x) => x.customerId === payer.id) || a;
+  const f = db.settings.firm || {}; const lines = [{ t: `${v.service} – ${a.street}`, p: v.price }, ...(v.extras || []).map((x) => ({ t: 'Ekstra: ' + x.text, p: Number(x.price) || 0 }))];
+  const net = lines.reduce((s2, l) => s2 + l.p, 0); const days = payer.paymentDays ?? 8; const due = D.addDays(v.plannedDate, days);
+  return `<div class="sheet-page invoice"><div class="inv-head"><div><h2>${esc(f.name || 'Sindal Vinduespolering')}</h2><div class="small">${esc(f.address || '')}<br>${f.cvr ? 'CVR ' + esc(f.cvr) : ''}${f.phone ? ' · Tlf. ' + esc(f.phone) : ''}${f.email ? '<br>' + esc(f.email) : ''}</div></div>
+      <div class="inv-meta"><h2>Faktura</h2><div class="small">Fakturanr.: <i>tildeles i e-conomic</i><br>Dato: ${fmt(v.plannedDate)} ${v.plannedDate.slice(0, 4)}<br>Kundenr.: ${esc(payer.customerNo || '')}<br>Forfald: ${fmt(due)} ${due.slice(0, 4)} (d.d. + ${days} dage)</div></div></div>
+    <div class="inv-to"><b>${esc(payer.name)}</b><br>${esc(pa.street || '')}${payer !== c ? `<br><span class="small">Leveringssted: ${esc(c.name)}, ${esc(a.street)}</span>` : ''}</div>
+    <table><tr><th>Beskrivelse</th><th style="text-align:right">Beløb</th></tr>${lines.map((l) => `<tr><td>${esc(l.t)}</td><td style="text-align:right">${kr(l.p)}</td></tr>`).join('')}
+      <tr><td style="text-align:right">I alt ekskl. moms</td><td style="text-align:right">${kr(net)}</td></tr><tr><td style="text-align:right">Moms 25 %</td><td style="text-align:right">${kr(Math.round(net * 25) / 100)}</td></tr>
+      <tr><td style="text-align:right"><b>At betale</b></td><td style="text-align:right"><b>${kr(Math.round(net * 125) / 100)}</b></td></tr></table>
+    <p class="small">Betaling: ${f.bank ? 'Bank reg./konto ' + esc(f.bank) : ''}${f.mobilepay ? ' · MobilePay ' + esc(f.mobilepay) : ''}${!f.bank && !f.mobilepay ? '<i>Udfyld bank/MobilePay under Admin → Firma</i>' : ''}. Angiv kundenr. ved betaling.</p></div>`;
+}
 function printView() {
-  const list = [...(ui.printSet || [])].map((k) => k.split('|')).filter(([rid]) => route(rid)).sort((a, b) => a[1].localeCompare(b[1]) || route(a[0]).name.localeCompare(route(b[0]).name));
-  $view.innerHTML = `<div class="toolbar noprint"><button data-act="planBack">← Kalender</button><h2 class="sp">Udskriv ${list.length} rutesedler</h2><button class="pri" data-act="print">🖨 Udskriv</button></div>
-    <div class="card sheet">${list.map(([rid, d]) => routeSheetHtml(route(rid), d)).join('')}</div>`;
+  const keys = [...(ui.printSet || [])].map((k) => k.split('|')).filter(([rid]) => route(rid));
+  const byDay = new Map(); for (const [rid, d] of keys) byDay.set(d, [...(byDay.get(d) || []), rid]);
+  const days = [...byDay.keys()].sort();
+  const invVisits = days.flatMap((d) => byDay.get(d).flatMap((rid) => routeStops(rid, d))).filter((v) => v.status === 'planlagt' || v.status === 'udsat').filter((v) => { const c = cust(v.customerId); return ((c.billTo && cust(c.billTo)) || c).invoiceType === 'print'; });
+  $view.innerHTML = `<div class="toolbar noprint"><button data-act="planBack">← Kalender</button><h2 class="sp">Udskriv ${days.length} ${days.length === 1 ? 'dag' : 'dage'} · ${invVisits.length} A4-fakturaer</h2><button class="pri" data-act="print">🖨 Udskriv</button></div>
+    ${invVisits.length ? '<p class="small mute noprint">Fakturaerne er til kunder med fakturatype "Papir". Fakturanummer tildeles, når fakturaen bogføres i e-conomic.</p>' : ''}
+    <div class="card sheet">${days.map((d) => daySheetHtml(d, byDay.get(d).sort((a, b) => route(a).name.localeCompare(route(b).name)))).join('')}${invVisits.map(invoiceHtml).join('')}</div>`;
 }
 /** Klik på en dag: ferie/fridag, dagsplan, flyt hele dagen. */
 function dayOptions(d) {
@@ -463,7 +499,7 @@ function ferieDialog(d) {
   ui._fe = { a: d, b: d, step: 1, month: d.slice(0, 7) };
   openDlg(`<h2>🏖 Ferie / fridag</h2><p class="small mute">Klik på første og sidste dag i perioden. Klik kun én gang for en enkelt dag.</p><div id="feCal"></div>
     <div class="grid"><label><span>Type</span><select name="label"><option>Ferie</option><option>Fridag</option><option>Lukket</option></select></label>
-    <label><span>Besøg i perioden</span><select name="mode"><option value="move">Flyt til første arbejdsdag efter perioden</option><option value="keep">Lad dem stå – jeg flytter dem selv</option></select></label></div>`,
+    <label><span>Besøg i perioden</span><select name="mode"><option value="move">Flyt til første arbejdsdag efter perioden</option><option value="shift">Flyt dem og forskyd alle fremtidige aftaler tilsvarende</option><option value="keep">Lad dem stå – jeg flytter dem selv</option></select></label></div>`,
   (f) => applyFerie(f.label, f.mode), 'Annuller');
   drawFerie();
 }
@@ -481,6 +517,8 @@ function applyFerie(label, mode) {
   for (let d = a; d <= b; d = D.addDays(d, 1)) { db.closedInfo[d] = { label }; if (!db.closedDays.includes(d)) { db.closedDays.push(d); n++; } }
   db.closedDays.sort();
   let moved = 0;
+  if (mode === 'shift') { const to = D.nextWorkday(D.addDays(b, 1), db.closedDays);
+    for (const v of db.visits.filter((x) => (x.status === 'planlagt' || x.status === 'udsat') && x.plannedDate >= a && x.plannedDate <= b)) { try { S.moveVisit(db, ui.user, v.id, to, 'shift'); moved++; } catch {} } }
   if (mode === 'move') { const to = D.nextWorkday(D.addDays(b, 1), db.closedDays);
     for (const v of db.visits) if ((v.status === 'planlagt' || v.status === 'udsat') && v.plannedDate >= a && v.plannedDate <= b) { v.history.push({ at: new Date().toISOString(), by: ui.user.id, action: 'flyttet', from: v.plannedDate, to, mode: 'ferie' }); v.plannedDate = to; moved++; } }
   S.audit(db, ui.user.id, 'calendar.closed', `${a}..${b}`, { label, moved });
@@ -496,6 +534,7 @@ function routeMenu(rid, day) {
       <button type="button" data-route="${rid}" data-day="${day}">✓ Færdigmeld</button>
       <button type="button" data-act="printRoute" data-r="${rid}" data-d="${day}">🖨 Udskriv rutesedel</button>
       <button type="button" data-act="rmMove">📅 Flyt ruten til anden dag …</button>
+      <button type="button" data-act="rmPart">✂ Flyt nogle kunder til anden dag …</button>
       <button type="button" data-act="rmSms">📱 SMS til kunderne på ruten</button>
       <button type="button" data-act="dayPlan" data-d="${day}">🗺 Dagsplan for dagen</button>
       <button type="button" data-act="rmSelect">☑ ${ui.calSel?.has(rid + '|' + day) ? 'Fravælg' : 'Vælg'} til samlet udskrift</button>
@@ -894,6 +933,7 @@ function admin() {
     <div class="card"><h2>Data & backup</h2><div class="row"><button data-act="backup">Download backup (JSON)</button><label class="btn">Gendan…<input type="file" id="restore" accept=".json" hidden></label><button data-act="planMore">Planlæg 6 mdr. frem</button><button class="bad" data-act="reset">Nulstil til testdata</button><button class="bad" data-act="wipe">Start tomt (til rigtige data)</button></div>
       <p class="small mute">Prototypen gemmer i denne browser (localStorage). ${db.customers.length} kunder · ${db.visits.length} besøg · ${db.audit.length} logposter.</p></div>
   </div>
+  <div class="card"><h2>Firma (bruges på A4-fakturaer)</h2><div class="grid">${[['name', 'Firmanavn', 'Sindal Vinduespolering'], ['address', 'Adresse', 'Vej 1, 9870 Sindal'], ['cvr', 'CVR', ''], ['phone', 'Telefon', ''], ['email', 'E-mail', ''], ['bank', 'Bank reg. og konto', '1234 1234567'], ['mobilepay', 'MobilePay-nr.', '']].map(([k, l, ph]) => `<label><span>${l}</span><input data-firm="${k}" value="${esc(db.settings.firm?.[k] || '')}" placeholder="${ph}"></label>`).join('')}</div></div>
   <div class="card"><h2>Kørsel og Google Maps</h2>
     <div class="grid"><label><span>Firmaets startadresse (her starter og slutter dagen)</span><input id="stAddr" value="${esc(db.settings.start?.address || '')}" placeholder="Vej 1, 9870 Sindal"></label>
       <label><span>Koordinater for startadresse (valgfrit, "57.47, 10.21" – højreklik i Google Maps)</span><input id="stLL" value="${db.settings.start?.lat != null ? db.settings.start.lat + ', ' + db.settings.start.lng : ''}"></label>
@@ -917,6 +957,7 @@ function admin() {
   document.getElementById('comMonth').onchange = (e) => { ui.comMonth = e.target.value; render(); };
   document.getElementById('comVat').onchange = (e) => { db.settings.commissionInclVat = e.target.checked; S.audit(db, ui.user.id, 'commission.vat', '-', { inclVat: e.target.checked }); render(); };
   $view.querySelectorAll('[data-rate]').forEach((i) => (i.onchange = () => { const v = Number(i.value); if (!(v >= 0 && v <= 100)) return toast('Ugyldig sats'); const e = emp(i.dataset.rate); e.commissionRate = v / 100; S.audit(db, ui.user.id, 'commission.rate', e.id, { rate: v }); render(); }));
+  $view.querySelectorAll('[data-firm]').forEach((x) => (x.onchange = () => { db.settings.firm ||= {}; db.settings.firm[x.dataset.firm] = x.value.trim(); save(); toast('Gemt'); }));
   const saveStart = () => { const ll = (document.getElementById('stLL').value.match(/(-?\d+(?:[.,]\d+)?)\s*[,; ]\s*(-?\d+(?:[.,]\d+)?)/) || []);
     db.settings.start = { address: document.getElementById('stAddr').value.trim(), lat: ll[1] ? +ll[1].replace(',', '.') : null, lng: ll[2] ? +ll[2].replace(',', '.') : null }; save(); toast('Startadresse gemt'); };
   document.getElementById('stAddr').onchange = saveStart; document.getElementById('stLL').onchange = saveStart;
@@ -947,6 +988,8 @@ function openDlg(html, onSubmit, closeLabel = 'Annuller') {
 document.addEventListener('click', async (e) => {
   const tab = e.target.closest('[data-tab]'); if (tab) { ui.tab = tab.dataset.tab; ui.customer = null; return render(); }
   const cu = e.target.closest('[data-cust]'); if (cu) { e.preventDefault(); document.getElementById('dlg').open && document.getElementById('dlg').close(); ui.tab = 'kunder'; ui.customer = cu.dataset.cust; return render(); }
+  const vsl = (e.ctrlKey || e.metaKey || e.shiftKey) && e.target.closest('.vline[data-visit]');
+  if (vsl) { e.preventDefault(); ui.visSel ||= new Set(); const id = vsl.dataset.visit; ui.visSel.has(id) ? ui.visSel.delete(id) : ui.visSel.add(id); return render(); }
   const rs = (e.ctrlKey || e.metaKey) && e.target.closest('.rblock[data-rsel]');
   if (rs) { e.preventDefault(); ui.calSel ||= new Set(); const k = rs.dataset.rsel; ui.calSel.has(k) ? ui.calSel.delete(k) : ui.calSel.add(k); return render(); }
   const blk = e.target.closest('.rblock[data-rsel]');
@@ -1044,6 +1087,13 @@ document.addEventListener('click', async (e) => {
         if (!confirm(`Fjern ${lbl ? lbl.toLowerCase() + ' ' : ''}${fmt(a)}${a !== z ? '–' + fmt(z) : ''}? Flyttede besøg flyttes ikke tilbage.`)) return;
         for (let x = a; x <= z; x = D.addDays(x, 1)) { db.closedDays = db.closedDays.filter((y) => y !== x); if (db.closedInfo) delete db.closedInfo[x]; }
         document.getElementById('dlg').close(); S.audit(db, ui.user.id, 'calendar.open', `${a}..${z}`); break; }
+      case 'moveSelVisits': { const vs2 = [...ui.visSel].map((x) => db.visits.find((v) => v.id === x)).filter(Boolean); ui.visSel = new Set(); return bulkDialog(vs2, `Flyt ${vs2.length} kunder`); }
+      case 'clearVisSel': ui.visSel = new Set(); break;
+      case 'rmPart': { const { rid, day } = ui._rm; const vs2 = routeStops(rid, day).filter((v) => v.status === 'planlagt' || v.status === 'udsat');
+        return openDlg(`<h2>Flyt nogle kunder fra ${esc(route(rid).name)} ${fmt(day)}</h2><p class="small mute">Kun denne gang: kundernes plads i ruten og rytmen fremover ændres ikke.</p>
+          ${vs2.map((v) => `<label class="chk"><input type="checkbox" name="v_${v.id}"> ${esc(cust(v.customerId).name)} <span class="small mute">${esc(addr(v.addressId)?.street)}</span></label>`).join('')}
+          <label><span>Ny dato</span><input type="date" name="date" required value="${D.nextWorkday(D.addDays(day, 1), db.closedDays)}"></label>`,
+          (f) => { const pick = vs2.filter((v) => f['v_' + v.id]); if (!pick.length) return 'Vælg mindst én kunde'; for (const v of pick) S.moveVisit(db, ui.user, v.id, f.date, 'keep'); toast(`${pick.length} kunder flyttet til ${fmt(f.date)} (kun denne gang)`); }); }
       case 'routeMenu': return routeMenu(b.dataset.r, b.dataset.d);
       case 'rmMove': { const { rid, day } = ui._rm; document.getElementById('dlg').close(); return bulkDialog(db.visits.filter((v) => v.routeId === rid && v.plannedDate === day), `Flyt ${route(rid).name} ${fmt(day)}`); }
       case 'rmSms': { const { rid, day } = ui._rm; document.getElementById('dlg').close(); return smsListDialog(db.visits.filter((v) => v.routeId === rid && v.plannedDate === day && v.status === 'planlagt'), null, `SMS til ${route(rid).name} ${fmt(day)}`, 'Hej {navn}. Vi kommer og pudser dine vinduer {dato}. Svar på denne SMS hvis det ikke passer. Mvh. Sindal Vinduespolering'); }
