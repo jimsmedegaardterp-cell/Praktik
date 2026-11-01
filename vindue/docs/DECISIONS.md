@@ -80,3 +80,4 @@
 | 77 | 2026-11-01 | Firmaoplysninger til faktura under Admin | Behov for A4-faktura |
 | 78 | 2026-11-01 | Ferie/fridag: også "flyt og forskyd alle fremtidige aftaler" | Ejers ønske |
 | 79 | 2026-11-01 | Flyt dele af en rute kun denne gang: Ctrl+klik kunder og træk, eller rutemenu "Flyt nogle kunder"; plads i ruten og rytme uændret. Hele ruten kan trækkes i overskrift eller kant | Ejers ønske |
+| 80 | 2026-11-01 | A4-fakturaer i udskrift slået fra (settings.printInvoices) indtil e-conomic leverer fakturanumre; appen bruges kun til test indtil alt er integreret | Ejers svar |
