@@ -7,7 +7,7 @@ import * as I from './import.js';
 import * as G from './gdpr.js';
 import * as SD from './stamdata.js';
 
-export const VERSION = '2026-11-01 #10';
+export const VERSION = '2026-11-01 #11';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = load();
@@ -732,8 +732,8 @@ document.addEventListener('click', async (e) => {
         if (!n && !nu && !nr) return toast('Intet at importere'); if (!confirm(`Importér ${n} nye kunder${nu ? `, sæt rute på ${nu} eksisterende kunder` : ''}${nr ? ` og opret ${nr} ruter` : ''}?`)) return;
         const batchId = S.uid('imp'); const rids = st.plan.newRoutes ? SD.materializeRoutes(db, st.plan, { uid: S.uid, today: todayIso(), employeeId: db.employees[0].id, batchId }) : {};
         const c = I.applyImportPlan(db, st.plan, { batchId, uid: S.uid, includeDuplicates: !!st.includeDup, horizon: D.addDays(todayIso(), 120), today: todayIso() });
-        const upd = st.plan.routeUpdates ? SD.applyRouteUpdates(db, st.plan, rids) : 0;
-        if (st.plan.routeOrder) SD.applyRouteOrder(db, st.plan, rids, batchId);
+        const upd = st.plan.routeUpdates ? SD.applyRouteUpdates(db, st.plan, rids, S.uid) : 0;
+        if (st.plan.routeOrder) SD.applyRouteOrder(db, st.plan, rids);
         if (upd) setTimeout(() => toast(`${c.customers} nye kunder · ${upd} eksisterende aftaler har fået rute · ${Object.keys(rids).length} ruter oprettet`), 50);
         S.audit(db, ui.user.id, 'import.apply', batchId, { file: st.fileName, ...c, routes: Object.keys(rids).length }); ui.imp = null; toast(`${c.customers} kunder, ${c.agreements} aftaler, ${c.visits} besøg importeret`); break; }
       case 'impUndo': if (!confirm('Fortryd importen? Alle kunder fra den slettes.')) return; I.rollbackImport(db, id); S.audit(db, ui.user.id, 'import.rollback', id); toast('Import fortrudt'); break;

@@ -85,7 +85,7 @@ test('stamdata + ruteoversigt → ny rute, rækkefølge, kunder kun i ruteoversi
   const ny = plan.customers.find((c) => c.name === 'Ny Rutekunde'); assert.equal(ny.addresses[0].agreements[0].routeId, rid); assert.equal(ny.addresses[0].agreements[0].anchorDate, '2026-12-15');
   const karin = plan.customers.find((c) => c.name === 'Karin Test'); assert.equal(karin.addresses[0].agreements[1].routeId, null, '"Ikke fast" får ingen rute');
   I.applyImportPlan(db, plan, { batchId: 'b', uid, horizon: '2027-03-01', today: '2026-11-02' });
-  SD.applyRouteOrder(db, plan, ids, 'b');
+  SD.applyRouteOrder(db, plan, ids);
   const order = route.order.map((aid) => db.customers.find((c) => c.id === db.addresses.find((a) => a.id === aid).customerId).name);
   assert.deepEqual(order, ['Karin Test', 'Ny Rutekunde', 'Hans Prøvesen']);
   I.rollbackImport(db, 'b'); assert.ok(!db.routes.some((r) => r.id === rid), 'ruten fjernes ved fortryd');
@@ -102,7 +102,7 @@ test('ruteoversigt importeret EFTER kunderne sætter rute + rækkefølge på eks
   assert.equal(p2.newRoutes[0].anchorDate, '2026-12-15');
   const ids = SD.materializeRoutes(db, p2, { uid, today: '2026-11-02', employeeId: 'e1', batchId: 'b' });
   I.applyImportPlan(db, p2, { batchId: 'b', uid, horizon: '2027-03-01', today: '2026-11-02' });
-  assert.equal(SD.applyRouteUpdates(db, p2, ids), 2); SD.applyRouteOrder(db, p2, ids, 'b');
+  assert.equal(SD.applyRouteUpdates(db, p2, ids), 2); SD.applyRouteOrder(db, p2, ids);
   const rid = ids['new:Bindslev 2']; const r = db.routes.find((x) => x.id === rid);
   const karin = db.customers.find((c) => c.name === 'Karin Test');
   assert.equal(db.agreements.filter((g) => g.customerId === karin.id && g.intervalWeeks).every((g) => g.routeId === rid), true);
@@ -123,7 +123,7 @@ test('reparation: tomme ruter fra tidligere import får rytme, dato og kunder; r
   const ids = SD.materializeRoutes(db, p2, { uid, today: '2026-11-02', employeeId: 'e1', batchId: 'b' });
   assert.equal(db.routes[0].anchorDate, '2026-12-15');
   I.applyImportPlan(db, p2, { batchId: 'b', uid, horizon: '2027-03-01', today: '2026-11-02' });
-  SD.applyRouteUpdates(db, p2, ids); SD.applyRouteOrder(db, p2, ids, 'b');
+  SD.applyRouteUpdates(db, p2, ids); SD.applyRouteOrder(db, p2, ids);
   assert.equal(db.routes[0].order.length, 3);
   assert.equal(db.agreements.filter((g) => g.routeId === 'old').length, 4); // Karin 1 + Hans 1 + ny rutekunde 2
 });
@@ -144,4 +144,50 @@ test('lang aftalebeskrivelse lander ikke i interval-kolonnen', () => {
   const [c] = SD.parseStamdataItems(base);
   assert.equal(c.agreements.length, 1); assert.equal(c.agreements[0].interval, 'Hver 8. uge');
   assert.match(c.agreements[0].service, /^Den ene side af laden.*stige$/);
+});
+
+// En kunde med aftaler på to ruter (som Inge Sørensen) og en kunde med aftale på anden adresse (som Esther Volhøj)
+const ovT = (title, rows) => { const it = [t(1, 556, 168.8, `Komplet ruteoversigt for "${title}" (udskrevet fra SkvizBiz den 01/11-2026)`), ...RH.map(([s, x]) => t(1, 529.6, x, s))]; let y = 515.9;
+  for (const r of rows) { it.push(t(1, y, 40.9, String(r.nr)), t(1, y, 51, r.name), t(1, y, 164.4, r.street), t(1, y, 277.8, r.zip), t(1, y, 377, '20112233'));
+    r.agr.forEach(([s, iv, pr, ti], i) => { const yy = y - 0.3 - i * 11.6; it.push(t(1, yy, 532.9, s), t(1, yy, 660.5, iv), { str: pr, x: 773.9 - pr.length * 4.1, y: yy, w: pr.length * 4.1, page: 1 }, { str: ti, x: 790.7, y: yy, w: 20, page: 1 }); });
+    y -= 11.6 * Math.max(r.agr.length, 1); }
+  return { ...SD.parseRouteOverviewItems(it), fileName: title + '.pdf' }; };
+const STAM2 = [...kunde(1, 763, '00000009', 'Inge Prøve', ['Skovvej 31', '9800 Hjørring'], ['Alt på huset'], [['Vinduesvask', 'Hver 4. uge', '07/12-2026', 'kr. 180,00', '0:15'], ['Tagrenderens', 'Hver 52. uge', '08/12-2026', 'kr. 200,00', '0:20']]),
+  ...kunde(1, 560, '00000005', 'Esther Test', ['Bakken 38', '9881 Bindslev'], [], [['Vinduesvask', 'Hver 4. uge', '09/12-2026', 'kr. 276,00', '0:13'], ['Vinduesvask Doravej 5', 'Hver 4. uge', '09/12-2026', 'kr. 232,00', '0:13']])];
+const OV_H = ovT('Hjørring', [{ nr: 1, name: 'Inge Prøve', street: 'Skovvej 31', zip: '9800 Hjørring', agr: [['Vinduesvask', 'Hver 4. uge', '180,00', '00:15']] }]);
+const OV_T = ovT('Tagrenderens', [{ nr: 1, name: 'Inge Prøve', street: 'Skovvej 31', zip: '9800 Hjørring', agr: [['Tagrenderens', 'Hver 52. uge', '200,00', '00:20']] }]);
+const OV_B = ovT('Bindslev 2', [{ nr: 1, name: 'Esther Test', street: 'Bakken 38', zip: '9881 Bindslev', agr: [['Vinduesvask', 'Hver 4. uge', '276,00', '00:13']] },
+  { nr: 2, name: 'Esther Test', street: 'Doravej 5', zip: '9881 Bindslev', agr: [['Vinduesvask Doravej 5', 'Hver 4. uge', '232,00', '00:13']] }]);
+
+test('aftaler kobles til hver sin rute; aftale på anden adresse flyttes dertil', () => {
+  const db = seedDb('2026-11-02'); db.customers = []; db.addresses = []; db.agreements = []; db.visits = []; db.routes = [];
+  const plan = SD.buildSkvizPlan([{ fileName: 'alle.pdf', routeId: '', customers: SD.parseStamdataItems(STAM2) }], null, db, { today: '2026-11-02' });
+  SD.addRouteOverviews(plan, [OV_T, OV_H, OV_B], db, { today: '2026-11-02' }); // bemærk: Tagrenderens læses før Hjørring
+  assert.equal(plan.customers.length, 2, 'ingen dubletter');
+  const ids = SD.materializeRoutes(db, plan, { uid, today: '2026-11-02', employeeId: 'e1', batchId: 'x' });
+  I.applyImportPlan(db, plan, { batchId: 'x', uid, horizon: '2027-03-01', today: '2026-11-02' }); SD.applyRouteOrder(db, plan, ids);
+  const rn = (id) => db.routes.find((r) => r.id === id)?.name;
+  const inge = db.customers.find((c) => c.name === 'Inge Prøve'); const ia = db.agreements.filter((g) => g.customerId === inge.id);
+  assert.deepEqual(ia.map((g) => [g.service, rn(g.routeId)]), [['Vinduesvask', 'Hjørring'], ['Tagrenderens', 'Tagrenderens']]);
+  const est = db.customers.find((c) => c.name === 'Esther Test'); const ads = db.addresses.filter((a) => a.customerId === est.id);
+  assert.equal(ads.length, 2); assert.match(ads[1].street, /^Doravej 5/);
+  const dora = db.agreements.find((g) => g.service === 'Vinduesvask Doravej 5'); assert.equal(dora.addressId, ads[1].id); assert.equal(rn(dora.routeId), 'Bindslev 2');
+  assert.ok(db.visits.filter((v) => v.agreementId === dora.id).every((v) => v.addressId === ads[1].id));
+  const b2 = db.routes.find((r) => r.name === 'Bindslev 2'); assert.deepEqual(b2.order, [ads[0].id, ads[1].id]);
+  assert.ok(db.visits.some((v) => v.customerId === inge.id && v.plannedDate === '2026-12-07' && rn(v.routeId) === 'Hjørring'));
+});
+
+test('samme rettelse når ruteoversigter importeres efter kunderne', () => {
+  const db = seedDb('2026-11-02'); db.customers = []; db.addresses = []; db.agreements = []; db.visits = []; db.routes = [];
+  const p1 = SD.buildSkvizPlan([{ fileName: 'alle.pdf', routeId: '', customers: SD.parseStamdataItems(STAM2) }], null, db, { today: '2026-11-02' });
+  I.applyImportPlan(db, p1, { batchId: 'a', uid, horizon: '2027-03-01', today: '2026-11-02' });
+  const p2 = SD.buildSkvizPlan([], null, db, { today: '2026-11-02' }); SD.addRouteOverviews(p2, [OV_T, OV_H, OV_B], db, { today: '2026-11-02' });
+  assert.equal(p2.customers.length, 0);
+  const ids = SD.materializeRoutes(db, p2, { uid, today: '2026-11-02', employeeId: 'e1', batchId: 'b' });
+  SD.applyRouteUpdates(db, p2, ids, uid); SD.applyRouteOrder(db, p2, ids);
+  const rn = (id) => db.routes.find((r) => r.id === id)?.name;
+  assert.equal(rn(db.agreements.find((g) => g.service === 'Vinduesvask' && g.price === 180).routeId), 'Hjørring');
+  assert.equal(rn(db.agreements.find((g) => g.service === 'Tagrenderens').routeId), 'Tagrenderens');
+  const dora = db.agreements.find((g) => g.service === 'Vinduesvask Doravej 5');
+  assert.match(db.addresses.find((a) => a.id === dora.addressId).street, /^Doravej 5/); assert.equal(rn(dora.routeId), 'Bindslev 2');
 });

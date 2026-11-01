@@ -131,10 +131,10 @@ export function applyImportPlan(db, plan, { batchId, uid, includeDuplicates = fa
     if (!pc.name) continue;
     const c = { id: uid('c'), name: pc.name, phone: pc.phone, email: pc.email, notes: pc.notes, paymentTerms: 'Netto 8 dage', paymentMethod: pc.paymentMethod,
       vatLiable: true, marketingConsent: false, skvizbizId: pc.extId || null, ...(pc.extra || {}), importBatch: batchId };
-    db.customers.push(c); counts.customers++;
+    db.customers.push(c); counts.customers++; pc._id = c.id;
     for (const pa of pc.addresses) {
       const a = { id: uid('adr'), customerId: c.id, street: pa.street, access: pa.access, lat: pa.lat ?? null, lng: pa.lng ?? null, importBatch: batchId };
-      db.addresses.push(a); counts.addresses++;
+      db.addresses.push(a); counts.addresses++; pa._id = a.id;
       for (const g of pa.agreements) {
         const ag = { id: uid('ag'), customerId: c.id, addressId: a.id, routeId: g.routeId, service: g.service, price: g.price, intervalWeeks: g.intervalWeeks, durationMin: g.durationMin,
           anchorDate: g.anchorDate, seasonMonths: [], active: true, importBatch: batchId };
