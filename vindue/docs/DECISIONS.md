@@ -46,3 +46,4 @@
 | 43 | 2026-11-01 | Nye ruter fra import: rytme = mindste interval på ruten, dato = tidligste "næste gang" blandt rutens kunder; fjernes igen ved fortryd | Afledt af data, kan rettes under Admin |
 | 44 | 2026-11-01 | "Start tomt (til rigtige data)" sletter testdata; topbjælken viser om appen kører på testdata eller rigtige data | Undgå blanding af test- og rigtige kunder |
 | 45 | 2026-11-01 | Brugere i topbjælken = appens medarbejdere (ikke hårdkodet); medarbejdere oprettes/omdøbes/fjernes under Admin; mindst én admin; fjernede beholdes til historik/provision | "Mads" var testdata og var låst fast |
+| 46 | 2026-11-01 | Ruteoversigter kan importeres efter kunderne: eksisterende kunder (navn + adresse) får rute på faste aftaler og planlagte besøg samt rækkefølge | Ejer importerede kunder uden ruter |

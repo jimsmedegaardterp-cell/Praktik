@@ -90,3 +90,22 @@ test('stamdata + ruteoversigt → ny rute, rækkefølge, kunder kun i ruteoversi
   assert.deepEqual(order, ['Karin Test', 'Ny Rutekunde', 'Hans Prøvesen']);
   I.rollbackImport(db, 'b'); assert.ok(!db.routes.some((r) => r.id === rid), 'ruten fjernes ved fortryd');
 });
+
+test('ruteoversigt importeret EFTER kunderne sætter rute + rækkefølge på eksisterende kunder', () => {
+  const db = seedDb('2026-11-02'); db.customers = []; db.addresses = []; db.agreements = []; db.visits = []; db.routes = [];
+  const p1 = SD.buildSkvizPlan([{ fileName: 'alle.pdf', routeId: '', customers: SD.parseStamdataItems(ITEMS) }], null, db, { today: '2026-11-02' });
+  I.applyImportPlan(db, p1, { batchId: 'a', uid, horizon: '2027-03-01', today: '2026-11-02' });
+  assert.ok(db.agreements.every((g) => !g.routeId));
+  const p2 = SD.buildSkvizPlan([], null, db, { today: '2026-11-02' });
+  SD.addRouteOverviews(p2, [{ ...SD.parseRouteOverviewItems(OV), fileName: 'r.pdf' }], db, { today: '2026-11-02' });
+  assert.equal(p2.routeUpdates.length, 2, 'Karin + Hans findes allerede'); assert.equal(p2.customers.length, 1, 'kun den nye rutekunde');
+  assert.equal(p2.newRoutes[0].anchorDate, '2026-12-15');
+  const ids = SD.materializeRoutes(db, p2, { uid, today: '2026-11-02', employeeId: 'e1', batchId: 'b' });
+  I.applyImportPlan(db, p2, { batchId: 'b', uid, horizon: '2027-03-01', today: '2026-11-02' });
+  assert.equal(SD.applyRouteUpdates(db, p2, ids), 2); SD.applyRouteOrder(db, p2, ids, 'b');
+  const rid = ids['new:Bindslev 2']; const r = db.routes.find((x) => x.id === rid);
+  const karin = db.customers.find((c) => c.name === 'Karin Test');
+  assert.equal(db.agreements.filter((g) => g.customerId === karin.id && g.intervalWeeks).every((g) => g.routeId === rid), true);
+  assert.ok(db.visits.filter((v) => v.customerId === karin.id && v.status === 'planlagt' && v.agreementId === db.agreements.find((g) => g.customerId === karin.id && g.intervalWeeks).id).every((v) => v.routeId === rid));
+  assert.deepEqual(r.order.map((aid) => db.customers.find((c) => c.id === db.addresses.find((a) => a.id === aid).customerId).name), ['Karin Test', 'Ny Rutekunde', 'Hans Prøvesen']);
+});
