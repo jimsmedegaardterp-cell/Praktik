@@ -7,7 +7,7 @@ import * as I from './import.js';
 import * as G from './gdpr.js';
 import * as SD from './stamdata.js';
 
-export const VERSION = '2026-11-01 #9';
+export const VERSION = '2026-11-01 #10';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = load();
@@ -550,7 +550,11 @@ function importView() {
         <td>${c.addresses[0].agreements.map((g) => `${esc(g.service)} · ${kr(g.price)} · ${agrDesc(g)}${g.intervalWeeks ? ' · ' + (g.anchorDate ? fmt(g.anchorDate) : 'rutens næste dato') : ''} · ${g.durationMin} min${g.routeId ? ' · ' + esc(route(g.routeId)?.name) : g.routeRef?.startsWith('new:') ? ' · ' + esc(g.routeRef.slice(4)) + ' (ny)' : ''}`).join('<br>') || '<span class="mute">–</span>'}</td><td>${esc(INVTYPE[c.extra.invoiceType])}${c.paymentMethod === 'kontant' ? ' 💰' : ''}</td></tr>`).join('')}</table></div>
       <div class="row" style="margin-top:10px"><button class="pri" data-act="impApply">Importér</button><button data-act="impCancel">Annuller</button></div></div>`;
   } else if (st?.gdpr) {
-    const plan = G.buildGdprPlan(st.files, db, { today: todayIso() }); st.plan = plan;
+    const plan = G.buildGdprPlan(st.files, db, { today: todayIso() }); st.plan = plan; st.updates = G.gdprUpdates(plan, db);
+    const newOnes = plan.customers.filter((c) => !c.dupeOf).length;
+    if (db.customers.length) html += `<div class="card"><h2>Opdatér eksisterende kunder</h2><p><b>${st.updates.length}</b> af dine kunder får oplysninger fra GDPR-udtrækket (fakturatype, EAN, SMS før/efter, ring før, kontant, kort-koordinater, manglende tlf./e-mail). Navn, adresse, aftaler og ruter røres ikke.</p>
+      <p class="small">${newOnes ? `<label><input type="checkbox" id="impNew" ${st.includeNew ? 'checked' : ''}> Opret også ${newOnes} kunder, der ikke findes i appen</label>` : 'Alle kunder i udtrækket findes allerede i appen.'}</p>
+      <div class="row"><button class="pri" data-act="gdprUpdate">Opdatér ${st.updates.length} kunder${st.includeNew && newOnes ? ` + opret ${newOnes}` : ''}</button><button data-act="impCancel">Annuller</button></div></div>`;
     const nAgr = plan.customers.reduce((s, c) => s + c.addresses[0].agreements.length, 0); const noAgr = plan.customers.filter((c) => !c.addresses[0].agreements.length).length;
     html += `<div class="card"><h2>Forhåndsvisning – ${esc(st.fileName)}</h2>
       <p><b>${plan.customers.length}</b> kunder · <b>${nAgr}</b> aftaler${noAgr ? ` · <span style="color:var(--warn)">${noAgr} uden aftale</span>` : ''}${plan.skipped ? ` · ${plan.skipped} slettede sprunget over` : ''}</p>
@@ -602,6 +606,7 @@ function importView() {
     try { await loadGdpr(await Promise.all(fs.map(async (f) => ({ name: (f.webkitRelativePath || f.name).split('/').slice(-2, -1)[0] || f.name, json: await f.text() }))), 'mappe'); } catch (err) { toast(err.message); } };
   $view.querySelectorAll('[data-map]').forEach((sl) => (sl.onchange = () => { if (sl.value === '') delete st.mapping[sl.dataset.map]; else st.mapping[sl.dataset.map] = +sl.value; render(); }));
   const ir = document.getElementById('impRoute'); if (ir) ir.onchange = () => { st.route = ir.value; render(); };
+  const nw = document.getElementById('impNew'); if (nw) nw.onchange = () => { st.includeNew = nw.checked; render(); };
   const dp = document.getElementById('impDup'); if (dp) dp.onchange = () => { st.includeDup = dp.checked; render(); };
 }
 
@@ -710,6 +715,12 @@ document.addEventListener('click', async (e) => {
         const csv = [...rows, [], ...detail].map((r) => r.map((c) => `"${String(c ?? '').replace(/"/g, '""')}"`).join(';')).join('\r\n');
         const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv' })); a.download = `loengrundlag-${mon}.csv`; a.click(); S.audit(db, ui.user.id, 'commission.export', mon); return; }
       case 'impCancel': ui.imp = null; break;
+      case 'gdprUpdate': { const st = ui.imp; if (!confirm(`Opdatér ${st.updates.length} kunder med oplysninger fra GDPR-udtrækket?`)) return;
+        const backup = st.updates.map((u) => ({ id: u.customerId, before: Object.fromEntries(Object.keys(u.set).map((k) => [k, db.customers.find((c) => c.id === u.customerId)[k]])) }));
+        const n = G.applyGdprUpdates(db, st.updates); let made = 0;
+        if (st.includeNew) { const batchId = S.uid('imp'); made = I.applyImportPlan(db, { ...st.plan, customers: st.plan.customers.filter((c) => !c.dupeOf) }, { batchId, uid: S.uid, horizon: D.addDays(todayIso(), 120), today: todayIso() }).customers; }
+        S.audit(db, ui.user.id, 'import.gdprUpdate', '-', { updated: n, created: made, backup: backup.length }); (db.gdprBackups ||= []).push({ at: new Date().toISOString(), backup });
+        ui.imp = null; toast(`${n} kunder opdateret${made ? `, ${made} oprettet` : ''}`); break; }
       case 'stRemove': ui.imp.stams.splice(+b.dataset.i, 1); if (!ui.imp.stams.length && !ui.imp.overviews?.length) ui.imp = null; break;
       case 'ovRemove': ui.imp.overviews.splice(+b.dataset.i, 1); if (!ui.imp.stams.length && !ui.imp.overviews.length) ui.imp = null; break;
       case 'impMakeRoutes': { const pl = ui.imp.plan; let n = 0;
