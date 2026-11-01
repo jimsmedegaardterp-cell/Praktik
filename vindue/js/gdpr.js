@@ -97,7 +97,7 @@ export function buildGdprPlan(files, db, { today }) {
     const lat = Number(pick(o, 'lat')), lng = Number(pick(o, 'lon', 'lng'));
     const c = { line, extId, name: nameV || '', phone: phone ? String(phone) : '', email: pick(o, 'email_address', 'email') || '', notes: pick(o, 'internal_note', 'note', 'notes', 'comment') || '',
       paymentMethod: yes(o.cash_payment) ? 'kontant' : 'bank', dupeOf: dupe?.id || null,
-      extra: { customerNo: extId, skvizbizId: extId, skvizId: pick(o, 'id'), group: `Gruppe ${pick(o, 'customer_group_id') ?? '?'}`, ean: pick(o, 'ean_number'), invoiceType: media,
+      extra: { customerNo: extId, skvizbizId: extId, skvizId: pick(o, 'id'), billingSkvizId: pick(o, 'billing_id'), group: `Gruppe ${pick(o, 'customer_group_id') ?? '?'}`, ean: pick(o, 'ean_number'), invoiceType: media,
         invoiceInterval: /month|maaned|måned/.test(freq) ? 'maaned' : 'besoeg', paymentDays: Number(pick(o, 'payment_2')) || 8, paymentTerms: `Netto ${Number(pick(o, 'payment_2')) || 8} dage`,
         callBefore: yes(o.call_first), smsBefore: yes(o.sms_first), smsAfter: yes(o.sms_after), cvr: pick(o, 'cvr', 'cvr_number', 'vat_number') || '', contact: pick(o, 'contact', 'contact_person') || '',
         blocked: !!pick(o, 'timestamp_blocked'), createdAt: tsToIso(pick(o, 'timestamp_created')), rememberNext: pick(o, 'remember_next') || '',
@@ -122,7 +122,7 @@ export function gdprUpdates(plan, db) {
   for (const pc of plan.customers) {
     const c = pc.extId && byNo.get(pc.extId); if (!c) continue;
     const set = {}; const x = pc.extra;
-    const want = { invoiceType: x.invoiceType, invoiceInterval: x.invoiceInterval, smsBefore: x.smsBefore, smsAfter: x.smsAfter, callBefore: x.callBefore, paymentDays: x.paymentDays, paymentTerms: x.paymentTerms, blocked: x.blocked, skvizId: x.skvizId };
+    const want = { billingSkvizId: x.billingSkvizId ?? undefined, invoiceType: x.invoiceType, invoiceInterval: x.invoiceInterval, smsBefore: x.smsBefore, smsAfter: x.smsAfter, callBefore: x.callBefore, paymentDays: x.paymentDays, paymentTerms: x.paymentTerms, blocked: x.blocked, skvizId: x.skvizId };
     if (x.ean) want.ean = x.ean; if (x.cvr) want.cvr = x.cvr; if (x.createdAt) want.createdAt = x.createdAt;
     if (pc.paymentMethod === 'kontant') want.paymentMethod = 'kontant';
     if (!c.phone && pc.phone) want.phone = pc.phone; if (!c.email && pc.email) want.email = pc.email;
@@ -140,4 +140,19 @@ export function applyGdprUpdates(db, ups) {
     if (u.geo) { const a = db.addresses.find((x) => x.id === u.geo.addressId); if (a) Object.assign(a, { lat: u.geo.lat, lng: u.geo.lng }); }
   }
   return ups.length;
+}
+
+/**
+ * "Faktureres gennem en anden konto": SkvizBiz' billing_id peger på betalerens interne id.
+ * Sætter c.billTo = betalerens kunde-id i appen. Returnerer { linked, missing }.
+ */
+export function resolveBillTo(db) {
+  const bySkviz = new Map(db.customers.filter((c) => c.skvizId != null).map((c) => [String(c.skvizId), c]));
+  let linked = 0; const missing = [];
+  for (const c of db.customers) {
+    if (c.billingSkvizId == null || c.billingSkvizId === '' || String(c.billingSkvizId) === String(c.skvizId)) { delete c.billTo; continue; }
+    const payer = bySkviz.get(String(c.billingSkvizId));
+    if (payer && payer.id !== c.id) { c.billTo = payer.id; linked++; } else { delete c.billTo; missing.push(c.name); }
+  }
+  return { linked, missing };
 }
