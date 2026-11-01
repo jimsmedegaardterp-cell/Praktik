@@ -159,6 +159,7 @@ export function rollbackImport(db, batchId) {
   db.agreements = db.agreements.filter((a) => a.importBatch !== batchId);
   db.addresses = db.addresses.filter((a) => a.importBatch !== batchId);
   db.customers = db.customers.filter((c) => c.importBatch !== batchId);
+  db.routes = db.routes.filter((r) => r.importBatch !== batchId || db.agreements.some((a) => a.routeId === r.id));
   const b = db.imports.find((x) => x.batchId === batchId); if (b) b.rolledBack = new Date().toISOString();
 }
 

@@ -42,3 +42,6 @@
 | 39 | 2026-11-01 | Primær import = SkvizBiz' "Stamdata for valgte kunder"-PDF (én pr. rute, filtreret på rute i kundelisten) + valgfrit GDPR-zip koblet på kundenr. | Stamdata har aftaler (interval, næste gang, pris, tid), telefon og noter; GDPR har fakturatype, EAN, SMS-indstillinger, koordinater |
 | 40 | 2026-11-01 | "Noter" i stamdata → "Husk hver gang" på adressen (udskrives på ruten) | Samme tekst som "Husk hver gang" i kundekortet |
 | 41 | 2026-11-01 | Flere aftaler på samme kunde lægges på leveringsadressen med advarsel | PDF'en angiver ikke adresse pr. aftale |
+| 42 | 2026-11-01 | Ruteoversigt-PDF pr. rute ("Komplet ruteoversigt for …") giver rute + fast rækkefølge; kobles til stamdata på navn + adresse | Stamdata mangler rute; ruteoversigt mangler kundenr. og næste dato |
+| 43 | 2026-11-01 | Nye ruter fra import: rytme = mindste interval på ruten, dato = tidligste "næste gang" blandt rutens kunder; fjernes igen ved fortryd | Afledt af data, kan rettes under Admin |
+| 44 | 2026-11-01 | "Start tomt (til rigtige data)" sletter testdata; topbjælken viser om appen kører på testdata eller rigtige data | Undgå blanding af test- og rigtige kunder |

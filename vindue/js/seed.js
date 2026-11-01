@@ -2,6 +2,20 @@
 import { emptyDb, planAhead, uid } from './services.js';
 import { addDays, weekday, nextRouteDate } from './domain.js';
 
+export const DEFAULT_TEMPLATES = {
+  varsel: 'Hej {navn}. Vi kommer og pudser dine vinduer i morgen ({dato}). Svar på denne SMS hvis det ikke passer. Mvh. Sindal Vinduespolering',
+  forsinket: 'Hej {navn}. Vi er lidt forsinket i dag og forventer at være hos dig ca. kl. {tid}. Mvh. Sindal Vinduespolering',
+  aflyst: 'Hej {navn}. Vi må desværre flytte besøget {dato}. Vi kommer i stedet {nydato}. Mvh. Sindal Vinduespolering',
+};
+/** Tom database til rigtige data: kun ejeren som bruger, ingen kunder/ruter. */
+export function freshDb() {
+  const db = emptyDb();
+  db.employees = [{ id: 'e1', name: 'Jim (ejer)', role: 'admin', commissionRate: 0 }];
+  db.templates = { ...DEFAULT_TEMPLATES };
+  db.settings.realData = true;
+  return db;
+}
+
 export function seedDb(todayIso) {
   const db = emptyDb();
   db.employees = [
