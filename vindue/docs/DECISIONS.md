@@ -35,3 +35,13 @@
 | 32 | 2026-11-01 | pdf.js 3.11.174 (Apache-2.0) ligger i `vendor/` og hentes kun ved import | Ingen CDN-afhængighed, virker uden ekstern adgang |
 | 33 | 2026-11-01 | Kundefelter som SkvizBiz: kundegruppe, fastnet, CVR, kontaktperson, fakturatype, fakturainterval, betalingsdage, ring/SMS før, SMS efter, husk hver gang (adresse), husk næste gang (engangsnote, slettes ved færdigmelding), internt notat | Ejerens screenshots |
 | 34 | 2026-11-01 | "SMS før besøg"-listen viser kun kunder med SMS før besøg = Ja | Som i SkvizBiz |
+| 35 | 2026-11-01 | Import af SkvizBiz' GDPR-udtræk (zip eller udpakket mappe): kun `data.json` pr. kunde læses, i browseren, med egen zip-læser (ingen afhængighed) | Bedste datakilde; PDF-fakturaer ligger i e-conomic/arkiv |
+| 36 | 2026-11-01 | Felter som `portal_password`, `cache_*` og lignende læses aldrig | Dataminimering/sikkerhed |
+| 37 | 2026-11-01 | Aftaler findes ved at lede efter lister med interval/pris/næste/rute – feltnavne SKAL VERIFICERES; forhåndsvisningen viser ukendte felter og hvor aftaler blev fundet | Kun ét eksempel set |
+| 38 | 2026-11-01 | Ruter fra udtrækket, der ikke findes i appen, kan oprettes med ét klik (rytme = mindste interval, dato = tidligste næste gang) | Hurtig start |
+| 39 | 2026-11-01 | Primær import = SkvizBiz' "Stamdata for valgte kunder"-PDF (én pr. rute, filtreret på rute i kundelisten) + valgfrit GDPR-zip koblet på kundenr. | Stamdata har aftaler (interval, næste gang, pris, tid), telefon og noter; GDPR har fakturatype, EAN, SMS-indstillinger, koordinater |
+| 40 | 2026-11-01 | "Noter" i stamdata → "Husk hver gang" på adressen (udskrives på ruten) | Samme tekst som "Husk hver gang" i kundekortet |
+| 41 | 2026-11-01 | Flere aftaler på samme kunde lægges på leveringsadressen med advarsel | PDF'en angiver ikke adresse pr. aftale |
+| 42 | 2026-11-01 | Ruteoversigt-PDF pr. rute ("Komplet ruteoversigt for …") giver rute + fast rækkefølge; kobles til stamdata på navn + adresse | Stamdata mangler rute; ruteoversigt mangler kundenr. og næste dato |
+| 43 | 2026-11-01 | Nye ruter fra import: rytme = mindste interval på ruten, dato = tidligste "næste gang" blandt rutens kunder; fjernes igen ved fortryd | Afledt af data, kan rettes under Admin |
+| 44 | 2026-11-01 | "Start tomt (til rigtige data)" sletter testdata; topbjælken viser om appen kører på testdata eller rigtige data | Undgå blanding af test- og rigtige kunder |

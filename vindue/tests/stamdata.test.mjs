@@ -1,0 +1,92 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as SD from '../js/stamdata.js';
+import * as G from '../js/gdpr.js';
+import * as I from '../js/import.js';
+import { seedDb } from '../js/seed.js';
+import { uid } from '../js/services.js';
+
+// Opdigtede kunder, men samme positioner som SkvizBiz' stamdata-PDF
+const L = 59.5, R = 314.6;
+const t = (page, y, x, str) => ({ str, x, y, w: str.length * 4.6, page });
+const kunde = (page, y0, no, name, extra, notes, agr) => {
+  const it = [t(page, y0, L, `Kundenr. ${no} - ${name}`), t(page, y0 - 12.5, L, 'Leveringsadresse:'), t(page, y0 - 12.5, R, 'Faktureringsadresse:')];
+  const addr = [name, ...extra]; addr.forEach((a, i) => { it.push(t(page, y0 - 23.8 - i * 11.3, L, a), t(page, y0 - 23.8 - i * 11.3, R, a)); });
+  let y = y0 - 23.8 - addr.length * 11.3 - 11.3;
+  it.push(t(page, y, L, 'Tlf.: 20 11 22 33'), t(page, y, R, 'Betalingsbetingelser: d.d. + 14 dage')); y -= 11.3;
+  it.push(t(page, y, L, 'Email: test@example.dk'), t(page, y, R, 'CVR-nummer: ikke oplyst')); y -= 22.7;
+  notes.forEach((n, i) => { it.push(t(page, y, L, (i ? '' : 'Noter: ') + n)); y -= 11.3; });
+  if (agr.length) { y -= 11.4; it.push(t(page, y, L, 'Aftaler med kunden'), t(page, y, 286.3, 'Interval'), t(page, y, 357.2, 'Næste gang'), t(page, y, 428.2, 'Pris ex moms'), t(page, y, 520.7, 'Tid')); y -= 11.2;
+    for (const [s, iv, nx, pr, ti] of agr) { it.push(t(page, y, L, s), t(page, y, 286.3, iv), t(page, y, 357.2, nx), t(page, y, 493 - pr.length * 4.4, pr), t(page, y, 516.3, ti)); y -= 11.2; } }
+  return it;
+};
+const ITEMS = [t(1, 802.7, 116, 'Eksporteret fra SkvizBiz kundekartotek den 01/11-2026'),
+  ...kunde(1, 763, '00000003', 'Hans Prøvesen', ['Prøveparken 28, st. th', '9850 Hirtshals'], ['Minus gavl. Ét vindue efter altan.', 'Nøgle under krukken.'], [['Vinduesvask', 'Hver 8. uge', '15/12-2026', 'kr. 96,00', '0:05']]),
+  ...kunde(1, 560, '00000004', 'Karin Test', ['Testvej 7', 'Tornby', '9850 Hirtshals'], ['Alt på huset'], [['Vinduesvask', 'Hver 4. uge', '29/12-2026', 'kr. 1.320,00', '1:21'], ['Vinduesvask Sommerhus 5', 'Ikke fast', '', 'kr. 232,00', '0:13']]),
+  t(1, 24.8, 263.4, 'Side 1 af 2'),
+  ...kunde(2, 763, '00000007', 'Test Kommune', ['Torvet 5', '9800 Hjørring'], [], []),
+  t(2, 1.2, 2.8, 'Powered by TCPDF (www.tcpdf.org)')];
+
+test('stamdata-PDF: kunder, adresser, noter, aftaler', () => {
+  const cs = SD.parseStamdataItems(ITEMS);
+  assert.equal(cs.length, 3);
+  assert.equal(cs[0].extId, '00000003'); assert.equal(cs[0].phone, '20 11 22 33'); assert.equal(cs[0].paymentDays, 14); assert.equal(cs[0].cvr, '');
+  assert.deepEqual(cs[0].notes, ['Minus gavl. Ét vindue efter altan.', 'Nøgle under krukken.']);
+  assert.deepEqual(SD.splitAddress(cs[1].delivery, cs[1].name), { street: 'Testvej 7', address2: 'Tornby', zipCity: '9850 Hirtshals' });
+  assert.equal(cs[1].agreements.length, 2); assert.equal(cs[1].agreements[0].price, 'kr. 1.320,00'); assert.equal(cs[1].agreements[1].interval, 'Ikke fast');
+  assert.equal(cs[2].agreements.length, 0);
+});
+
+test('stamdata + GDPR → plan → import', () => {
+  const db = seedDb('2026-11-02');
+  const gdpr = { '00000004': G.normalize({ Number: 4, 'Invoice media': 'EAN', 'Sms first': 'yes', 'Cash payment': 'yes', Lat: '57.5', Lon: '9.9', Deleted: 'no', 'Portal password': 'x' }), '00000007': G.normalize({ number: 7, deleted: 'yes' }) };
+  const plan = SD.buildSkvizPlan([{ fileName: 'rute.pdf', routeId: 'r1', customers: SD.parseStamdataItems(ITEMS) }], gdpr, db, { today: '2026-11-02' });
+  assert.equal(plan.customers.length, 2); assert.equal(plan.skipped, 1);
+  const k = plan.customers[1];
+  assert.equal(k.addresses[0].street, 'Testvej 7, Tornby, 9850 Hirtshals'); assert.equal(k.addresses[0].access, 'Alt på huset'); assert.equal(k.addresses[0].lat, 57.5);
+  assert.equal(k.extra.invoiceType, 'ean'); assert.equal(k.extra.smsBefore, true); assert.equal(k.paymentMethod, 'kontant');
+  const [a1, a2] = k.addresses[0].agreements;
+  assert.deepEqual([a1.price, a1.intervalWeeks, a1.anchorDate, a1.durationMin, a1.routeId], [1320, 4, '2026-12-29', 81, 'r1']);
+  assert.deepEqual([a2.intervalWeeks, a2.routeId], [0, null]);
+  const n = db.customers.length; I.applyImportPlan(db, plan, { batchId: 's1', uid, horizon: '2027-03-01', today: '2026-11-02' });
+  assert.equal(db.customers.length, n + 2);
+  assert.ok(db.visits.some((v) => v.importBatch === 's1' && v.plannedDate === '2026-12-15'));
+});
+
+// Opdigtet ruteoversigt med samme kolonnepositioner som SkvizBiz (liggende A4)
+const RH = [['Nr', 35.4], ['Kundenavn', 51], ['Adresse', 164.4], ['Postnr. / by', 277.8], ['Tlf', 377], ['Noter', 433.7], ['Aftaler', 532.9], ['Interval', 660.5], ['Ex. moms', 731.3], ['Tid', 797.2]];
+const ov = (page, y0, rows) => { const it = [t(page, 556, 168.8, 'Komplet ruteoversigt for "Bindslev 2" (udskrevet fra SkvizBiz den 01/11-2026)'), ...RH.map(([s, x]) => t(page, 529.6, x, s))]; let y = 515.9;
+  for (const r of rows) { it.push(t(page, y, 40.9, String(r.nr)), t(page, y, 51, r.name), t(page, y, 164.4, r.street), t(page, y, 277.8, r.zip), t(page, y, 377, r.tlf));
+    r.notes.forEach((n, i) => it.push(t(page, y - 0.3 - i * 11.3, 433.7, n)));
+    r.agr.forEach(([s, iv, pr, ti], i) => { const yy = y - 0.3 - i * 11.6; if (s) it.push(t(page, yy, 532.9, s)); if (iv) it.push(t(page, yy, 660.5, iv)); if (pr) it.push({ str: pr, x: 773.9 - pr.length * 4.1, y: yy, w: pr.length * 4.1, page }); if (ti) it.push({ str: ti, x: 790.7, y: yy, w: 20, page }); });
+    y -= 11.3 * Math.max(r.notes.length, r.agr.length, 1); }
+  return it; };
+const OV = [...ov(1, 0, [{ nr: 1, name: 'Karin Test', street: 'Testvej 7', zip: '9850 Hirtshals', tlf: '20112233', notes: ['Alt på huset'], agr: [['Vinduesvask', 'Hver 4. uge', '1.320,00', '01:21']] },
+  { nr: 2, name: 'Ny Rutekunde', street: 'Rutevej 1', zip: '9881 Bindslev', tlf: '30112233', notes: ['Alt udv. på stuehuset i', 'stueplan'], agr: [['Udvendig vinduespolering iflg.', 'Hver 8. uge', '160,00', '00:15'], ['aftale', '', '', ''], ['+ Orangeriet', 'Hver 8. uge', '96,00', '00:09']] }]),
+  ...ov(2, 0, [{ nr: 3, name: 'Hans Prøvesen', street: 'Prøveparken 28, st. th', zip: '9850 Hirtshals', tlf: '', notes: [], agr: [['Vinduesvask', 'Hver 8. uge', '96,00', '00:05']] }])];
+
+test('ruteoversigt: rækker, ombrudte noter/aftaler, flere sider', () => {
+  const r = SD.parseRouteOverviewItems(OV);
+  assert.equal(r.routeName, 'Bindslev 2'); assert.equal(r.rows.length, 3);
+  assert.equal(r.rows[1].notes, 'Alt udv. på stuehuset i stueplan');
+  assert.deepEqual(r.rows[1].agreements.map((a) => [a.service, a.interval, a.price, a.dur]), [['Udvendig vinduespolering iflg. aftale', 'Hver 8. uge', '160,00', '00:15'], ['+ Orangeriet', 'Hver 8. uge', '96,00', '00:09']]);
+  assert.equal(r.rows[0].agreements[0].price, '1.320,00');
+});
+
+test('stamdata + ruteoversigt → ny rute, rækkefølge, kunder kun i ruteoversigt', () => {
+  const db = seedDb('2026-11-02');
+  const plan = SD.buildSkvizPlan([{ fileName: 'alle.pdf', routeId: '', customers: SD.parseStamdataItems(ITEMS) }], null, db, { today: '2026-11-02' });
+  SD.addRouteOverviews(plan, [{ ...SD.parseRouteOverviewItems(OV), fileName: 'r.pdf' }], db, { today: '2026-11-02' });
+  assert.equal(plan.newRoutes.length, 1); const nr = plan.newRoutes[0];
+  assert.deepEqual([nr.name, nr.intervalWeeks, nr.anchorDate, nr.matched], ['Bindslev 2', 4, '2026-12-15', 2]);
+  assert.equal(plan.customers.length, 4); // 3 fra stamdata + 1 kun i ruteoversigt
+  const ids = SD.materializeRoutes(db, plan, { uid, today: '2026-11-02', employeeId: 'e2', batchId: 'b' });
+  const rid = ids['new:Bindslev 2']; const route = db.routes.find((r) => r.id === rid);
+  const ny = plan.customers.find((c) => c.name === 'Ny Rutekunde'); assert.equal(ny.addresses[0].agreements[0].routeId, rid); assert.equal(ny.addresses[0].agreements[0].anchorDate, '2026-12-15');
+  const karin = plan.customers.find((c) => c.name === 'Karin Test'); assert.equal(karin.addresses[0].agreements[1].routeId, null, '"Ikke fast" får ingen rute');
+  I.applyImportPlan(db, plan, { batchId: 'b', uid, horizon: '2027-03-01', today: '2026-11-02' });
+  SD.applyRouteOrder(db, plan, ids, 'b');
+  const order = route.order.map((aid) => db.customers.find((c) => c.id === db.addresses.find((a) => a.id === aid).customerId).name);
+  assert.deepEqual(order, ['Karin Test', 'Ny Rutekunde', 'Hans Prøvesen']);
+  I.rollbackImport(db, 'b'); assert.ok(!db.routes.some((r) => r.id === rid), 'ruten fjernes ved fortryd');
+});
