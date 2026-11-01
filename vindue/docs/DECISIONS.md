@@ -28,3 +28,6 @@
 | 25 | 2026-11-01 | Provision kan fordeles pr. besøg mellem medarbejdere (resten = firma); standard = rutens medarbejders sats; ejer 0 % | Ejerens screenshots |
 | 26 | 2026-11-01 | Vejr-funktion fjernet; i stedet "Flyt / aflys…" på valgte kunder eller hel dag | Ejerens svar |
 | 27 | 2026-11-01 | Ejerens screenshots indeholder rigtige kundedata – bruges kun som skærmreference, gemmes ikke i repo | GDPR |
+| 28 | 2026-11-01 | Færdigmelding 0/1/2/3 som SkvizBiz: 0 åben, 1 udført, 2 udført + kontant, 3 spring over (menu: næste gang / indsæt igen næste arbejdsdag / skub til dato / skub og flyt fremtidige / forgæves) | Ejerens svar + screenshot |
+| 29 | 2026-11-01 | Kontanter samles pr. rute; bogføres dags dato på kasse-konto (18100 Kasse) i e-conomic | Ejerens screenshot. Integration SKAL VERIFICERES |
+| 30 | 2026-11-01 | Kun medarbejdere får provision; ejer 0 % | Ejerens svar |

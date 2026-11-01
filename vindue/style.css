@@ -61,3 +61,5 @@ table.fm td,table.fm th{white-space:nowrap}table.fm th.c,table.fm td.c{text-alig
 table.fm input.cash{width:90px}table.fm select{max-width:170px}
 tr.res-udfoert td{background:#2e7d3226}tr.res-delvis td{background:#b26a0020}tr.res-forgaeves td,tr.res-aflyst td{background:#c6282818}
 tr.locked td{opacity:.65}
+tr.res-kontant td{background:#2e7d3240}tr.res-spring td{background:#c628281f}
+.cashbox{background:var(--chip);border-radius:8px;padding:8px 10px;font-size:13px}

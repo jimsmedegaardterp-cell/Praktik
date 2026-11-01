@@ -302,8 +302,18 @@ function routeStops(routeId, day) {
   const order = r.order || [];
   return vs.sort((a, b) => ((order.indexOf(a.addressId) + 1 || 999) - (order.indexOf(b.addressId) + 1 || 999)) || a.id.localeCompare(b.id));
 }
-const RES = [['aaben', 'Åben'], ['udfoert', '✓ Udført'], ['delvis', 'Delvis'], ['forgaeves', 'Forgæves'], ['aflyst', 'Aflyst']];
-const PAYICON = { bank: '📧', mobilepay: '📱', betalingsservice: 'BS', kontant: '💰' };
+const RES = [['aaben', '0', 'Åben – ikke behandlet'], ['udfoert', '1', 'Udført'], ['kontant', '2', 'Udført + betalt kontant'], ['spring', '3', 'Spring over / flyt']];
+const doneRes = (v) => (v.status === 'udfoert' || v.status === 'delvis' ? (v.completion?.cashPaid ? 'kontant' : 'udfoert') : 'spring');
+function nextInSeries(v) {
+  const n = db.visits.filter((x) => x.agreementId === v.agreementId && x.plannedDate > v.plannedDate && x.status === 'planlagt').sort((a, b) => a.plannedDate.localeCompare(b.plannedDate))[0];
+  if (n) return n.plannedDate; const ag = db.agreements.find((a) => a.id === v.agreementId); return ag?.intervalWeeks && v.seriesIndex >= 0 ? D.nextWorkday(D.rhythmDate(ag, v.seriesIndex + 1), db.closedDays) : null;
+}
+function skipOptions(v, d) {
+  const nx = nextInSeries(v); const again = D.nextWorkday(D.addDays(v.plannedDate, 1), db.closedDays);
+  const o = [['skip', nx ? `Spring over (næste gang ${fmt(nx)})` : 'Spring over'], ['reinsert', `Annuller og indsæt igen på ${fmt(again)}`], ['move', 'Skub til ny dato …'], ['shift', 'Skub til ny dato og flyt fremtidige …'], ['forgaeves', 'Forgæves besøg (kunden ikke hjemme e.l.)']];
+  return o.map(([k, t]) => `<option value="${k}" ${k === (d.skip || 'skip') ? 'selected' : ''}>${esc(t)}</option>`).join('');
+}
+const PAYICON = { bank: '✉', mobilepay: '📱', betalingsservice: 'BS', kontant: '💰' };
 const services = () => [...new Set(db.agreements.map((a) => a.service).concat(['Vinduesvask', 'Vinduesvask + rammer', 'Tagrender', 'Solceller', 'Ekstra opgave']))];
 function defaultSplit(v) { const r = route(v.routeId); const e = emp(r?.employeeId); const pct = Math.round((e?.commissionRate ?? db.settings.commissionRate) * 1000) / 10; return e && pct ? [{ employeeId: e.id, pct }] : []; }
 const splitTxt = (sp) => sp.length ? sp.map((x) => `${esc(emp(x.employeeId)?.name.split(' ')[0])} ${x.pct}%`).join(', ') : 'Firma 100%';
@@ -327,17 +337,19 @@ function ruter() {
   if (mode === 'fm') {
     $view.innerHTML = head + `<div class="card"><h2>Færdigmelding – ${esc(r.name)} ${fmt(day)} ${day.slice(0, 4)}</h2>${stats}
     ${stops.length ? `<div class="row noprint" style="margin:6px 0"><button data-act="selAll">${stops.every((v) => ui.sel.has(v.id)) ? 'Fravælg alle' : 'Vælg alle'}</button><span class="small mute">${nSel} valgt:</span>
-      <button data-act="fmSet" data-r="udfoert">✓ Udført</button><button data-act="fmSet" data-r="aaben">Åben</button><button data-act="fmSplit">Fordel provision…</button><button data-act="bulk">Flyt / aflys…</button><button data-act="bulkSms">📱 SMS</button></div>
-    <div style="overflow-x:auto"><table class="fm"><tr><th></th><th>Nr</th>${RES.map(([, n]) => `<th class="c">${n}</th>`).join('')}<th>Kontant</th><th>Navn</th><th>Adresse</th><th>Opgave</th><th>Faktura</th><th>Provision</th></tr>
+      <button data-act="fmSet" data-r="aaben">0 Åben</button><button data-act="fmSet" data-r="udfoert">1 Udført</button><button data-act="fmSet" data-r="kontant">2 Kontant</button><button data-act="fmSet" data-r="spring">3 Spring over</button><button data-act="fmSplit">Fordel provision…</button><button data-act="bulkSms">📱 SMS</button></div>
+    <div style="overflow-x:auto"><table class="fm"><tr><th></th><th>Nr</th>${RES.map(([, n, t]) => `<th class="c" title="${t}">${n}</th>`).join('')}<th>Kontant</th><th>Navn</th><th>Adresse</th><th>Opgave</th><th>Faktura</th><th>Provision</th></tr>
     ${stops.map((v, i) => { const c = cust(v.customerId), a = addr(v.addressId); const done = v.status !== 'planlagt' && v.status !== 'udsat'; const d = dr[v.id] || {};
-      const res = done ? v.status : d.result || 'aaben'; const sp = done ? (v.split ?? []) : (d.split ?? defaultSplit(v));
+      const res = done ? doneRes(v) : d.result || 'aaben'; const sp = done ? (v.split ?? []) : (d.split ?? defaultSplit(v));
       return `<tr class="${res !== 'aaben' ? 'res-' + res : ''} ${done ? 'locked' : ''}"><td><input type="checkbox" data-sel="${v.id}" ${ui.sel.has(v.id) ? 'checked' : ''}></td><td>${i + 1}</td>
         ${RES.map(([k]) => `<td class="c"><input type="radio" name="res-${v.id}" data-res="${v.id}" value="${k}" ${res === k ? 'checked' : ''} ${done ? 'disabled' : ''}></td>`).join('')}
-        <td><input type="number" min="0" step="1" class="cash" data-cash="${v.id}" value="${done ? v.completion?.cashAmount || '' : d.cashAmount ?? ''}" placeholder="${c.paymentMethod === 'kontant' ? kr(Math.round(v.price * 1.25)) : ''}" ${done ? 'disabled' : ''}></td>
+        <td><input type="number" min="0" step="1" class="cash" data-cash="${v.id}" value="${done ? v.completion?.cashAmount || '' : d.cashAmount ?? ''}" placeholder="${c.paymentMethod === 'kontant' || res === 'kontant' ? kr(Math.round(v.price * 1.25)) : ''}" ${done ? 'disabled' : ''}></td>
         <td><a href="#" data-cust="${c.id}">${esc(c.name)}</a></td><td class="small">${esc(a.street)}${a.access ? `<div class="mute">🔑 ${esc(a.access)}</div>` : ''}</td>
-        <td><select data-svc="${v.id}" ${done ? 'disabled' : ''}>${[...new Set([d.service || v.service, ...services()])].map((x) => `<option ${x === (d.service || v.service) ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select></td>
+        <td>${done ? `<span class="small">${esc(STATUS[v.status]?.[0])}: ${esc(v.service)}</span>` : res === 'spring' ? `<select data-skip="${v.id}">${skipOptions(v, d)}</select>${d.skip === 'move' || d.skip === 'shift' ? `<input type="date" data-mdate="${v.id}" value="${d.moveDate || ''}" style="margin-top:3px">` : ''}`
+          : `<select data-svc="${v.id}">${[...new Set([d.service || v.service, ...services()])].map((x) => `<option value="${esc(x)}" ${x === (d.service || v.service) ? 'selected' : ''}>${res === 'aaben' ? '' : 'Færdigmeld: '}${esc(x)}</option>`).join('')}</select>`}</td>
         <td title="${esc(PAY[c.paymentMethod] ?? '')}">${PAYICON[c.paymentMethod] ?? '📧'}</td><td class="small"><a href="#" data-act="fmSplitOne" data-id="${v.id}">${splitTxt(sp)}</a></td></tr>`; }).join('')}</table></div>
-    <div class="row" style="margin-top:10px"><span class="sp small mute">Låste rækker er allerede færdigmeldt. "Åben" røres ikke og bliver i kalenderen.</span><button data-act="fmSave">💾 Gem til senere</button><button class="pri" data-act="fmCommit">✓ Gem og udfør færdigmelding</button></div>` : '<p class="mute">Ingen besøg på ruten denne dag.</p>'}</div>`;
+    <div class="small mute" style="margin-top:6px">0 = åben (røres ikke) · 1 = udført · 2 = udført og betalt kontant · 3 = spring over/flyt (vælg i opgavemenuen). Låste rækker er allerede færdigmeldt.</div>
+    <div class="row" style="margin-top:10px"><div class="cashbox"><b>Kontante betalinger</b> · i alt <b>${kr(stops.reduce((s, v) => { const d = dr[v.id] || {}; return s + (v.completion?.cashAmount || (d.result === 'kontant' ? (d.cashAmount ?? Math.round(v.price * 125) / 100) : 0)); }, 0))}</b> · bogføres dags dato på kasse-konto ${esc(db.settings.cashAccount || '18100 – Kasse')} <span class="mute">(i e-conomic – SKAL VERIFICERES)</span></div><span class="sp"></span><button data-act="fmSave">💾 Gem til senere</button><button class="pri" data-act="fmCommit">✓ Gem og udfør færdigmelding</button></div>` : '<p class="mute">Ingen besøg på ruten denne dag.</p>'}</div>`;
   } else {
     $view.innerHTML = head + `<div class="card sheet"><div class="row"><h2 class="sp">${fmt(day)} ${day.slice(0, 4)} uge ${D.isoWeek(day)} – Rute: ${esc(r.name)}</h2><button class="noprint" data-act="print">🖨 Udskriv</button><a class="btn noprint" target="_blank" rel="noopener" href="${pts.length ? mapsRoute(pts.map((p) => p.street)) : '#'}">Vis på Google Maps ↗</a></div><div class="small mute">${esc(emp(r.employeeId)?.name)} · ${routeWhen(r)} · udskrevet ${fmtTs(new Date().toISOString())}</div>${stats}
     ${stops.length ? `<table><tr><th>Nr</th><th>Adresse</th><th>Navn</th><th>Tlf.</th><th>Kont.</th><th style="text-align:right">Beløb</th><th>Bemærkninger</th><th>Opgave</th><th>Tid</th><th class="noprint"></th></tr>${stops.map((v, i) => { const c = cust(v.customerId), a = addr(v.addressId); const ag = db.agreements.find((x) => x.id === v.agreementId);
@@ -350,7 +362,9 @@ function ruter() {
   $view.querySelectorAll('[data-sel]').forEach((c) => (c.onchange = () => { c.checked ? ui.sel.add(c.dataset.sel) : ui.sel.delete(c.dataset.sel); render(); }));
   const upd = (id, f) => { dr[id] = { ...(dr[id] || {}), ...f }; };
   $view.querySelectorAll('[data-res]').forEach((x) => (x.onchange = () => { upd(x.dataset.res, { result: x.value }); render(); }));
-  $view.querySelectorAll('[data-cash]').forEach((x) => (x.onchange = () => { upd(x.dataset.cash, { cashAmount: x.value === '' ? null : +x.value, ...(x.value && (dr[x.dataset.cash]?.result ?? 'aaben') === 'aaben' ? { result: 'udfoert' } : {}) }); render(); }));
+  $view.querySelectorAll('[data-cash]').forEach((x) => (x.onchange = () => { upd(x.dataset.cash, { cashAmount: x.value === '' ? null : +x.value, ...(x.value ? { result: 'kontant' } : {}) }); render(); }));
+  $view.querySelectorAll('[data-skip]').forEach((x) => (x.onchange = () => { upd(x.dataset.skip, { skip: x.value }); render(); }));
+  $view.querySelectorAll('[data-mdate]').forEach((x) => (x.onchange = () => { upd(x.dataset.mdate, { moveDate: x.value }); save(); }));
   $view.querySelectorAll('[data-svc]').forEach((x) => (x.onchange = () => { upd(x.dataset.svc, { service: x.value }); save(); }));
   ui._stops = stops; ui._sug = sug.order; ui._draft = dr; ui._draftKey = key;
 }
@@ -600,10 +614,22 @@ document.addEventListener('click', async (e) => {
       case 'fmSplit': return splitDialog(ui._stops.filter((v) => ui.sel.has(v.id) && v.status === 'planlagt'));
       case 'fmSplitOne': { const v = ui._stops.find((x) => x.id === id); if (v.status !== 'planlagt') return; return splitDialog([v]); }
       case 'fmSave': S.audit(db, ui.user.id, 'route.draft', ui._draftKey); toast('Gemt til senere – intet er færdigmeldt endnu'); break;
-      case 'fmCommit': { const ent = ui._stops.filter((v) => v.status === 'planlagt').map((v) => ({ visitId: v.id, ...(ui._draft[v.id] || {}), split: ui._draft[v.id]?.split ?? defaultSplit(v) })).filter((x) => x.result && x.result !== 'aaben');
-        if (!ent.length) return toast('Ingen kunder er markeret'); if (!confirm(`Færdigmeld ${ent.length} besøg? Udførte går i faktureringskøen.`)) return;
-        const r = S.finishRoute(db, ui.user, ent); for (const x of ent) delete ui._draft[x.visitId]; ui.sel = new Set();
-        toast(`${r.done} færdigmeldt${r.conflicts.length ? ', ' + r.conflicts.length + ' konflikter' : ''}`); break; }
+      case 'fmCommit': {
+        const plan = ui._stops.filter((v) => v.status === 'planlagt').map((v) => ({ v, d: ui._draft[v.id] || {} })).filter(({ d }) => d.result && d.result !== 'aaben');
+        if (!plan.length) return toast('Ingen kunder er markeret 1, 2 eller 3');
+        const bad = plan.find(({ d }) => d.result === 'spring' && (d.skip === 'move' || d.skip === 'shift') && !d.moveDate); if (bad) return toast(`Vælg ny dato for ${cust(bad.v.customerId).name}`);
+        if (!confirm(`Færdigmeld ${plan.length} kunder? Udførte går i faktureringskøen.`)) return;
+        const ent = []; let moved = 0;
+        for (const { v, d } of plan) {
+          const split = d.split ?? defaultSplit(v);
+          if (d.result === 'udfoert') ent.push({ visitId: v.id, result: 'udfoert', service: d.service, split });
+          else if (d.result === 'kontant') ent.push({ visitId: v.id, result: 'udfoert', service: d.service, split, cashAmount: d.cashAmount ?? Math.round(v.price * 125) / 100 });
+          else if ((d.skip || 'skip') === 'skip') ent.push({ visitId: v.id, result: 'aflyst', note: 'Sprunget over' });
+          else if (d.skip === 'forgaeves') ent.push({ visitId: v.id, result: 'forgaeves', note: 'Forgæves besøg' });
+          else { S.moveVisit(db, ui.user, v.id, d.skip === 'reinsert' ? D.nextWorkday(D.addDays(v.plannedDate, 1), db.closedDays) : d.moveDate, d.skip === 'shift' ? 'shift' : 'keep'); moved++; }
+        }
+        const r = S.finishRoute(db, ui.user, ent); for (const { v } of plan) delete ui._draft[v.id]; ui.sel = new Set();
+        toast(`${r.done} færdigmeldt${moved ? `, ${moved} flyttet` : ''}${r.conflicts.length ? ', ' + r.conflicts.length + ' konflikter' : ''}`); break; }
       case 'dayMenu': return bulkDialog(db.visits.filter((v) => v.plannedDate === b.dataset.d && (!ui.calRoute || v.routeId === ui.calRoute)), `Hele ${fmt(b.dataset.d)}`);
       case 'bulk': return bulkDialog(ui._stops.filter((v) => ui.sel.has(v.id)), `${route(ui.route).name} ${fmt(ui.day)}`);
       case 'selAll': { const all = ui._stops.every((v) => ui.sel.has(v.id)); ui._stops.forEach((v) => (all ? ui.sel.delete(v.id) : ui.sel.add(v.id))); break; }
