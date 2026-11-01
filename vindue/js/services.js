@@ -7,7 +7,7 @@ const now = () => new Date().toISOString();
 
 export function emptyDb() {
   return { customers: [], addresses: [], agreements: [], routes: [], employees: [], visits: [], invoiceLinks: [],
-    smsMessages: [], audit: [], closedDays: [], templates: {}, mock: { economic: {}, sms: {} }, settings: { commissionRate: 0.35, perCustomerInvoice: true } };
+    smsMessages: [], audit: [], closedDays: [], templates: {}, mock: { economic: {}, sms: {} }, settings: { commissionRate: 0.35, perCustomerInvoice: false } };
 }
 
 export function audit(db, by, action, ref, detail = {}) {

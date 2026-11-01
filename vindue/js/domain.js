@@ -86,7 +86,7 @@ export const isBillable = (v) => BILLABLE.has(v.status);
  * Registrér resultat præcis én gang. opId (genereres på klienten ved tryk) gør gentagne kald
  * (dobbelttryk, offline-genforsøg) til no-ops. Returnerer { visit, changed }.
  */
-export function completeVisit(visit, { result, opId, by, at, note = '', price }) {
+export function completeVisit(visit, { result, opId, by, at, note = '', price, cashPaid = false }) {
   if (!RESULTS[result]) throw new Error(`Ukendt resultat: ${result}`);
   if (visit.completion) {
     if (visit.completion.opId === opId) return { visit, changed: false }; // samme handling gentaget
@@ -98,7 +98,7 @@ export function completeVisit(visit, { result, opId, by, at, note = '', price })
   const p = price ?? visit.price;
   const next = {
     ...visit, status: result, price: p,
-    completion: { opId, by, at, note, result, priceChanged: p !== visit.price, originalPrice: visit.price },
+    completion: { opId, by, at, note, result, priceChanged: p !== visit.price, originalPrice: visit.price, cashPaid: !!cashPaid && BILLABLE.has(result) },
     history: [...visit.history, { at, by, action: result, note, price: p }],
   };
   return { visit: next, changed: true };

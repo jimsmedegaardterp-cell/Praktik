@@ -3,6 +3,7 @@ import * as D from './domain.js';
 import * as S from './services.js';
 import { MockEconomic, MockSms, mapsDirections, mapsRoute, smsLink, suggestOrder, routeKm } from './adapters.js';
 import { seedDb } from './seed.js';
+import * as I from './import.js';
 
 const KEY = 'vindue-demo-v1';
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
@@ -33,6 +34,7 @@ const emp = (id) => db.employees.find((e) => e.id === id);
 const isAdmin = () => ui.user.role === 'admin';
 const STATUS = { planlagt: ['Planlagt', ''], ...Object.fromEntries(Object.entries(D.RESULTS).map(([k, v]) => [k, [v, ['udfoert', 'delvis'].includes(k) ? 'ok' : k === 'udsat' ? 'warn' : 'bad']])) };
 const pill = (st) => `<span class="pill ${STATUS[st]?.[1] ?? ''}">${esc(STATUS[st]?.[0] ?? st)}</span>`;
+const PAY = { bank: 'Bankoverførsel', mobilepay: 'MobilePay', betalingsservice: 'Betalingsservice', kontant: 'Kontant' };
 const INV = { afventer: 'warn', kladde: '', bogført: 'ok', fejl: 'bad' };
 
 function toast(msg) { const t = document.getElementById('toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => (t.hidden = true), 3200); }
@@ -41,7 +43,7 @@ const $view = document.getElementById('view');
 /* ---------------- Faner ---------------- */
 const TABS = [
   ['overblik', 'Overblik', true], ['kunder', 'Kunder', true], ['kalender', 'Kalender', true], ['ruter', 'Ruter & kort', true],
-  ['mobil', '📱 Dagsrute', false], ['faktura', 'Fakturering', true], ['sms', 'Beskeder', true], ['admin', 'Admin', true],
+  ['mobil', '📱 Dagsrute', false], ['faktura', 'Fakturering', true], ['sms', 'Beskeder', true], ['import', 'Import', true], ['admin', 'Admin', true],
 ];
 function renderTabs() {
   const tabs = TABS.filter(([, , adm]) => !adm || isAdmin());
@@ -52,7 +54,7 @@ function renderTabs() {
 function render() {
   renderTabs();
   const net = document.getElementById('net'); net.textContent = ui.offline ? `Offline${ui.outbox.length ? ` · ${ui.outbox.length} i kø` : ''}` : 'Online'; net.className = 'pill ' + (ui.offline ? 'bad' : 'ok');
-  ({ overblik, kunder, kalender, ruter, mobil, faktura, sms: beskeder, admin })[ui.tab]();
+  ({ overblik, kunder, kalender, ruter, mobil, faktura, sms: beskeder, import: importView, admin })[ui.tab]();
   save();
 }
 
@@ -109,7 +111,7 @@ function kundekort(c) {
     <div class="card"><h2>${esc(c.name)}</h2>
       <div>📞 <a href="tel:${esc(D.normalizePhone(c.phone) || '')}">${esc(c.phone)}</a></div>
       ${c.email ? `<div>✉️ ${esc(c.email)}</div>` : ''}
-      <div class="small mute">${esc(c.paymentTerms)} · ${c.vatLiable ? 'Momspligtig' : 'Momsfri'} · e-conomic kundenr.: ${c.economicNumber ?? '<i>ikke oprettet</i>'}</div>
+      <div class="small mute">${esc(PAY[c.paymentMethod] ?? 'Bankoverførsel')} · ${esc(c.paymentTerms)} · ${c.vatLiable ? 'Momspligtig' : 'Momsfri'} · e-conomic kundenr.: ${c.economicNumber ?? '<i>ikke oprettet</i>'}</div>
       <div class="small mute">Markedsføringssamtykke: ${c.marketingConsent ? 'ja' : 'nej'}</div>
       ${c.notes ? `<p>${esc(c.notes)}</p>` : ''}
     </div>
@@ -147,7 +149,8 @@ function customerForm(c) {
     <label><span>Navn *</span><input name="name" required value="${esc(c.name)}"></label>
     <label><span>Mobil *</span><input name="phone" required value="${esc(c.phone)}" inputmode="tel"></label>
     <label><span>E-mail (faktura)</span><input name="email" type="email" value="${esc(c.email)}"></label>
-    <label><span>Betalingsbetingelser</span><input name="paymentTerms" value="${esc(c.paymentTerms)}"></label>
+    <div class="row"><label><span>Betalingsform</span><select name="paymentMethod">${Object.entries(PAY).map(([k, v]) => `<option value="${k}" ${k === (c.paymentMethod || 'bank') ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+    <label><span>Betalingsbetingelser</span><input name="paymentTerms" value="${esc(c.paymentTerms)}"></label></div>
     <label><input type="checkbox" name="vatLiable" ${c.vatLiable ? 'checked' : ''}> Momspligtig</label>
     <label><input type="checkbox" name="marketingConsent" ${c.marketingConsent ? 'checked' : ''}> Samtykke til markedsførings-SMS</label>
     <label><span>Bemærkning (undgå følsomme oplysninger)</span><textarea name="notes">${esc(c.notes)}</textarea></label>
@@ -156,7 +159,7 @@ function customerForm(c) {
     if (!D.normalizePhone(f.phone)) return 'Ugyldigt telefonnummer';
     const dup = db.customers.find((x) => x !== c && !x.deleted && D.normalizePhone(x.phone) === D.normalizePhone(f.phone));
     if (dup && !confirm(`${dup.name} har samme nummer. Opret alligevel?`)) return false;
-    Object.assign(c, { name: f.name.trim(), phone: f.phone.trim(), email: f.email.trim(), notes: f.notes, paymentTerms: f.paymentTerms, vatLiable: !!f.vatLiable, marketingConsent: !!f.marketingConsent });
+    Object.assign(c, { name: f.name.trim(), phone: f.phone.trim(), email: f.email.trim(), notes: f.notes, paymentTerms: f.paymentTerms, paymentMethod: f.paymentMethod, vatLiable: !!f.vatLiable, marketingConsent: !!f.marketingConsent });
     if (isNew) {
       c.id = S.uid('c'); db.customers.push(c);
       const a = { id: S.uid('adr'), customerId: c.id, street: f.street.trim(), lat: null, lng: null, access: f.access || '' }; db.addresses.push(a);
@@ -269,15 +272,17 @@ function mobil() {
     return `<div class="stop ${done ? 'done' : ''}"><div class="row"><h3 class="sp">${esc(c.name)}</h3>${pending.has(v.id) ? '<span class="pill warn">Venter på sync</span>' : pill(v.status)}</div>
     <div>${esc(a.street)}</div>${a.access ? `<div class="small">🔑 ${esc(a.access)}</div>` : ''}<div class="small mute">${esc(v.service)}${isAdmin() || true ? ' · ' + kr(v.price) : ''}</div>
     <div class="quick"><a class="btn" target="_blank" rel="noopener" href="${mapsDirections(a.street)}">🧭 Kør</a><a class="btn" href="tel:${tel}">📞 Ring</a><a class="btn" href="${smsLink(tel, `Hej ${c.name.split(' ')[0]}, vi er på vej og er hos dig om ca. 15 min. Mvh. Vinduespudseren`)}">💬 På vej</a></div>
-    ${done ? '' : `<div class="big"><button class="udfoert" data-act="reg" data-r="udfoert" data-id="${v.id}">✓ Udført</button>
+    ${c.paymentMethod === 'kontant' ? `<div class="small"><span class="pill warn">💰 Betaler kontant · ${kr(v.price * 1.25)} inkl. moms</span></div>` : ''}
+    ${v.completion?.cashPaid ? '<div class="small"><span class="pill ok">Kontant modtaget</span></div>' : ''}
+    ${done ? '' : `<div class="big">${c.paymentMethod === 'kontant' ? `<button class="udfoert" data-act="reg" data-r="udfoert" data-cash="1" data-id="${v.id}">✓ Udført + betalt kontant</button><button data-act="reg" data-r="udfoert" data-id="${v.id}" style="grid-column:1/-1">✓ Udført – ikke betalt endnu</button>` : `<button class="udfoert" data-act="reg" data-r="udfoert" data-id="${v.id}">✓ Udført</button>`}
       <button data-act="reg" data-r="delvis" data-id="${v.id}">Delvist</button><button data-act="reg" data-r="forgaeves" data-id="${v.id}">Forgæves</button>
       <button data-act="reg" data-r="udsat" data-id="${v.id}">Udsat</button><button data-act="reg" data-r="aflyst" data-id="${v.id}">Aflyst</button></div>`}</div>`; }).join('') || '<p class="mute">Ingen besøg denne dag.</p>'}`;
   document.getElementById('off').onchange = (e) => { ui.offline = e.target.checked; if (!ui.offline) flushOutbox(); render(); };
 }
-function regDialog(id, result) {
+function regDialog(id, result, cashPaid) {
   const v = db.visits.find((x) => x.id === id);
   const opId = S.uid('op'); // dannes ved tryk → genforsøg bruger samme id
-  if (result === 'udfoert') return doReg({ visitId: id, result, opId });
+  if (result === 'udfoert') return doReg({ visitId: id, result, opId, cashPaid: !!cashPaid });
   openDlg(`<h2>${esc(D.RESULTS[result])} – ${esc(cust(v.customerId).name)}</h2>
     <label><span>Bemærkning</span><textarea name="note" placeholder="Fx kunden ikke hjemme, port låst …"></textarea></label>
     ${result === 'delvis' ? `<label><span>Pris (kr ekskl. moms). Over ±20 % kræver admin-godkendelse</span><input type="number" name="price" value="${v.price}"></label>` : ''}`,
@@ -302,7 +307,8 @@ function faktura() {
   const q = D.invoiceQueue(db.visits, db.invoiceLinks).sort((a, b) => a.completion.at.localeCompare(b.completion.at));
   const links = [...db.invoiceLinks].reverse();
   $view.innerHTML = `<div class="card"><div class="row"><h2 class="sp">Faktureringskø (${q.length})</h2><label class="small"><input type="checkbox" id="perC" ${db.settings.perCustomerInvoice ? 'checked' : ''}> Samlefaktura pr. kunde</label></div>
-    ${q.length ? `<table><tr><th><input type="checkbox" id="all" checked></th><th>Udført</th><th>Kunde</th><th class="hide-m">Ydelse</th><th>Af</th><th>Pris</th></tr>${q.map((v) => `<tr><td><input type="checkbox" class="qv" value="${v.id}" checked></td><td>${fmt(v.completion.at.slice(0, 10))}</td><td>${esc(cust(v.customerId).name)}</td><td class="hide-m small">${esc(v.service)}${v.status === 'delvis' ? ' (delvis)' : ''}${v.completion.priceChanged ? ' <span class="pill warn">pris ændret</span>' : ''}${v.completion.note ? `<br>💬 ${esc(v.completion.note)}` : ''}</td><td>${esc(emp(v.completion.by)?.name ?? v.completion.by)}</td><td>${kr(v.price)}</td></tr>`).join('')}</table>
+    ${q.length ? `<table><tr><th><input type="checkbox" id="all" checked></th><th>Udført</th><th>Kunde</th><th class="hide-m">Ydelse</th><th>Af</th><th>Pris</th></tr>${q.map((v) => `<tr><td><input type="checkbox" class="qv" value="${v.id}" checked></td><td>${fmt(v.completion.at.slice(0, 10))}</td><td>${esc(cust(v.customerId).name)}</td><td class="hide-m small">${esc(v.service)}${v.status === 'delvis' ? ' (delvis)' : ''}${v.completion.priceChanged ? ' <span class="pill warn">pris ændret</span>' : ''}${v.completion.note ? `<br>💬 ${esc(v.completion.note)}` : ''}</td><td>${esc(emp(v.completion.by)?.name ?? v.completion.by)}<div class="small mute">${esc(PAY[cust(v.customerId).paymentMethod] ?? '')}${v.completion.cashPaid ? ' <span class="pill ok">kontant modtaget</span>' : ''}</div></td><td>${kr(v.price)}</td></tr>`).join('')}</table>
+    ${q.some((v) => v.completion.cashPaid) ? '<p class="small mute">Kontant modtaget: fakturaen oprettes som normalt; registrér indbetalingen i e-conomic (kassekladde). Automatisk registrering SKAL VERIFICERES.</p>' : ''}
     <div class="row" style="margin-top:10px"><button class="pri" data-act="approve">Godkend valgte → opret kladder i e-conomic (mock)</button><label class="small"><input type="checkbox" id="fail" ${eco.failNext ? 'checked' : ''}> Simulér timeout ved næste kald</label></div>` : '<p class="mute">Intet klar til fakturering. Registrér et besøg som udført i 📱 Dagsrute.</p>'}</div>
   <div class="card"><div class="row"><h2 class="sp">Fakturaer (e-conomic mock)</h2><button data-act="syncPay">Hent betalingsstatus</button></div>
     ${links.length ? `<table><tr><th>Kunde</th><th>Besøg</th><th>Beløb</th><th>e-conomic</th><th>Status</th><th></th></tr>${links.map((l) => `<tr><td>${esc(cust(l.customerId)?.name)}</td><td>${l.visitIds.length}</td><td>${kr(l.total)}${l.gross ? `<div class="small mute">${kr(l.gross)} inkl. moms</div>` : ''}</td><td class="small">${l.invoiceNumber ? 'Faktura ' + l.invoiceNumber : l.draftNumber ? 'Kladde ' + l.draftNumber : '–'}${l.error ? `<div style="color:var(--bad)">${esc(l.error)}</div>` : ''}</td>
@@ -326,6 +332,44 @@ function beskeder() {
   <div class="card list"><h2>Samtaler</h2>${sorted.map(([cid, ms]) => { const last = ms.at(-1); const un = ms.filter((m) => m.dir === 'ind' && !m.read).length;
     return `<div class="item" data-cust="${cid}"><div><b>${esc(cust(cid)?.name)}</b> ${un ? `<span class="pill bad">${un} ny</span>` : ''}<div class="small mute">${last.dir === 'ud' ? 'Du: ' : ''}${esc(last.text.slice(0, 80))}</div></div><div class="small mute">${fmtTs(last.at)}<br>${last.dir === 'ud' ? esc(last.status) : ''}</div></div>`; }).join('') || '<p class="mute">Ingen samtaler endnu.</p>'}</div>`;
   $view.querySelectorAll('[data-attach]').forEach((s) => (s.onchange = () => { if (s.value) { S.attachInbound(db, ui.user, s.dataset.attach, s.value); render(); } }));
+}
+
+/* ---------------- Import fra SkvizBiz ---------------- */
+async function readFile(f) {
+  if (/\.xlsx?$/i.test(f.name)) {
+    if (!window.XLSX) await new Promise((res, rej) => { const sc = document.createElement('script'); sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'; sc.onload = res; sc.onerror = () => rej(new Error('Kunne ikke hente Excel-læser – gem filen som CSV i stedet')); document.head.append(sc); });
+    const wb = window.XLSX.read(await f.arrayBuffer(), { type: 'array' });
+    return window.XLSX.utils.sheet_to_csv(wb.Sheets[wb.SheetNames[0]], { FS: ';' });
+  }
+  const buf = await f.arrayBuffer(); const utf = new TextDecoder('utf-8').decode(buf);
+  return utf.includes('�') ? new TextDecoder('windows-1252').decode(buf) : utf; // ældre Excel-CSV er ofte Windows-1252
+}
+function importView() {
+  const st = ui.imp;
+  const batches = (db.imports || []).slice().reverse();
+  let html = `<div class="card"><h2>Import fra SkvizBiz</h2>
+    <p class="small">1) Eksportér kunder fra SkvizBiz som Excel eller CSV. 2) Vælg filen. 3) Tjek at kolonnerne passer. 4) Se forhåndsvisningen. 5) Importér. Intet gemmes før trin 5, og importen kan fortrydes.</p>
+    <div class="row"><input type="file" id="impFile" accept=".csv,.txt,.xlsx,.xls"><a class="btn" href="docs/eksempel-import.csv" download>Hent eksempelfil</a></div></div>`;
+  if (st) {
+    const p = st.parsed;
+    html += `<div class="card"><h2>Kolonner i ${esc(st.fileName)} (${p.rows.length} rækker)</h2><div class="grid">${Object.entries(I.FIELDS).map(([f, label]) => `<label><span>${esc(label)}</span><select data-map="${f}"><option value="">– ikke i filen –</option>${p.headers.map((h, i) => `<option value="${i}" ${st.mapping[f] === i ? 'selected' : ''}>${esc(h)}</option>`).join('')}</select></label>`).join('')}</div>
+      <label><span>Standardrute for kunder uden rute</span><select id="impRoute">${db.routes.map((r) => `<option value="${r.id}" ${st.route === r.id ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</select></label></div>`;
+    const plan = I.buildImportPlan(p, st.mapping, db, { defaultRouteId: st.route || db.routes[0].id, today: todayIso() }); st.plan = plan;
+    const nAgr = plan.customers.reduce((s, c) => s + c.addresses.reduce((t, a) => t + a.agreements.length, 0), 0);
+    html += `<div class="card"><h2>Forhåndsvisning</h2>
+      <p><b>${plan.customers.length}</b> kunder · <b>${plan.customers.reduce((s, c) => s + c.addresses.length, 0)}</b> adresser · <b>${nAgr}</b> aftaler${plan.skipped ? ` · ${plan.skipped} tomme rækker sprunget over` : ''}</p>
+      ${plan.duplicates.length ? `<div class="warnbox">${plan.duplicates.length} findes allerede (samme kundenr./telefon) og springes over: ${plan.duplicates.slice(0, 8).map((d) => esc(d.name)).join(', ')}${plan.duplicates.length > 8 ? ' …' : ''}<br><label><input type="checkbox" id="impDup" ${st.includeDup ? 'checked' : ''}> Importér dem alligevel</label></div>` : ''}
+      ${plan.issues.length ? `<details ${plan.errors ? 'open' : ''}><summary>${plan.errors} fejl, ${plan.issues.length - plan.errors} advarsler</summary><table>${plan.issues.slice(0, 200).map((i) => `<tr class="small"><td>Linje ${i.line}</td><td style="color:var(${i.warn ? '--warn' : '--bad'})">${esc(i.msg)}</td></tr>`).join('')}</table></details>` : '<p class="pill ok">Ingen problemer fundet</p>'}
+      <div style="max-height:360px;overflow:auto;margin-top:10px"><table><tr><th>Navn</th><th>Telefon</th><th>Adresse</th><th>Aftale</th><th>Betaling</th></tr>${plan.customers.slice(0, 300).map((c) => c.addresses.map((a, j) => `<tr class="small" style="${c.dupeOf ? 'opacity:.5' : ''}"><td>${j ? '' : esc(c.name)}</td><td>${j ? '' : esc(c.phone)}</td><td>${esc(a.street)}</td><td>${a.agreements.map((g) => `${esc(g.service)} · ${kr(g.price)} · ${g.intervalWeeks} uger · fra ${fmt(g.anchorDate)}`).join('<br>') || '<span class="mute">ingen</span>'}</td><td>${j ? '' : PAY[c.paymentMethod]}</td></tr>`).join('')).join('')}</table></div>
+      <div class="row" style="margin-top:10px"><button class="pri" data-act="impApply" ${plan.errors ? '' : ''}>Importér ${plan.customers.filter((c) => st.includeDup || !c.dupeOf).length} kunder</button><button data-act="impCancel">Annuller</button>${plan.errors ? '<span class="small" style="color:var(--bad)">Rækker med fejl importeres med de felter der kunne læses – ret gerne filen først.</span>' : ''}</div></div>`;
+  }
+  if (batches.length) html += `<div class="card"><h2>Tidligere importer</h2><table>${batches.map((b) => `<tr><td>${fmtTs(b.at)}</td><td>${b.counts.customers} kunder · ${b.counts.agreements} aftaler · ${b.counts.visits} besøg</td><td>${b.rolledBack ? '<span class="pill">fortrudt</span>' : `<button class="bad" data-act="impUndo" data-id="${b.batchId}">Fortryd</button>`}</td></tr>`).join('')}</table></div>`;
+  $view.innerHTML = html;
+  document.getElementById('impFile').onchange = async (e) => { const f = e.target.files[0]; if (!f) return;
+    try { const parsed = I.parseCsv(await readFile(f)); if (!parsed.headers.length) throw new Error('Filen er tom'); ui.imp = { fileName: f.name, parsed, mapping: I.guessMapping(parsed.headers), route: db.routes[0].id }; render(); } catch (err) { toast(err.message); } };
+  $view.querySelectorAll('[data-map]').forEach((sl) => (sl.onchange = () => { if (sl.value === '') delete st.mapping[sl.dataset.map]; else st.mapping[sl.dataset.map] = +sl.value; render(); }));
+  const ir = document.getElementById('impRoute'); if (ir) ir.onchange = () => { st.route = ir.value; render(); };
+  const dp = document.getElementById('impDup'); if (dp) dp.onchange = () => { st.includeDup = dp.checked; render(); };
 }
 
 /* ---------------- Admin ---------------- */
@@ -403,7 +447,7 @@ document.addEventListener('click', async (e) => {
         toast(`${n} varsler sendt (mock). Gensendelse sender ikke dubletter.`); break; }
       case 'up': case 'down': { const st = ui._stops; const i = +b.dataset.i; const j = act === 'up' ? i - 1 : i + 1; if (j < 0 || j >= st.length) return; [st[i], st[j]] = [st[j], st[i]]; setOrder(st.map((v) => v.addressId)); break; }
       case 'applySuggest': setOrder(ui._sug.map((a) => a.id)); toast('Ny fast rækkefølge gemt'); break;
-      case 'reg': return regDialog(id, b.dataset.r);
+      case 'reg': return regDialog(id, b.dataset.r, b.dataset.cash);
       case 'approve': { const ids = [...$view.querySelectorAll('.qv:checked')].map((x) => x.value); if (!ids.length) return; b.disabled = true; b.textContent = 'Opretter…'; const r = await S.approveInvoices(db, ui.user, ids, eco); toast(`${r.filter((l) => l.status === 'kladde').length} kladde(r) oprettet${r.some((l) => l.status === 'fejl') ? ', ' + r.filter((l) => l.status === 'fejl').length + ' fejl' : ''}`); break; }
       case 'retry': b.disabled = true; await S.retryInvoice(db, ui.user, id, eco); break;
       case 'book': b.disabled = true; await S.bookInvoice(db, ui.user, id, eco); break;
@@ -415,6 +459,11 @@ document.addEventListener('click', async (e) => {
         const detail = [['Dato', 'Medarbejder', 'Kunde', 'Ydelse', 'Status', 'Pris']]; for (const v of db.visits) { if (!D.isBillable(v) || !v.completion || v.completion.at.slice(0, 7) !== mon) continue; detail.push([v.completion.at.slice(0, 10), emp(v.completion.by)?.name ?? v.completion.by, cust(v.customerId)?.name, v.service, D.RESULTS[v.status], v.price.toFixed(2).replace('.', ',')]); }
         const csv = [...rows, [], ...detail].map((r) => r.map((c) => `"${String(c ?? '').replace(/"/g, '""')}"`).join(';')).join('\r\n');
         const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv' })); a.download = `loengrundlag-${mon}.csv`; a.click(); S.audit(db, ui.user.id, 'commission.export', mon); return; }
+      case 'impCancel': ui.imp = null; break;
+      case 'impApply': { const st = ui.imp; const n = st.plan.customers.filter((c) => st.includeDup || !c.dupeOf).length; if (!confirm(`Importér ${n} kunder?`)) return;
+        const batchId = S.uid('imp'); const c = I.applyImportPlan(db, st.plan, { batchId, uid: S.uid, includeDuplicates: !!st.includeDup, horizon: D.addDays(todayIso(), 120), today: todayIso() });
+        S.audit(db, ui.user.id, 'import.apply', batchId, { file: st.fileName, ...c }); ui.imp = null; toast(`${c.customers} kunder, ${c.agreements} aftaler, ${c.visits} besøg importeret`); break; }
+      case 'impUndo': if (!confirm('Fortryd importen? Alle kunder fra den slettes.')) return; I.rollbackImport(db, id); S.audit(db, ui.user.id, 'import.rollback', id); toast('Import fortrudt'); break;
       case 'backup': download(`vinduesdrift-backup-${todayIso()}.json`, db); S.audit(db, ui.user.id, 'backup.export', '-'); break;
       case 'planMore': toast(`${S.planAhead(db, D.addDays(todayIso(), 183))} nye besøg planlagt`); break;
       case 'reset': if (!confirm('Slet alle demodata og start forfra?')) return; localStorage.removeItem(KEY); localStorage.removeItem(KEY + '-ui'); location.reload(); return;

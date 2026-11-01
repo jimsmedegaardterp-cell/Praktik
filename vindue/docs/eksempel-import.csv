@@ -1,0 +1,6 @@
+Kundenr;Navn;Mobil;E-mail;Adresse;Postnr;By;Ydelse;Pris;Interval;Næste besøg;Rute;Adgang;Betaling
+2001;Grethe Sørensen;40 11 22 33;grethe@example.dk;Lyngbakken 3;8600;Silkeborg;Vinduespudsning ude;295;4 uger;09-11-2026;Rute 1;Låge i siden;MobilePay
+2002;Jens Kirk;40 22 33 44;;Bakkevej 18;8600;Silkeborg;Vinduespudsning ud/ind;575;8;11-11-2026;Rute 2;;Betalingsservice
+2002;Jens Kirk;40 22 33 44;;Kolonihavevej 4;8600;Silkeborg;Vinduespudsning ude;150;8;11-11-2026;Rute 2;;Betalingsservice
+2003;Frisør Saks ApS;86 80 12 12;info@example.dk;Vestergade 40;8600;Silkeborg;Butiksruder;350;2;13-11-2026;Rute 3;Før kl. 9;Bankoverførsel
+2004;Poul Hansen;40 33 44 55;;Skovvej 7;8600;Silkeborg;Vinduespudsning ude;260;hver 2. måned;16-11-2026;;;Kontant

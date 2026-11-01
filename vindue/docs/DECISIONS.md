@@ -13,3 +13,7 @@
 | 10 | 2026-11-01 | Data hentes via Excel/CSV-eksport fra SkvizBiz → importværktøj med preview | Ejerens svar |
 | 11 | 2026-11-01 | SMS: gratis fra egen telefon (sms:-link). Ingen gateway nu → svar kommer på telefonen, ikke i appen | Ejerens svar. Gateway-adapter bevares, så det kan slås til senere |
 | 12 | 2026-11-01 | Hosting: Supabase i EU-region | Ejerens svar |
+| 13 | 2026-11-01 | Provision: udført arbejde ekskl. moms, udførelsesmåned; sats pr. medarbejder (standard 35 %); CSV-løngrundlag | Ejerens svar |
+| 14 | 2026-11-01 | Én faktura pr. besøg (standard; samlefaktura kan slås til) | Ejerens svar |
+| 15 | 2026-11-01 | Betalingsform pr. kunde: bank/FI, MobilePay, Betalingsservice, kontant. Kontant markeres i dagsruten; indbetaling registreres i e-conomic | Ejerens svar. Automatisk registrering SKAL VERIFICERES |
+| 16 | 2026-11-01 | Import: CSV/Excel med manuel kolonnetilknytning, forhåndsvisning, dubletkontrol (kundenr./telefon), fortryd pr. batch | SkvizBiz' kolonnenavne er ukendte |

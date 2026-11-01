@@ -29,7 +29,7 @@ export function seedDb(todayIso) {
     const cid = uid('c'), aid = uid('adr'), agid = uid('ag');
     const route = db.routes.find((r) => r.id === routeId);
     let anchor = addDays(todayIso, -14); while (weekday(anchor) !== route.weekday) anchor = addDays(anchor, 1);
-    db.customers.push({ id: cid, name, phone, email: '', invoiceEmail: '', notes: '', vatLiable: true, paymentTerms: 'Netto 8 dage', marketingConsent: false });
+    db.customers.push({ id: cid, name, phone, email: '', invoiceEmail: '', notes: '', vatLiable: true, paymentTerms: 'Netto 8 dage', paymentMethod: ['bank', 'mobilepay', 'betalingsservice', 'kontant'][db.customers.length % 4], marketingConsent: false });
     db.addresses.push({ id: aid, customerId: cid, street, lat, lng, access });
     db.agreements.push({ id: agid, customerId: cid, addressId: aid, routeId, service, price, intervalWeeks: interval, anchorDate: anchor, seasonMonths: interval >= 8 ? [3, 4, 5, 6, 7, 8, 9, 10, 11] : [], active: true });
   }
