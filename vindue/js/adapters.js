@@ -88,6 +88,7 @@ export class EconomicApi {
     if (r.alreadyBooked) { const f = await this.call('findBooked', { reference }); if (!f) throw new Error('Kladden findes ikke længere, og ingen bogført faktura har referencen ' + reference); return { invoiceNumber: f.invoiceNumber, gross: f.gross, recovered: true }; }
     return { invoiceNumber: r.invoiceNumber, gross: r.gross };
   }
+  findBooked(reference) { return this.call('findBooked', { reference }); }
   async getStatuses(numbers) { return this.call('status', { numbers }); }
   async getInvoiceStatus(n) { const s = (await this.getStatuses([n]))[n]; if (s?.error) throw new Error(s.error); return { status: s.remainder <= 0 ? 'betalt' : s.remainder < s.gross ? 'delvis' : 'åben', remainder: s.remainder, gross: s.gross }; }
   async registerPayment({ customerNumber, invoiceNumber, amount, date, text, method, key }) {
