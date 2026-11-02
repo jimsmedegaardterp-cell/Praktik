@@ -14,7 +14,7 @@ import { SUPABASE } from './config.js';
 import { showRouteMap } from './map.js';
 import * as KV from './store.js';
 
-export const VERSION = '2026-11-02 #40';
+export const VERSION = '2026-11-02 #41';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -646,7 +646,7 @@ function dagsplan() {
       <span class="pill ${g ? 'ok' : ''}">${g ? 'Køretider fra Google Maps' : useG ? (g0?.error ? 'Google fejlede – viser skøn' : 'Henter køretider fra Google …') : 'Skøn: luftlinje × 1,3 ved 50 km/t'}</span></div>
     <div id="planMap" class="map"></div>
     ${st ? '' : '<div class="warnbox noprint">Sæt firmaets startadresse under Admin → Kørsel, så turen regnes fra og til den.</div>'}
-    <div class="toolbar noprint" style="margin-top:10px">${useG ? (ui._planMode === 'manuel' ? `<button data-act="planGoogle">🗺 Genberegn med Google</button>` : '') : '<span class="small mute">Google Maps-nøgle ikke sat (Admin → Kørsel) – bruger skøn.</span>'}
+    <div class="toolbar noprint" style="margin-top:10px">${useG ? `<button data-act="planGoogle">🔄 ${g ? 'Genberegn' : 'Beregn'} med Google${ui._planMode === 'optimal' ? ' (optimér)' : ''}</button>` : '<span class="small mute">Google Maps-nøgle ikke sat (Admin → Kørsel) – bruger skøn.</span>'}
       <span class="sp"></span>${saved ? `<span class="pill ok">Dagsplan gemt (${saved.mode === 'optimal' ? 'optimal' : saved.mode === 'manuel' ? 'manuel' : 'som ruter'})</span><button data-act="planClear">Fjern dagsplan</button>` : ''}<button class="pri" data-act="planSave">Brug denne rækkefølge for dagen</button></div>
     <table><thead><tr><th class="w1">#</th><th>Kunde</th><th class="hide-m">Rute</th><th class="hide-m">Tid</th><th class="w1 noprint"></th></tr></thead><tbody id="planList">
     ${order.map((id, i) => { const v = byId.get(id); const c = cust(v.customerId); const leg = (g?.legs || legsFor(order))[i + (st ? 0 : -1)];
