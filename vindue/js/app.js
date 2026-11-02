@@ -13,7 +13,7 @@ import { SupabaseCloud, MemoryCloud } from './cloud.js';
 import { SUPABASE } from './config.js';
 import * as KV from './store.js';
 
-export const VERSION = '2026-11-02 #32';
+export const VERSION = '2026-11-02 #33';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -104,7 +104,7 @@ function render() {
   if (!users().some((u) => u.id === ui.user?.id)) ui.user = users().find((u) => u.role === 'admin') || users()[0];
   renderUserSelect();
   renderTabs();
-  const tag = document.querySelector('.tag'); if (tag) tag.textContent = (db.settings.realData ? 'PROTOTYPE · data gemmes kun i denne browser' : 'PROTOTYPE · testdata') + ' · version ' + VERSION;
+  const tag = document.querySelector('.tag'); if (tag) tag.textContent = (db.settings.realData ? 'PROTOTYPE' : 'PROTOTYPE · testdata') + ' · version ' + VERSION;
   ({ overblik, kunder, kalender, ruter, dag: dagsplan, print: printView, mobil, faktura, sms: beskeder, import: importView, admin })[ui.tab]();
   save();
 }
@@ -1329,9 +1329,15 @@ async function doSync(force) {
   syncInfo.status = 'syncing'; renderNet();
   try { stampAudit(); const r = await syncer.sync(db); syncInfo.status = 'ok'; syncInfo.at = Date.now(); syncInfo.error = null;
     await persist(); await KV.set(syncer._key, syncer.s);
-    if (r.pulled) { S.planAhead(db, D.addDays(todayIso(), 120)); render(); } else renderNet();
+    if (r.pulled) { S.planAhead(db, D.addDays(todayIso(), 120)); softRender(); } else renderNet();
   } catch (e) { syncInfo.status = 'error'; syncInfo.error = e.message; renderNet(); if (force) toast('Synkronisering fejlede: ' + e.message); }
 }
+/** Tegn kun forfra, når brugeren ikke er i gang med at skrive eller har en dialog åben (ellers når de er færdige). */
+let renderPending = false;
+const busy = () => document.getElementById('dlg')?.open || (document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName) && document.activeElement.id !== 'user');
+function softRender() { if (busy()) { renderPending = true; renderNet(); } else { renderPending = false; render(); } }
+document.addEventListener('focusout', () => setTimeout(() => { if (renderPending && !busy()) softRender(); }, 300));
+document.getElementById('dlg')?.addEventListener('close', () => setTimeout(() => { if (renderPending && !busy()) softRender(); }, 300));
 /** Logposter skrevet af den indloggede medarbejder mærkes med medarbejder-id (så de må gemmes/ses af vedkommende). */
 function stampAudit() { if (!member) return; for (const a of db.audit || []) { if (a.byEmp) continue; if (a.by === member.userId) a.byEmp = member.employeeId || null; } }
 async function logout() { if (syncer && syncer.pending(db).length && navigator.onLine) await doSync(true); await cloud.signOut(); await signedOut(); }
