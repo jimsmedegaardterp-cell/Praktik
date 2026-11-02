@@ -207,3 +207,9 @@ tr.subhead td{background:var(--soft);font-size:13px}
 .handle{cursor:grab;touch-action:none;user-select:none;font-size:20px;color:var(--mute);padding:4px 6px;line-height:1}
 .dragging{opacity:.6;box-shadow:0 6px 18px rgba(0,0,0,.2);background:var(--soft)!important}
 tr.dragging td{background:var(--soft)}
+
+/* Valgt rute + menu i sidepanelet */
+.rblock.picked{outline:2px solid var(--pri);outline-offset:-1px;background:var(--pri-soft)}
+.rhead{cursor:pointer}
+.sidemenu .menu{display:flex;flex-direction:column;gap:6px;margin:8px 0 14px}
+.sidemenu .menu button{text-align:left;justify-content:flex-start}
