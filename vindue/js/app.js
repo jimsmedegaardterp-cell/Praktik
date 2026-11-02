@@ -14,7 +14,7 @@ import { SUPABASE } from './config.js';
 import { showRouteMap } from './map.js';
 import * as KV from './store.js';
 
-export const VERSION = '2026-11-02 #43';
+export const VERSION = '2026-11-02 #44';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -325,14 +325,25 @@ function alertsStrip() {
   return out.length ? `<div class="alerts">${out.join('')}</div>` : '';
 }
 /** Økonomi for en mængde besøg (som SkvizBiz' "Total for uge"). */
-function econ(vs) {
+function econ(vs, byRoute = false) {
   const live = vs.filter((v) => v.status !== 'aflyst' && v.status !== 'forgaeves');
   const sum = live.reduce((s2, v) => s2 + D.visitTotal(v), 0); const min = mins(live);
   const groups = new Map(); for (const v of live) { const k = (v.routeId || '-') + '|' + v.plannedDate; groups.set(k, [...(groups.get(k) || []), v]); }
   let km = 0; for (const [, g] of groups) { const r = route(g[0].routeId); const o = r?.order || []; g.sort((a, b) => (o.indexOf(a.addressId) + 1 || 999) - (o.indexOf(b.addressId) + 1 || 999)); km += routeKm(g.map((v) => addr(v.addressId)).filter(Boolean)) * 1.3; }
   const prov = live.reduce((s2, v) => s2 + D.visitTotal(v) * ((v.split?.length ? v.split : defaultSplit(v)).reduce((t2, x) => t2 + x.pct, 0) / 100), 0);
   const hours = min / 60;
-  return { n: live.length, sum, min, km: Math.round(km), drive: Math.round(km / 50 * 60), prov, perHour: hours ? sum / hours : 0, wage: hours ? prov / hours : 0 };
+  // Google-køretid pr. dag (samme som dagsplanen) eller pr. rute; skøn kun hvis Google mangler
+  let gSec = 0, gM = 0, gOk = !!db.settings.googleKey && live.length > 0, gWait = false;
+  if (gOk) {
+    const st = startPoint(); const parts = new Map();
+    for (const v of live) { const k = byRoute ? v.routeId + '|' + v.plannedDate : v.plannedDate; parts.set(k, [...(parts.get(k) || []), v]); }
+    for (const [k, g] of parts) {
+      const day = g[0].plannedDate; const ids = byRoute ? routeStops(g[0].routeId, day).filter((v) => g.includes(v)).map((v) => v.id) : dayOrder(day, g);
+      const r = googleFor(byRoute ? gKey('route:' + g[0].routeId + day, ids) : gKey(day + 'cur', ids), ids, { start: st, optimize: false });
+      if (r && !r.error) { const t = DP.sumLegs(r.legs); gSec += t.sec; gM += t.m; } else { gOk = false; gWait = !r?.error; }
+    }
+  }
+  return { n: live.length, sum, min, km: gOk ? Math.round(gM / 1000) : Math.round(km), drive: gOk ? Math.round(gSec / 60) : Math.round(km / 50 * 60), google: gOk, gWait, prov, perHour: hours ? sum / hours : 0, wage: hours ? prov / hours : 0 };
 }
 function kalender() {
   const ws = ui.weekStart; const rf = ui.calRoute || '';
@@ -342,7 +353,7 @@ function kalender() {
   if (ui.calDay && (ui.calDay < ws || ui.calDay > D.addDays(ws, 6))) ui.calDay = null;
   const pick = ui.calPick?.split('|'); if (pick && (pick[1] < ws || pick[1] > D.addDays(ws, 6) || !route(pick[0]))) ui.calPick = null;
   const pv = ui.calPick ? wv.filter((v) => v.routeId === pick[0] && v.plannedDate === pick[1]) : ui.calDay ? wv.filter((v) => v.plannedDate === ui.calDay) : wv;
-  const e = econ(pv);
+  const e = econ(pv, !!ui.calPick);
   const q = D.invoiceQueue(db.visits, db.invoiceLinks); const open = db.invoiceLinks.filter((l) => l.status === 'bogført' && l.payment !== 'betalt');
   const t = todayIso();
   $view.innerHTML = `${alertsStrip()}
@@ -367,12 +378,12 @@ function kalender() {
     <aside class="econ"><h3>${ui.calPick ? `${esc(route(pick[0]).name)} · ${fmt(pick[1])}` : ui.calDay ? `Total for ${fmt(ui.calDay)}` : `Total for uge ${D.isoWeek(ws)}`}</h3>${ui.calPick || ui.calDay ? `<p class="small"><a href="#" data-act="calWeek">← Vis hele ugen</a>${ui.calDay ? ` · <a href="#" data-act="dayPlan" data-d="${ui.calDay}">🗺 Dagsplan</a>` : ''}</p>` : ''}
       ${ui.calPick ? `<div class="sidemenu">${routeMenuButtons(pick[0], pick[1])}</div>` : ''}
       <dl><dt>Antal besøg</dt><dd>${e.n}</dd><dt>Planlagt omsætning</dt><dd>${kr(Math.round(e.sum))}</dd><dt>Inkl. moms</dt><dd>${kr(Math.round(e.sum * 1.25))}</dd>
-      <dt>Tidsforbrug</dt><dd>${D.hm(e.min)} t</dd><dt>Forventet kørsel</dt><dd>${D.hm(e.drive)} t (${e.km} km)</dd><dt>Provision</dt><dd>${kr(Math.round(e.prov))}</dd>
+      <dt>Tidsforbrug</dt><dd>${D.hm(e.min)} t</dd><dt>Forventet kørsel</dt><dd>${e.google ? '' : '≈ '}${D.hm(e.drive)} t (${e.km} km)</dd><dt>Provision</dt><dd>${kr(Math.round(e.prov))}</dd>
       <dt>Oms. pr. time</dt><dd>${kr(Math.round(e.perHour))}</dd><dt>Timeløn (provision)</dt><dd>${kr(Math.round(e.wage))}</dd></dl>
       <h3>Fakturering</h3><dl>${ecoReal() ? (() => { const od = open.filter((l) => l.dueDate && l.dueDate < t); return `<dt><a href="#" data-tab="faktura">Ikke betalt til tiden</a></dt><dd${od.length ? ' style="color:var(--bad)"' : ''}>${od.length} · ${kr(Math.round(od.reduce((s2, l) => s2 + (l.remainder ?? l.gross ?? 0), 0)))}</dd>`; })()
         : `<dt><a href="#" data-tab="faktura">Klar til fakturering</a></dt><dd>${q.length} · ${kr(Math.round(q.reduce((s2, v) => s2 + D.visitTotal(v), 0)))}</dd>`}
       <dt>Åbne fakturaer</dt><dd>${open.length} · ${kr(Math.round(open.reduce((s2, l) => s2 + (l.remainder ?? l.total * 1.25), 0)))}</dd></dl>
-      <p class="small mute">Kørsel = luftlinje × 1,3 ved 50 km/t. Træk et navn til en anden dag for at flytte.</p></aside>
+      <p class="small mute">${e.google ? 'Kørsel fra Google Maps (fra og til startadressen).' : e.gWait ? 'Henter køretider fra Google …' : 'Kørsel ≈ luftlinje × 1,3 ved 50 km/t (Google-nøgle mangler).'} Træk et navn til en anden dag for at flytte.</p></aside>
   </div>`;
   document.getElementById('calRoute').onchange = (ev) => { ui.calRoute = ev.target.value; render(); };
   $view.querySelectorAll('.vline[draggable=true]').forEach((ch) => ch.addEventListener('dragstart', (ev) => ev.dataTransfer.setData('text/plain', ui.visSel?.has(ch.dataset.visit) && ui.visSel.size > 1 ? 'many:' + [...ui.visSel].join(',') : ch.dataset.visit)));
