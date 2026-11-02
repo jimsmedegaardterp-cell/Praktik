@@ -34,6 +34,18 @@ Tager ca. 10 minutter. Du kan bruge samme Supabase-konto som til andre apps, men
 3. Vælg **Upload de data, der ligger på denne computer** (hvis du har importeret kunderne) eller **Start tomt**.
 4. Opret dine medarbejdere under **Admin → Medarbejdere**, og lav en **invitationskode** til hver under **Admin → Brugere og adgang**.
 
+## To-trinslogin (admin)
+- Admin skal slå to-trinslogin til ved første login (QR-kode → godkendelses-app). Databasen afviser derefter alt fra en session uden kode.
+- Supabase: **Authentication → Multi-Factor** – "TOTP (App Authenticator)" skal være slået til (standard).
+- Tilføj en **ekstra enhed** under Admin → Brugere og adgang (fx kodeordsmanager), så du ikke låses ude.
+
+### Mistet enhed
+Supabase → **SQL Editor** → kør (ret e-mailen):
+```sql
+delete from auth.mfa_factors where user_id = (select id from auth.users where email = 'din@mail.dk');
+```
+Log derefter ind med kodeord – appen beder dig sætte to-trinslogin op igen.
+
 ## GDPR og drift – SKAL VERIFICERES
 - Indgå Supabase's databehandleraftale (DPA) under organisationens indstillinger.
 - Gratis-planen kan sætte projekter på pause efter en periode uden aktivitet og har begrænset backup. Tjek gældende vilkår; overvej betalt plan før rigtig drift.

@@ -13,7 +13,7 @@ import { SupabaseCloud, MemoryCloud } from './cloud.js';
 import { SUPABASE } from './config.js';
 import * as KV from './store.js';
 
-export const VERSION = '2026-11-01 #31';
+export const VERSION = '2026-11-02 #32';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -1138,6 +1138,10 @@ document.addEventListener('click', async (e) => {
         if (/service_role/.test((() => { try { return atob((key2.split('.')[1] || '').replace(/-/g, '+').replace(/_/g, '/')); } catch { return ''; } })()) || /^sb_secret_/.test(key2)) return toast('Det er den hemmelige nøgle – brug den offentlige anon/publishable-nøgle');
         localStorage.setItem('vindue-cloudconf', JSON.stringify({ url, anonKey: key2 })); return bootCloud(); }
       case 'chPw': return changePassword();
+      case 'mfaStart': try { ui._mfaNew = await cloud.mfaEnroll('Telefon'); } catch (er) { const g = document.getElementById('gerr'); if (g) g.textContent = danishAuthError(er.message); return; } return render();
+      case 'mfaAdd': return addMfaDevice();
+      case 'mfaDel': { const mf = await cloud.mfaStatus(); if (mf.factors.length < 2 && member.role === 'admin') return toast('Tilføj en anden enhed først – admin skal have mindst én');
+        if (!confirm('Fjern denne enhed fra to-trinslogin?')) return; await cloud.mfaUnenroll(id); toast('Enhed fjernet'); return render(); }
       case 'cfMemory': localStorage.setItem('vindue-cloudconf', JSON.stringify({ url: 'memory', anonKey: '' })); return bootCloud();
       case 'routeMenu': return routeMenu(b.dataset.r, b.dataset.d);
       case 'rmMove': { const { rid, day } = ui._rm; document.getElementById('dlg').close(); return bulkDialog(db.visits.filter((v) => v.routeId === rid && v.plannedDate === day), `Flyt ${route(rid).name} ${fmt(day)}`); }
@@ -1238,6 +1242,22 @@ function renderGate() {
     <form id="gform"><label><span>E-mail</span><input name="email" type="email" autocomplete="username" required value="${esc(ui._gEmail || '')}"></label><label><span>Kodeord</span><input name="pw" type="password" autocomplete="current-password" required minlength="8"></label>
     <div class="row"><button class="pri" value="in">Log ind</button><button value="up">Opret ny bruger</button><span class="sp"></span><button type="button" class="link" data-act="gForgot">Glemt kodeord?</button></div><p class="small" id="gerr" style="color:var(--bad)"></p></form>
     <p class="small mute">Ny medarbejder? Opret en bruger med din egen e-mail, og indtast derefter den invitationskode, du har fået.</p>`);
+  if (gate === 'mfa') { const fs = ui._mfa?.factors || [];
+    $view.innerHTML = box(`<h2>To-trinslogin</h2><p>Åbn din godkendelses-app, og skriv den 6-cifrede kode for <b>Sindal Vinduespolering</b>.</p>
+    <form id="gform">${fs.length > 1 ? `<label><span>Enhed</span><select name="factor">${fs.map((f) => `<option value="${esc(f.id)}">${esc(f.name)}</option>`).join('')}</select></label>` : `<input type="hidden" name="factor" value="${esc(fs[0]?.id || '')}">`}
+    <label><span>Kode</span><input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,7}" maxlength="7" required autofocus style="font-size:1.4em;letter-spacing:4px;max-width:180px"></label>
+    <div class="row"><button class="pri" value="mfa">Bekræft</button><span class="sp"></span><button type="button" class="link" data-act="gLogout">Log ud</button></div><p class="small" id="gerr" style="color:var(--bad)"></p></form>
+    <p class="small mute">Mistet telefonen? Se "Mistet enhed" i vindue/supabase/OPSÆTNING.md.</p>`); }
+  if (gate === 'mfaEnroll') { const n = ui._mfaNew;
+    $view.innerHTML = box(`<h2>Slå to-trinslogin til</h2><p>Som admin kan du se og ændre alle kunder, så kontoen skal beskyttes med en kode fra telefonen ud over kodeordet.</p>
+    <ol class="small"><li>Installér en godkendelses-app på telefonen, fx <b>Google Authenticator</b>, <b>Microsoft Authenticator</b> eller din kodeordsmanager (1Password, Bitwarden …).</li>
+    <li>Tryk <b>Vis QR-kode</b>, og scan den med appen.</li><li>Skriv den 6-cifrede kode, appen viser.</li></ol>
+    ${n ? `${n.qr ? `<p style="text-align:center"><img src="${n.qr}" alt="QR-kode" style="width:200px;height:200px;background:#fff;padding:8px;border-radius:8px"></p>` : ''}
+      <p class="small">Kan du ikke scanne? Indtast nøglen manuelt: <b class="code" style="word-break:break-all">${esc(n.secret)}</b></p>
+      <form id="gform"><input type="hidden" name="factor" value="${esc(n.id)}"><label><span>Kode fra appen</span><input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" required autofocus style="font-size:1.4em;letter-spacing:4px;max-width:180px"></label>
+      <div class="row"><button class="pri" value="mfaNew">Aktivér</button><span class="sp"></span><button type="button" class="link" data-act="gLogout">Log ud</button></div><p class="small" id="gerr" style="color:var(--bad)"></p></form>`
+    : `<div class="row"><button class="pri" data-act="mfaStart">Vis QR-kode</button><span class="sp"></span><button class="link" data-act="gLogout">Log ud</button></div><p class="small" id="gerr" style="color:var(--bad)"></p>`}
+    <p class="small mute">Tip: Tilføj senere en ekstra enhed under Admin → Brugere og adgang, så du ikke er låst ude, hvis telefonen bliver væk.</p>`); }
   if (gate === 'confirm') $view.innerHTML = box(`<h2>Tjek din e-mail</h2><p>Vi har sendt et link til <b>${esc(ui._gEmail)}</b>. Klik på det for at bekræfte, og log så ind her.</p><button data-act="gBack">Til login</button>`);
   if (gate === 'recovery') $view.innerHTML = box(`<h2>Nyt kodeord</h2><form id="gform"><label><span>Nyt kodeord (mindst 8 tegn)</span><input name="pw" type="password" autocomplete="new-password" required minlength="8"></label><button class="pri" value="newpw">Gem</button><p class="small" id="gerr" style="color:var(--bad)"></p></form>`);
   if (gate === 'onboard') $view.innerHTML = box(`<h2>Velkommen</h2><p>Du er logget ind som <b>${esc(ui._gEmail)}</b>, men er ikke tilknyttet et firma endnu.</p>
@@ -1253,12 +1273,13 @@ function renderGate() {
     try {
       if (v === 'in') { ui._gEmail = fd.email.trim(); await cloud.signIn(ui._gEmail, fd.pw); await afterLogin(); }
       else if (v === 'up') { ui._gEmail = fd.email.trim(); if ((fd.pw || '').length < 8) throw new Error('Kodeord skal være mindst 8 tegn'); const r = await cloud.signUp(ui._gEmail, fd.pw); if (r.needsConfirm) { gate = 'confirm'; render(); } else await afterLogin(); }
+      else if (v === 'mfa' || v === 'mfaNew') { await cloud.mfaVerify(fd.factor, fd.code); if (v === 'mfaNew') toast('To-trinslogin er slået til ✓'); await afterLogin(); }
       else if (v === 'newpw') { await cloud.updatePassword(fd.pw); toast('Kodeord gemt'); await afterLogin(); }
       else if (v === 'code') { if (!fd.code.trim()) throw new Error('Indtast koden'); await cloud.acceptInvite(fd.code); await afterLogin(true); }
       else if (v === 'org') { await cloud.createOrg(fd.org); member = null; await afterLogin(false, true); }
     } catch (err2) { out.textContent = danishAuthError(err2.message); } };
 }
-const danishAuthError = (m) => (/Invalid login credentials/i.test(m) ? 'Forkert e-mail eller kodeord' : /different from the old/i.test(m) ? 'Det nye kodeord skal være forskelligt fra det gamle' : /Password should be/i.test(m) ? 'Kodeordet er for svagt – brug mindst 8 tegn' : /reauthenticat/i.test(m) ? 'Supabase kræver ny bekræftelse – log ud og ind, og prøv igen' : /Email not confirmed/i.test(m) ? 'E-mailen er ikke bekræftet endnu – tjek din indbakke' : /already registered|already exists/i.test(m) ? 'Der findes allerede en bruger med den e-mail – log ind i stedet' : /rate limit/i.test(m) ? 'For mange forsøg – vent lidt og prøv igen' : m);
+const danishAuthError = (m) => (/Invalid login credentials/i.test(m) ? 'Forkert e-mail eller kodeord' : /Invalid TOTP|invalid.*code/i.test(m) ? 'Forkert kode – prøv igen (koden skifter hvert 30. sekund)' : /friendly name.*exists/i.test(m) ? 'Der findes allerede en enhed med det navn' : /AAL2 required|aal2/i.test(m) ? 'Kræver to-trinslogin – log ud og ind igen' : /different from the old/i.test(m) ? 'Det nye kodeord skal være forskelligt fra det gamle' : /Password should be/i.test(m) ? 'Kodeordet er for svagt – brug mindst 8 tegn' : /reauthenticat/i.test(m) ? 'Supabase kræver ny bekræftelse – log ud og ind, og prøv igen' : /Email not confirmed/i.test(m) ? 'E-mailen er ikke bekræftet endnu – tjek din indbakke' : /already registered|already exists/i.test(m) ? 'Der findes allerede en bruger med den e-mail – log ind i stedet' : /rate limit/i.test(m) ? 'For mange forsøg – vent lidt og prøv igen' : m);
 
 async function bootCloud() {
   const conf = cloudConf(); if (!conf) return;
@@ -1273,7 +1294,14 @@ async function bootCloud() {
 async function afterLogin(joined = false, created = false) {
   const sess = await cloud.session(); if (!sess) { gate = 'login'; return render(); }
   ui._gEmail = sess.user.email;
+  // To-trinslogin: har brugeren en godkendt enhed, skal koden indtastes før data kan læses (håndhæves også i databasen)
+  let mf = null;
+  if (cloud.mfaStatus) { mf = await cloud.mfaStatus(); if (mf.next === 'aal2' && mf.current !== 'aal2') { ui._mfa = mf; gate = 'mfa'; return render(); } }
   const m = await cloud.membership(); if (!m) { gate = 'onboard'; return render(); }
+  // admin skal have to-trinslogin
+  if (created) ui._created = true; else if (ui._created) { created = true; }
+  if (m.role === 'admin' && mf && !mf.factors.length) { ui._mfaNew = null; gate = 'mfaEnroll'; return render(); }
+  ui._created = false;
   member = { ...m, userId: sess.user.id };
   const sk = `vindue-sync-${m.orgId}-${sess.user.id}`; let st; try { st = await KV.get(sk); } catch {}
   // Lokale data hører til den indloggede bruger (en medarbejder har kun en del af firmaets data)
@@ -1316,7 +1344,7 @@ function changePassword() {
     if (f.pw.length < 8) return 'Kodeord skal være mindst 8 tegn';
     if (f.pw !== f.pw2) return 'De to nye kodeord er ikke ens';
     if (f.pw === f.old) return 'Det nye kodeord er det samme som det gamle';
-    try { await cloud.signIn(member.email, f.old); } catch { return 'Det nuværende kodeord er forkert'; }
+    if (!(await cloud.checkPassword(member.email, f.old))) return 'Det nuværende kodeord er forkert';
     try { await cloud.updatePassword(f.pw); } catch (e) { return danishAuthError(e.message); }
     toast('Kodeord ændret');
   });
@@ -1344,8 +1372,23 @@ async function cloudCard() {
       <h3>Invitér</h3><div class="row"><select id="ivEmp">${db.employees.filter((e) => !e.inactive).map((e) => `<option value="${e.id}">${esc(e.name)}</option>`).join('')}</select><select id="ivRole"><option value="medarbejder">Medarbejder</option><option value="admin">Admin</option></select><button class="pri" data-act="ivCreate">Lav invitationskode</button></div>
       <p class="small mute">Giv koden til personen. De åbner appen, opretter en bruger med deres egen e-mail og indtaster koden. Koden virker én gang i 14 dage.</p>
       ${inv.length ? `<table><tr><th>Kode</th><th>Til</th><th>Udløber</th><th></th></tr>${inv.map((i) => `<tr><td><b class="code">${esc(i.code)}</b></td><td>${esc(emp(i.employee_id)?.name || '')} (${i.role})</td><td class="small">${esc(String(i.expires_at).slice(0, 10))}</td><td><button class="small" data-act="ivDel" data-id="${esc(i.code)}">Slet</button></td></tr>`).join('')}</table>` : ''}
+      <h3>To-trinslogin (dig)</h3><div id="mfaList" class="small mute">Henter …</div>
       <div class="row" style="margin-top:10px"><button data-act="syncNow">Synkronisér nu</button><button data-act="chPw">Skift kodeord</button><button data-act="logout">Log ud</button></div>`;
+    if (cloud.mfaStatus) { const mf = await cloud.mfaStatus(); const box = document.getElementById('mfaList');
+      if (box) box.outerHTML = `<table>${mf.factors.map((f) => `<tr><td>🔐 ${esc(f.name)}</td><td class="small mute">tilføjet ${esc(String(f.created || '').slice(0, 10))}</td><td><button class="small" data-act="mfaDel" data-id="${esc(f.id)}">Fjern</button></td></tr>`).join('') || '<tr><td class="mute">Ingen enheder</td></tr>'}</table>
+        <div class="row"><button data-act="mfaAdd">+ Tilføj ekstra enhed</button></div><p class="small mute">Anbefalet: to enheder (fx telefon + kodeordsmanager), så du ikke låses ude, hvis telefonen bliver væk.</p>`; }
   } catch (e) { el.innerHTML += `<p class="warn-t">${esc(e.message)}</p>`; }
+}
+/** Ekstra enhed til to-trinslogin */
+async function addMfaDevice() {
+  const name = (prompt('Navn på enheden (fx "1Password" eller "Ekstra telefon")', 'Ekstra enhed') || '').trim(); if (!name) return;
+  let n; try { n = await cloud.mfaEnroll(name); } catch (e) { return toast(danishAuthError(e.message)); }
+  openDlg(`<h2>Tilføj enhed: ${esc(name)}</h2>${n.qr ? `<p style="text-align:center"><img src="${n.qr}" alt="QR-kode" style="width:200px;height:200px;background:#fff;padding:8px;border-radius:8px"></p>` : ''}
+    <p class="small">Eller indtast nøglen: <b class="code" style="word-break:break-all">${esc(n.secret)}</b></p>
+    <label><span>Kode fra den nye enhed</span><input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" required></label>`, async (f) => {
+    try { await cloud.mfaVerify(n.id, f.code); } catch (e) { return danishAuthError(e.message); }
+    toast('Enhed tilføjet ✓');
+  });
 }
 
 const sel = document.getElementById('user');

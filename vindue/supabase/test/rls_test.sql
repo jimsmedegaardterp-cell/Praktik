@@ -53,3 +53,17 @@ select 'fremmed ser stadig kun eget' as t, count(*) from records;
 -- anon
 reset role; set role anon; select pg_temp.as_user('');
 select 'anon læser (skal fejle)' as t; select count(*) from records;
+
+-- To-trinslogin
+reset role; insert into auth.mfa_factors(user_id, status) values ('00000000-0000-0000-0000-00000000000a', 'verified');
+set role authenticated; select pg_temp.as_user('00000000-0000-0000-0000-00000000000a'); select set_config('request.jwt.claims', '{"aal":"aal1"}', false);
+select 'jim med MFA, uden kode: ser records (0)' as t, count(*) from records;
+select 'jim uden kode: ser members (0)' as t, count(*) from members;
+select 'jim uden kode skriver (skal fejle)' as t; insert into records(org_id, kind, id, data) values ((select id from orgs where name = 'Sindal Vinduespolering'), 'customer', 'cx', '{}');
+select 'jim uden kode laver invitation (skal fejle)' as t; select public.create_invite((select id from orgs where name = 'Sindal Vinduespolering'), 'admin', null, null);
+select set_config('request.jwt.claims', '{"aal":"aal2"}', false);
+select 'jim med kode: ser records' as t, count(*) > 0 from records;
+insert into records(org_id, kind, id, data) select org_id, 'customer', 'cx', '{}' from members where user_id = auth.uid();
+select 'jim med kode skriver' as t, count(*) from records where id = 'cx';
+select 'mads uden MFA påvirkes ikke' as t; select pg_temp.as_user('00000000-0000-0000-0000-00000000000b'); select set_config('request.jwt.claims', '{"aal":"aal1"}', false);
+select 'mads ser stadig egne' as t, count(*) from records;
