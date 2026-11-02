@@ -14,7 +14,7 @@ import { SUPABASE } from './config.js';
 import { showRouteMap } from './map.js';
 import * as KV from './store.js';
 
-export const VERSION = '2026-11-02 #38';
+export const VERSION = '2026-11-02 #39';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -339,7 +339,9 @@ function kalender() {
   const wv = db.visits.filter((v) => v.plannedDate >= ws && v.plannedDate <= D.addDays(ws, 6) && (!rf || v.routeId === rf));
   // weekend vises kun, når der ligger besøg på den
   const days = [0, 1, 2, 3, 4, 5, 6].map((i) => D.addDays(ws, i)).filter((d, i) => i < 5 || wv.some((v) => v.plannedDate === d));
-  const e = econ(wv);
+  if (ui.calDay && (ui.calDay < ws || ui.calDay > D.addDays(ws, 6))) ui.calDay = null;
+  const pv = ui.calDay ? wv.filter((v) => v.plannedDate === ui.calDay) : wv;
+  const e = econ(pv);
   const q = D.invoiceQueue(db.visits, db.invoiceLinks); const open = db.invoiceLinks.filter((l) => l.status === 'bogført' && l.payment !== 'betalt');
   const t = todayIso();
   $view.innerHTML = `${alertsStrip()}
@@ -348,17 +350,20 @@ function kalender() {
     ${ui.visSel?.size ? `<span class="pill">${ui.visSel.size} kunder valgt</span><button data-act="moveSelVisits">Flyt valgte kunder …</button><button data-act="clearVisSel">Ryd</button>` : ''}
     ${ui.calSel?.size ? `<span class="pill">${ui.calSel.size} ruter valgt</span><button class="pri" data-act="printSel">🖨 Udskriv valgte</button><button data-act="clearSel">Ryd</button>` : `<span class="small mute hide-m">Ctrl+klik: vælg ruter eller kunder</span>`}<button data-act="selWeek">Vælg alle i ugen</button>
     <select id="calRoute"><option value="">Alle ruter</option>${db.routes.map((r) => `<option value="${r.id}" ${rf === r.id ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</select></div>
-  <div class="cal" style="--ndays:${days.length}">
+  <div class="cal timeline" style="--ndays:${days.length}">
+    <div class="weekwrap"><div class="taxis">${(() => { const mx = Math.max(480, ...days.map((d) => { const vs = wv.filter((v) => v.plannedDate === d && v.status !== 'aflyst'); return mins(vs) + 30; })); return Array.from({ length: Math.ceil(mx / 60) + 1 }, (_, h) => `<div>${h === 0 ? 'Start' : h === 1 ? '1 time' : h + ' timer'}</div>`).join(''); })()}</div>
     <div class="week">${days.map((d) => { const vs = wv.filter((v) => v.plannedDate === d); const closed = D.isClosedDay(d, db.closedDays);
       const groups = new Map(); for (const v of vs) { const k = v.routeId || ''; groups.set(k, [...(groups.get(k) || []), v]); }
-      return `<div class="day ${closed ? 'closed' : ''} ${d === t ? 'today' : ''}" data-day="${d}"><div class="dayhead"><button class="daybtn" data-act="dayOpts" data-d="${d}" title="Ferie/fridag, dagsplan, flyt dagen">${fmt(d)}</button><span class="sp"></span>${vs.length ? `<button class="icon ${db.dayPlans?.[d] ? 'on' : ''}" data-act="dayPlan" data-d="${d}" title="Dagsplan: rækkefølge og køretid for hele dagen">🗺${db.dayPlans?.[d]?.legs ? ` <span class="small">${D.hm(Math.round(DP.sumLegs(db.dayPlans[d].legs).sec / 60))}</span>` : ''}</button>` : ''}${vs.some((v) => v.status === 'planlagt') ? `<button class="icon" data-act="dayMenu" data-d="${d}" title="Flyt/aflys/udfør hele dagen">⋯</button>` : ''}</div>${closed ? `<div class="closedlbl">${esc(db.closedInfo?.[d]?.label || (D.weekday(d) >= 5 ? 'Weekend' : D.danishHolidays(+d.slice(0, 4)).has(d) ? 'Helligdag' : 'Lukket'))}</div>` : ''}
+      return `<div class="day ${closed ? 'closed' : ''} ${d === t ? 'today' : ''} ${ui.calDay === d ? 'picked' : ''}" data-day="${d}" title="Klik på et tomt felt: vis dagens tal · Dobbeltklik: dagsplan"><div class="dayhead"><button class="daybtn" data-act="dayOpts" data-d="${d}" title="Ferie/fridag, dagsplan, flyt dagen">${fmt(d)}</button><span class="sp"></span>${vs.length ? `<button class="icon ${db.dayPlans?.[d] ? 'on' : ''}" data-act="dayPlan" data-d="${d}" title="Dagsplan: rækkefølge og køretid for hele dagen">🗺${db.dayPlans?.[d]?.legs ? ` <span class="small">${D.hm(Math.round(DP.sumLegs(db.dayPlans[d].legs).sec / 60))}</span>` : ''}</button>` : ''}${vs.some((v) => v.status === 'planlagt') ? `<button class="icon" data-act="dayMenu" data-d="${d}" title="Flyt/aflys/udfør hele dagen">⋯</button>` : ''}</div>${closed ? `<div class="closedlbl">${esc(db.closedInfo?.[d]?.label || (D.weekday(d) >= 5 ? 'Weekend' : D.danishHolidays(+d.slice(0, 4)).has(d) ? 'Helligdag' : 'Lukket'))}</div>` : ''}
         ${[...groups.entries()].map(([rid, gv]) => { const r = route(rid); const order = r?.order || []; gv.sort((a, b) => ((order.indexOf(a.addressId) + 1 || 999) - (order.indexOf(b.addressId) + 1 || 999)));
           const allDone = gv.every((v) => v.status !== 'planlagt' && v.status !== 'udsat');
           const key = (r?.id || '') + '|' + d;
-          return `<div class="rblock ${allDone ? 'done' : ''} ${r && ui.calSel?.has(key) ? 'sel' : ''}" ${r ? `data-rsel="${key}"` : ''}>${r ? `<div class="grip" data-act="routeMenu" data-r="${r.id}" data-d="${d}" draggable="true" data-dragroute="${key}" title="Klik: muligheder · Træk: flyt ruten · Ctrl+klik: vælg">⋮⋮</div>` : ''}<div class="rhead" ${r ? `data-route="${r.id}" data-day="${d}" draggable="true" data-dragroute="${key}" title="Klik: færdigmeld · Træk: flyt hele ruten"` : ''}><b>${esc(r?.name ?? 'Uden rute')}</b><span class="badge">${gv.length}</span></div>
-          <div class="rmeta"><span>${D.hm(mins(gv))} t · ${kr(gv.filter((v) => v.status !== 'aflyst').reduce((s2, v) => s2 + D.visitTotal(v), 0))}</span>${r ? `<button class="icon" data-act="printRoute" data-r="${r.id}" data-d="${d}" title="Udskriv rutesedel">🖨</button>` : ''}</div>
-          ${gv.map((v) => `<div class="vline ${v.status} ${ui.visSel?.has(v.id) ? 'vsel' : ''}" draggable="${v.status === 'planlagt' || v.status === 'udsat'}" data-visit="${v.id}">${esc(cust(v.customerId)?.name)}</div>`).join('')}</div>`; }).join('')}</div>`; }).join('')}</div>
-    <aside class="econ"><h3>Total for uge ${D.isoWeek(ws)}</h3>
+          const gd = r ? (ui._google || {})[gKey('route:' + r.id + d, gv.filter((v) => v.status !== 'aflyst').map((v) => v.id))] : null; const drv = gd?.legs ? Math.round(DP.sumLegs(gd.legs).sec / 60) : 0;
+          const bm = mins(gv.filter((v) => v.status !== 'aflyst')) + drv;
+          return `<div style="--min:${Math.max(bm, 20)}" class="rblock ${allDone ? 'done' : ''} ${r && ui.calSel?.has(key) ? 'sel' : ''}" ${r ? `data-rsel="${key}"` : ''}>${r ? `<div class="grip" data-act="routeMenu" data-r="${r.id}" data-d="${d}" draggable="true" data-dragroute="${key}" title="Klik: muligheder · Træk: flyt ruten · Ctrl+klik: vælg">⋮⋮</div>` : ''}<div class="rhead" ${r ? `data-route="${r.id}" data-day="${d}" draggable="true" data-dragroute="${key}" title="Klik: færdigmeld · Træk: flyt hele ruten"` : ''}><b>${esc(r?.name ?? 'Uden rute')}</b><span class="badge">${gv.length}</span></div>
+          <div class="rmeta"><span>${D.hm(bm)} t${drv ? ' inkl. kørsel' : ''} · ${kr(gv.filter((v) => v.status !== 'aflyst').reduce((s2, v) => s2 + D.visitTotal(v), 0))}</span>${r ? `<button class="icon" data-act="printRoute" data-r="${r.id}" data-d="${d}" title="Udskriv rutesedel">🖨</button>` : ''}</div>
+          ${gv.map((v) => `<div class="vline ${v.status} ${ui.visSel?.has(v.id) ? 'vsel' : ''}" draggable="${v.status === 'planlagt' || v.status === 'udsat'}" data-visit="${v.id}">${esc(cust(v.customerId)?.name)}</div>`).join('')}</div>`; }).join('')}</div>`; }).join('')}</div></div>
+    <aside class="econ"><h3>${ui.calDay ? `Total for ${fmt(ui.calDay)}` : `Total for uge ${D.isoWeek(ws)}`}</h3>${ui.calDay ? `<p class="small"><a href="#" data-act="calWeek">← Vis hele ugen</a> · <a href="#" data-act="dayPlan" data-d="${ui.calDay}">🗺 Dagsplan</a></p>` : ''}
       <dl><dt>Antal besøg</dt><dd>${e.n}</dd><dt>Planlagt omsætning</dt><dd>${kr(Math.round(e.sum))}</dd><dt>Inkl. moms</dt><dd>${kr(Math.round(e.sum * 1.25))}</dd>
       <dt>Tidsforbrug</dt><dd>${D.hm(e.min)} t</dd><dt>Forventet kørsel</dt><dd>${D.hm(e.drive)} t (${e.km} km)</dd><dt>Provision</dt><dd>${kr(Math.round(e.prov))}</dd>
       <dt>Oms. pr. time</dt><dd>${kr(Math.round(e.perHour))}</dd><dt>Timeløn (provision)</dt><dd>${kr(Math.round(e.wage))}</dd></dl>
@@ -371,6 +376,8 @@ function kalender() {
   $view.querySelectorAll('.vline[draggable=true]').forEach((ch) => ch.addEventListener('dragstart', (ev) => ev.dataTransfer.setData('text/plain', ui.visSel?.has(ch.dataset.visit) && ui.visSel.size > 1 ? 'many:' + [...ui.visSel].join(',') : ch.dataset.visit)));
   $view.querySelectorAll('[data-dragroute]').forEach((g) => g.addEventListener('dragstart', (ev) => { ev.stopPropagation(); ev.dataTransfer.setData('text/plain', 'route:' + g.dataset.dragroute); }));
   $view.querySelectorAll('.day').forEach((d) => {
+    d.addEventListener('click', (ev) => { if (ev.target.closest('button, .rblock, a, input, select')) return; ui.calDay = ui.calDay === d.dataset.day ? null : d.dataset.day; render(); });
+    d.addEventListener('dblclick', (ev) => { if (ev.target.closest('button, .rblock, a')) return; if (wv.some((v) => v.plannedDate === d.dataset.day)) { ui.tab = 'dag'; ui.planDay = d.dataset.day; ui._planMode = db.dayPlans?.[d.dataset.day]?.mode || 'ruter'; render(); } });
     d.addEventListener('dragover', (ev) => { ev.preventDefault(); d.classList.add('drop'); });
     d.addEventListener('dragleave', () => d.classList.remove('drop'));
     d.addEventListener('drop', (ev) => { ev.preventDefault(); d.classList.remove('drop'); const id = ev.dataTransfer.getData('text/plain');
@@ -784,8 +791,9 @@ function mobil() {
   const left = stops.filter((v) => (v.status === 'planlagt' || v.status === 'udsat') && !pending.has(v.id));
   $view.innerHTML = `<div class="mob-head"><button data-act="dd" data-d="-1" aria-label="Forrige dag">‹</button><div class="sp"><b>${fmt(day)} ${day.slice(0, 4)}</b><div class="small mute">${stops.length - left.length}/${stops.length} færdige · ${D.hm(mins(stops))} t</div></div><button data-act="dd" data-d="1" aria-label="Næste dag">›</button></div>
   <div class="toolbar"><button data-act="smsTomorrow">📱 SMS til morgendagens rute</button>${ui.offline || ui.outbox.length ? `<span class="pill warn">${ui.offline ? 'Offline' : ''} ${ui.outbox.length ? ui.outbox.length + ' venter på net' : ''}</span>` : ''}</div>
-  ${stops.map((v, i) => { const c = cust(v.customerId), a = addr(v.addressId); const done = (v.status !== 'planlagt' && v.status !== 'udsat') || pending.has(v.id); const d = dr[v.id] || {};
-    return `<div class="stop ${done ? 'done' : ''}"><div class="stop-h"><span class="num">${i + 1}</span><div class="sp"><h3>${esc(c.name)}</h3><a class="small" target="_blank" rel="noopener" href="${mapsDirections(a.street)}">${esc(a.street)}</a></div>${done ? `<span class="pill ok">${pending.has(v.id) ? 'Venter på net' : esc(doneLabel(v))}</span>` : `<span class="small mute">${esc(v.service)}</span>`}</div>
+  ${left.length ? '' : stops.length ? '<div class="card center"><b>🎉 Alle dagens kunder er færdige</b></div>' : ''}
+  ${stops.map((v, i) => { const c = cust(v.customerId), a = addr(v.addressId); const done = (v.status !== 'planlagt' && v.status !== 'udsat') || pending.has(v.id); const d = dr[v.id] || {}; const isNext = left[0]?.id === v.id;
+    return `<div class="stop ${done ? 'done' : ''} ${isNext ? 'next' : ''}" ${isNext ? 'id="nextStop"' : ''}>${isNext ? `<div class="nextbar"><span>Næste kunde</span><a class="btn pri" target="_blank" rel="noopener" href="${mapsDirections(a.street)}">🚗 Navigér hertil</a></div>` : ''}<div class="stop-h"><span class="num">${i + 1}</span><div class="sp"><h3>${esc(c.name)}</h3><a class="small" target="_blank" rel="noopener" href="${mapsDirections(a.street)}">${esc(a.street)}</a></div>${done ? `<span class="pill ok">${pending.has(v.id) ? 'Venter på net' : esc(doneLabel(v))}</span>` : `<span class="small mute">${esc(v.service)}</span>`}</div>
       ${a.access ? `<div class="desc">${esc(a.access)}</div>` : ''}${c.rememberNext ? `<div class="desc warn-t">⚠ Husk: ${esc(c.rememberNext)}</div>` : ''}${c.callBefore ? '<div class="desc warn-t">📞 Ring før besøg</div>' : ''}
       ${(a.photos || []).length ? `<div class="thumbs big">${a.photos.map((ph) => `<img src="${ph.src}" data-act="photo" data-src="${ph.id}" data-a="${a.id}" alt="">`).join('')}</div>` : ''}
       ${done ? ((v.extras || []).length ? `<div>${extrasHtml(v, d, true)}</div>` : '') : `<div class="extras">${extrasHtml(v, d, false)}</div>${statusSeg(v, null, true)}`}</div>`; }).join('') || '<p class="mute center">Ingen besøg denne dag.</p>'}`;
@@ -795,7 +803,8 @@ function mobileStatus(id, val) {
   const v = db.visits.find((x) => x.id === id); const d = { ...(vdraft()[id] || {}), result: val };
   const go = (dd) => { if (ui.offline) { const ent = { visitId: id, result: dd.result === 'kontant' ? 'udfoert' : dd.result, opId: 'm:' + id, extras: dd.extras, cashAmount: dd.cashAmount, payMethod: dd.payMethod, split: defaultSplit(v) };
       if (dd.result === 'spring') return toast('Udsæt kræver net'); ui.outbox.push(ent); delete vdraft()[id]; toast('Gemt – sendes når der er net'); return render(); }
-    const r = applyDecisions([{ v, d: dd }]); toast(r.conflicts.length ? 'Konflikt: ' + r.conflicts[0] : `${cust(v.customerId).name}: ${STLABEL[dd.result]}`); save(); render(); };
+    const r = applyDecisions([{ v, d: dd }]); toast(r.conflicts.length ? 'Konflikt: ' + r.conflicts[0] : `${cust(v.customerId).name}: ${STLABEL[dd.result]}`); save(); render();
+    setTimeout(() => document.getElementById('nextStop')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50); };
   if (val === 'udfoert') return go(d);
   if (val === 'kontant') return openDlg(`<h2>💵 Betalt kontant – ${esc(cust(v.customerId).name)}</h2><label><span>Modtaget beløb (inkl. moms)</span><input name="amount" type="number" min="0" step="1" value="${Math.round(D.visitTotal({ ...v, extras: d.extras }) * 1.25)}" required></label>
     <p class="small mute">Betaler kunden med MobilePay eller kort, så tryk "Udført" – kunden får fakturaen på mail med betalingsknap.</p>`, (f) => go({ ...d, cashAmount: Number(f.amount) || 0, payMethod: 'kontant' }));
@@ -1205,6 +1214,7 @@ document.addEventListener('click', async (e) => {
         if (ui._planMode === 'manuel') ui._manual = [...ui._planOrder];
         S.audit(db, ui.user.id, 'dayplan.save', day, { mode: ui._planMode, source: g ? 'google' : 'skøn' }); toast('Dagsplan gemt – dagsruten følger den'); break; }
       case 'planClear': delete db.dayPlans[ui.planDay]; ui._manual = null; toast('Dagsplan fjernet – dagen følger de faste ruter'); break;
+      case 'calWeek': ui.calDay = null; break;
       case 'toggleRouteMap': ui.hideRouteMap = !ui.hideRouteMap; break;
       case 'planGoogle': { const day = ui.planDay; const ids = [...ui._planOrder]; const k = gKey(day + ui._planMode, ids, ui._planMode === 'optimal');
         if (ui._google) delete ui._google[k]; googleFor(k, ids, { start: startPoint(), optimize: ui._planMode === 'optimal' }); break; }
