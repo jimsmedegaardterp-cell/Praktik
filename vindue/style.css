@@ -70,7 +70,7 @@ label{display:block;margin:8px 0}label>span{display:block;font-size:12px;color:v
 /* Kalender + økonomipanel – hele bredden, ingen vandret scroll */
 .cal{display:grid;grid-template-columns:minmax(0,1fr) 270px;gap:14px;align-items:start}
 @media (max-width:1100px){.cal{grid-template-columns:minmax(0,1fr)}}
-.week{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
+.week{display:grid;grid-template-columns:repeat(var(--ndays,5),minmax(0,1fr));gap:10px}
 @media (max-width:820px){.week{grid-template-columns:minmax(0,1fr)}}
 .day{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:10px;min-height:140px;box-shadow:var(--shadow);min-width:0}
 .day.today{border-color:var(--pri);box-shadow:0 0 0 2px var(--pri-soft)}
@@ -155,3 +155,15 @@ tr.subhead td{background:var(--soft);font-size:13px}
 
 /* "hidden" skal altid skjule – også elementer med display:flex (fx fanerne bag login) */
 [hidden]{display:none!important}
+
+/* Faner: ikon kun på telefon; på telefon som bundmenu */
+.tabs .ti,.tabs .ts{display:none}
+@media (max-width:820px){
+  .tabs{position:fixed;top:auto;bottom:0;left:0;right:0;z-index:20;border-top:1px solid var(--line);border-bottom:0;padding:4px 4px calc(4px + env(safe-area-inset-bottom));gap:0;justify-content:space-around;overflow-x:auto;box-shadow:0 -2px 10px rgba(0,0,0,.06)}
+  .tabs button{flex:1 1 0;min-width:52px;display:flex;flex-direction:column;align-items:center;gap:1px;padding:5px 2px;border-radius:12px;font-size:11px;position:relative}
+  .tabs .ti{display:block;font-size:20px;line-height:1.1}
+  .tabs .tl{display:none}.tabs .ts{display:block;white-space:nowrap}
+  .tabs .pill{position:absolute;top:0;right:6px;font-size:10px;padding:0 5px}
+  body{padding-bottom:calc(70px + env(safe-area-inset-bottom))}
+  #toast{bottom:calc(84px + env(safe-area-inset-bottom))!important}
+}

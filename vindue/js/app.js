@@ -13,7 +13,7 @@ import { SupabaseCloud, MemoryCloud } from './cloud.js';
 import { SUPABASE } from './config.js';
 import * as KV from './store.js';
 
-export const VERSION = '2026-11-02 #36';
+export const VERSION = '2026-11-02 #37';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -92,13 +92,15 @@ const TABS = [
   ['kalender', 'Kalender', true], ['kunder', 'Kunder', true], ['mobil', 'Dagsrute', false], ['faktura', 'Fakturering', true],
   ['sms', 'Beskeder', true], ['import', 'Import', true], ['admin', 'Admin', true],
 ];
+const TABICON = { kalender: '📅', kunder: '👥', mobil: '🚐', faktura: '🧾', sms: '💬', import: '📥', admin: '⚙️' };
+const TABSHORT = { faktura: 'Faktura', sms: 'Beskeder' };
 function renderTabs() {
   const tabs = TABS.filter(([, , adm]) => !adm || isAdmin());
   if (ui.tab === 'overblik') ui.tab = 'kalender';
   if (!tabs.some(([k]) => k === ui.tab) && !((ui.tab === 'ruter' || ui.tab === 'dag' || ui.tab === 'print') && isAdmin())) ui.tab = tabs[0][0];
   const active = ui.tab === 'ruter' ? 'kunder' : (ui.tab === 'dag' || ui.tab === 'print') ? 'kalender' : ui.tab;
   const unread = db.smsMessages.filter((m) => m.dir === 'ind' && !m.read).length;
-  document.getElementById('tabs').innerHTML = tabs.map(([k, n]) => `<button data-tab="${k}" class="${active === k ? 'on' : ''}">${n}${k === 'sms' && unread ? ` <span class="pill bad">${unread}</span>` : ''}</button>`).join('');
+  document.getElementById('tabs').innerHTML = tabs.map(([k, n]) => `<button data-tab="${k}" class="${active === k ? 'on' : ''}"><span class="ti">${TABICON[k] || ''}</span><span class="tl">${n}</span><span class="ts">${TABSHORT[k] || n}</span>${k === 'sms' && unread ? ` <span class="pill bad">${unread}</span>` : ''}</button>`).join('');
 }
 function render() {
   renderNet();
@@ -331,19 +333,20 @@ function econ(vs) {
   return { n: live.length, sum, min, km: Math.round(km), drive: Math.round(km / 50 * 60), prov, perHour: hours ? sum / hours : 0, wage: hours ? prov / hours : 0 };
 }
 function kalender() {
-  const ws = ui.weekStart; const days = [0, 1, 2, 3, 4].map((i) => D.addDays(ws, i));
-  const rf = ui.calRoute || '';
+  const ws = ui.weekStart; const rf = ui.calRoute || '';
   const wv = db.visits.filter((v) => v.plannedDate >= ws && v.plannedDate <= D.addDays(ws, 6) && (!rf || v.routeId === rf));
+  // weekend vises kun, når der ligger besøg på den
+  const days = [0, 1, 2, 3, 4, 5, 6].map((i) => D.addDays(ws, i)).filter((d, i) => i < 5 || wv.some((v) => v.plannedDate === d));
   const e = econ(wv);
   const q = D.invoiceQueue(db.visits, db.invoiceLinks); const open = db.invoiceLinks.filter((l) => l.status === 'bogført' && l.payment !== 'betalt');
   const t = todayIso();
   $view.innerHTML = `${alertsStrip()}
   <div class="toolbar"><div class="seg"><button data-act="wk" data-d="-7">‹</button><button data-act="wk" data-d="0">I dag</button><button data-act="wk" data-d="7">›</button></div>
-    <h2 class="sp">Uge ${D.isoWeek(ws)} <span class="mute small">${fmt(ws)} – ${fmt(D.addDays(ws, 4))} ${ws.slice(0, 4)}</span></h2>
+    <h2 class="sp">Uge ${D.isoWeek(ws)} <span class="mute small">${fmt(ws)} – ${fmt(days[days.length - 1])} ${ws.slice(0, 4)}</span></h2>
     ${ui.visSel?.size ? `<span class="pill">${ui.visSel.size} kunder valgt</span><button data-act="moveSelVisits">Flyt valgte kunder …</button><button data-act="clearVisSel">Ryd</button>` : ''}
     ${ui.calSel?.size ? `<span class="pill">${ui.calSel.size} ruter valgt</span><button class="pri" data-act="printSel">🖨 Udskriv valgte</button><button data-act="clearSel">Ryd</button>` : `<span class="small mute hide-m">Ctrl+klik: vælg ruter eller kunder</span>`}<button data-act="selWeek">Vælg alle i ugen</button>
     <select id="calRoute"><option value="">Alle ruter</option>${db.routes.map((r) => `<option value="${r.id}" ${rf === r.id ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</select></div>
-  <div class="cal">
+  <div class="cal" style="--ndays:${days.length}">
     <div class="week">${days.map((d) => { const vs = wv.filter((v) => v.plannedDate === d); const closed = D.isClosedDay(d, db.closedDays);
       const groups = new Map(); for (const v of vs) { const k = v.routeId || ''; groups.set(k, [...(groups.get(k) || []), v]); }
       return `<div class="day ${closed ? 'closed' : ''} ${d === t ? 'today' : ''}" data-day="${d}"><div class="dayhead"><button class="daybtn" data-act="dayOpts" data-d="${d}" title="Ferie/fridag, dagsplan, flyt dagen">${fmt(d)}</button><span class="sp"></span>${vs.length ? `<button class="icon ${db.dayPlans?.[d] ? 'on' : ''}" data-act="dayPlan" data-d="${d}" title="Dagsplan: rækkefølge og køretid for hele dagen">🗺${db.dayPlans?.[d]?.legs ? ` <span class="small">${D.hm(Math.round(DP.sumLegs(db.dayPlans[d].legs).sec / 60))}</span>` : ''}</button>` : ''}${vs.some((v) => v.status === 'planlagt') ? `<button class="icon" data-act="dayMenu" data-d="${d}" title="Flyt/aflys/udfør hele dagen">⋯</button>` : ''}</div>${closed ? `<div class="closedlbl">${esc(db.closedInfo?.[d]?.label || (D.weekday(d) >= 5 ? 'Weekend' : D.danishHolidays(+d.slice(0, 4)).has(d) ? 'Helligdag' : 'Lukket'))}</div>` : ''}
@@ -357,7 +360,8 @@ function kalender() {
       <dl><dt>Antal besøg</dt><dd>${e.n}</dd><dt>Planlagt omsætning</dt><dd>${kr(Math.round(e.sum))}</dd><dt>Inkl. moms</dt><dd>${kr(Math.round(e.sum * 1.25))}</dd>
       <dt>Tidsforbrug</dt><dd>${D.hm(e.min)} t</dd><dt>Forventet kørsel</dt><dd>${D.hm(e.drive)} t (${e.km} km)</dd><dt>Provision</dt><dd>${kr(Math.round(e.prov))}</dd>
       <dt>Oms. pr. time</dt><dd>${kr(Math.round(e.perHour))}</dd><dt>Timeløn (provision)</dt><dd>${kr(Math.round(e.wage))}</dd></dl>
-      <h3>Fakturering</h3><dl><dt><a href="#" data-tab="faktura">Klar til fakturering</a></dt><dd>${q.length} · ${kr(Math.round(q.reduce((s2, v) => s2 + D.visitTotal(v), 0)))}</dd>
+      <h3>Fakturering</h3><dl>${ecoReal() ? (() => { const od = open.filter((l) => l.dueDate && l.dueDate < t); return `<dt><a href="#" data-tab="faktura">Ikke betalt til tiden</a></dt><dd${od.length ? ' style="color:var(--bad)"' : ''}>${od.length} · ${kr(Math.round(od.reduce((s2, l) => s2 + (l.remainder ?? l.gross ?? 0), 0)))}</dd>`; })()
+        : `<dt><a href="#" data-tab="faktura">Klar til fakturering</a></dt><dd>${q.length} · ${kr(Math.round(q.reduce((s2, v) => s2 + D.visitTotal(v), 0)))}</dd>`}
       <dt>Åbne fakturaer</dt><dd>${open.length} · ${kr(Math.round(open.reduce((s2, l) => s2 + (l.remainder ?? l.total * 1.25), 0)))}</dd></dl>
       <p class="small mute">Kørsel = luftlinje × 1,3 ved 50 km/t. Træk et navn til en anden dag for at flytte.</p></aside>
   </div>`;
