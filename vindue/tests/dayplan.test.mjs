@@ -36,3 +36,13 @@ test('Google-fejl vises tydeligt', async () => {
   const bad = async () => ({ ok: false, status: 403, json: async () => ({ error: { message: 'API key not valid' } }) });
   await assert.rejects(DP.googleDay('X', { start, stops, optimize: true }, bad), /Google Maps: API key not valid/);
 });
+
+test('Google: åben slut (slut ved sidste kunde) og vejrute returneres', async () => {
+  const some = Array.from({ length: 5 }, (_, i) => P('S' + i, 57.4 + i / 1000, 10.2));
+  const calls = [];
+  const fakeFetch = async (url, opt) => { const b = JSON.parse(opt.body); calls.push(b); const n = b.intermediates.length;
+    return { ok: true, json: async () => ({ routes: [{ legs: Array.from({ length: n + 1 }, () => ({ duration: '60s', distanceMeters: 1000 })), polyline: { encodedPolyline: 'abc' } }] }) }; };
+  const r = await DP.googleDay('KEY', { start, end: null, stops: some, optimize: false }, fakeFetch);
+  assert.equal(calls[0].destination.location.latLng.latitude, some[4].lat, 'slutter ved sidste stop');
+  assert.deepEqual(r.order, [0, 1, 2, 3, 4]); assert.equal(r.legs.length, 5, 'ingen hjemtur'); assert.deepEqual(r.polylines, ['abc']);
+});

@@ -65,16 +65,17 @@ export async function googleRoute(key, { origin, destination, intermediates, opt
  * hver bid kører fra forrige bids sidste stop (eller start) og slutter i bidens sidste stop – den sidste bid slutter hjemme.
  * Inden for hver bid må Google optimere rækkefølgen af mellemstoppene. Returnerer { order (indeks i stops), legs }.
  */
-export async function googleDay(key, { start, stops, optimize: opt }, fetchFn = fetch) {
+export async function googleDay(key, { start, end, stops, optimize: opt }, fetchFn = fetch) {
+  const back = end !== undefined ? end : start; // end: undefined = tilbage til start, null = slut ved sidste stop, punkt = slut dér
   const order = []; const legs = []; const polylines = []; const size = 24;
   let from = start || stops[0]; let i = start ? 0 : 1; if (!start) order.push(0);
   while (i < stops.length) {
     const idx = [...Array(Math.min(size, stops.length - i)).keys()].map((k) => i + k);
     const last = i + idx.length >= stops.length;
     let dest, inter;
-    if (last && start) { dest = start; inter = idx; } else { dest = stops[idx[idx.length - 1]]; inter = idx.slice(0, -1); }
+    if (last && back) { dest = back; inter = idx; } else { dest = stops[idx[idx.length - 1]]; inter = idx.slice(0, -1); }
     const r = await googleRoute(key, { origin: from, destination: dest, intermediates: inter.map((k) => stops[k]), optimize: opt }, fetchFn);
-    order.push(...r.order.map((k) => inter[k])); if (!(last && start)) order.push(idx[idx.length - 1]);
+    order.push(...r.order.map((k) => inter[k])); if (!(last && back)) order.push(idx[idx.length - 1]);
     legs.push(...r.legs); if (r.polyline) polylines.push(r.polyline);
     from = stops[order[order.length - 1]]; i += idx.length;
   }
