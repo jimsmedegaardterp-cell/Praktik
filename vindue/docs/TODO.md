@@ -17,7 +17,7 @@
 - [ ] Kontant: automatisk indbetaling i e-conomic (SKAL VERIFICERES)
 
 ## Database/login – før rigtig drift
-- [ ] MFA (TOTP) for admin (Supabase understøtter det)
+- [x] MFA (TOTP) for admin – tvunget i appen, håndhævet i databasen (aal2)
 - [x] Medarbejdere ser kun kunder/besøg på egne ruter (records.emps + RLS; fuld afstemning ved opstart)
 - [ ] (Udskudt – få billeder) Billeder til Supabase Storage i stedet for i records
 - [x] Lokalt lager i IndexedDB, separat pr. indlogget bruger

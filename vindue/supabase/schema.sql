@@ -64,12 +64,18 @@ end $$;
 drop trigger if exists records_touch on public.records;
 create trigger records_touch before insert or update on public.records for each row execute function public.records_touch();
 
+-- To-trinslogin: har brugeren en godkendt enhed (TOTP), kræves at koden er indtastet i denne session (aal2)
+create or replace function public.mfa_ok() returns boolean language sql stable security definer set search_path = public as $$
+  select coalesce(auth.jwt() ->> 'aal', 'aal1') = 'aal2'
+      or not exists (select 1 from auth.mfa_factors f where f.user_id = auth.uid() and f.status = 'verified')
+$$;
+
 -- Hjælpefunktioner til adgangsregler (security definer, så de kan læse members uden rekursion)
 create or replace function public.is_member(o uuid) returns boolean language sql stable security definer set search_path = public as $$
   select exists (select 1 from public.members where org_id = o and user_id = auth.uid())
 $$;
 create or replace function public.is_admin(o uuid) returns boolean language sql stable security definer set search_path = public as $$
-  select exists (select 1 from public.members where org_id = o and user_id = auth.uid() and role = 'admin')
+  select public.mfa_ok() and exists (select 1 from public.members where org_id = o and user_id = auth.uid() and role = 'admin')
 $$;
 -- Den indloggede brugers medarbejder-id i firmaet
 create or replace function public.my_employee(o uuid) returns text language sql stable security definer set search_path = public as $$
@@ -112,6 +118,13 @@ create policy records_update on public.records for update to authenticated
   using (public.is_admin(org_id) or (public.is_member(org_id) and public.employee_may_write(kind) and (emps is null or public.my_employee(org_id) = any(emps))))
   with check (public.is_admin(org_id) or (public.is_member(org_id) and public.employee_may_write(kind)
     and public.my_employee(org_id) = any(emps)));
+-- Begrænsende regel på alle tabeller: uden indtastet to-trinskode (når den er slået til) ses og ændres intet
+do $$ declare t text; begin
+  foreach t in array array['orgs', 'members', 'invites', 'records'] loop
+    execute format('drop policy if exists %I on public.%I', t || '_mfa', t);
+    execute format('create policy %I on public.%I as restrictive for all to authenticated using (public.mfa_ok()) with check (public.mfa_ok())', t || '_mfa', t);
+  end loop;
+end $$;
 -- Ingen DELETE-politik: sletning sker som "deleted = true", så historikken kan genskabes.
 
 grant usage on schema public to authenticated;
@@ -125,6 +138,7 @@ create or replace function public.create_org(org_name text) returns uuid languag
 declare o uuid; e text;
 begin
   if auth.uid() is null then raise exception 'Ikke logget ind'; end if;
+  if not public.mfa_ok() then raise exception 'Kræver to-trinslogin'; end if;
   if exists (select 1 from public.members where user_id = auth.uid()) then raise exception 'Du er allerede med i et firma'; end if;
   insert into public.orgs(name) values (coalesce(nullif(trim(org_name), ''), 'Mit firma')) returning id into o;
   select email into e from auth.users where id = auth.uid();
@@ -172,3 +186,4 @@ grant execute on function public.accept_invite(text) to authenticated;
 grant execute on function public.is_member(uuid) to authenticated;
 grant execute on function public.is_admin(uuid) to authenticated;
 grant execute on function public.my_employee(uuid) to authenticated;
+grant execute on function public.mfa_ok() to authenticated;
