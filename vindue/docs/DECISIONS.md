@@ -70,10 +70,10 @@
 | 67 | 2026-11-01 | Færdigmelding og dagsrute: Udført · Betalt (kontant) · Udsæt (spring over/indsæt igen/skub/skub og flyt/forgæves); kladder pr. besøg deles mellem de to | Ejers ønske |
 | 68 | 2026-11-01 | Ekstra opgaver (tekst + pris) pr. besøg → egne fakturalinjer og med i provisionsgrundlag | Ejers ønske |
 | 69 | 2026-11-01 | Billeder pr. adresse (skaleret til maks 1280 px JPEG) vises i dagsrute og færdigmelding; gemmes i browseren indtil server-database | Ejers ønske; lagerplads er begrænset (~5 MB) |
-| 70 | 2026-11-01 | "Faste ruter" er en rubrik under Kunder; print af rutesedel direkte fra kalenderen; dagsrute har kun beskrivelse, billeder, ekstra opgaver og Udført/Betalt/Udsæt + "SMS til morgendagens rute"; nyt design uden vandret scroll | Ejers ønske |
+| 70 | 2026-11-01 | "Faste ruter" er en rubrik under Kunder; print af ruteseddel direkte fra kalenderen; dagsrute har kun beskrivelse, billeder, ekstra opgaver og Udført/Betalt/Udsæt + "SMS til morgendagens rute"; nyt design uden vandret scroll | Ejers ønske |
 | 71 | 2026-11-01 | Dagsplan pr. dag på tværs af faste ruter: "som faste ruter" / "optimal for hele dagen" / "manuel"; gemmes i db.dayPlans[dato] – faste ruter røres ikke; dagsruten følger planen | Ejers ønske |
 | 72 | 2026-11-01 | Køretider fra Google Maps Routes API (computeRoutes, optimizeWaypointOrder, ≤ 25 mellemstop pr. kald, deles i bidder); browsernøgle under Admin, begrænses til domænet; uden nøgle luftlinje-skøn. Endpoint/felter/priser SKAL VERIFICERES – testet med simuleret svar | Ejers ønske om realistisk kørselstid |
-| 73 | 2026-11-01 | Kalender: Ctrl/Cmd+klik vælger ruter, "Vælg alle i ugen", samlet udskrift med én rutesedel pr. side | Ejers ønske |
+| 73 | 2026-11-01 | Kalender: Ctrl/Cmd+klik vælger ruter, "Vælg alle i ugen", samlet udskrift med én ruteseddel pr. side | Ejers ønske |
 | 74 | 2026-11-01 | Ruteblok har bred venstre kant (⋮⋮): klik = menu (færdigmeld, udskriv, flyt, SMS, dagsplan, vælg), træk = flyt hele ruten | Ejers ønske: nemt at ramme |
 | 75 | 2026-11-01 | Klik på dag → ferie/fridag med minikalender (én dag eller periode), type, og valg om besøg flyttes til første arbejdsdag efter; kan fjernes igen | Ejers ønske |
 | 76 | 2026-11-01 | Udskrift: ét ark pr. dag (valgte ruter samlet, dagsplanens rækkefølge hvis gemt) + A4-fakturaer til sidst kun for fakturatype "Papir"; fakturanr. tildeles i e-conomic (prototype har ikke nummerserie) | Ejers ønske; lovkrav om fortløbende nr. |

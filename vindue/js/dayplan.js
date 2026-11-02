@@ -10,7 +10,7 @@ export const estLeg = (a, b) => { const k = km(a, b); return k == null ? { sec: 
 export function routeOrder(visits, routes) {
   const byRoute = new Map(); for (const v of visits) byRoute.set(v.routeId || '', [...(byRoute.get(v.routeId || '') || []), v]);
   const out = [];
-  for (const [rid, vs] of byRoute) { const o = routes.find((r) => r.id === rid)?.order || []; vs.sort((a, b) => (o.indexOf(a.addressId) + 1 || 999) - (o.indexOf(b.addressId) + 1 || 999)); out.push(...vs); }
+  for (const [rid, vs] of byRoute) { const o = routes.find((r) => r.id === rid)?.order || []; vs.sort((a, b) => ((o.indexOf(a.addressId) + 1 || 999) - (o.indexOf(b.addressId) + 1 || 999)) || String(a.id).localeCompare(String(b.id))); out.push(...vs); } // samme sortering som rutesiden
   return out.map((v) => v.id);
 }
 
