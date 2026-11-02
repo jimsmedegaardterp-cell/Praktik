@@ -52,8 +52,49 @@ export class MockEconomic {
     const remainder = Math.round((b.gross - b.paid) * 100) / 100;
     return { status: remainder <= 0 ? 'betalt' : 'åben', remainder, gross: b.gross };
   }
+  async registerPayment({ invoiceNumber, amount }) { await this._net(); const b = this.s.booked[invoiceNumber]; if (b) b.paid = Math.min(b.gross, (b.paid || 0) + amount); return { voucher: 1 }; }
   /** Kun demo: simuler at kunden betaler (sker i virkeligheden i bank/e-conomic). */
   simulatePayment(invoiceNumber) { const b = this.s.booked[invoiceNumber]; if (b) b.paid = b.gross; }
+}
+
+const fnv = (str) => { let h = 0x811c9dc5; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193); } return (h >>> 0).toString(36); };
+/** Fakturaadresse ud fra kundens første adresse ("Vej 4, 9870 Sindal"). */
+export function splitAddress(street = '') {
+  const m = String(street).match(/^(.*?),\s*(\d{4})\s+(.+)$/);
+  return m ? { address: m[1].trim(), zip: m[2], city: m[3].trim() } : { address: String(street).trim() };
+}
+
+/**
+ * Rigtig e-conomic via serverfunktionen i Supabase. Samme grænseflade som MockEconomic (+ betaling og opslag).
+ *   call(op, params) → serverfunktionen; cfg = db.settings.economic (layout, betalingsbetingelse, momszone, vare …)
+ */
+export class EconomicApi {
+  constructor(call, cfg) { this.call = call; this.cfg = cfg || {}; this.real = true; }
+  ping() { return this.call('ping'); }
+  options() { return this.call('options'); }
+  async upsertCustomer(c, extra = {}) {
+    const r = await this.call('upsertCustomer', { number: c.economicNumber || null, settings: this.cfg,
+      customer: { id: c.id, customerNo: c.customerNo, name: c.name, email: c.email, mobilePhone: c.phone, phone: c.landline, cvr: c.cvr, ean: c.ean, ...extra.address } });
+    return { externalId: r.customerNumber };
+  }
+  async createDraftInvoice({ idempotencyKey, customerExternalId, lines, reference, recipient, date, heading }) {
+    const body = { customerNumber: customerExternalId, lines: lines.map((l) => ({ ...l, productNumber: l.productNumber || this.cfg.product })), reference, recipient, date, heading, settings: this.cfg };
+    // samme indhold → samme nøgle (e-conomic afviser dubletter i 1 time); ændret indhold (fx rettet opsætning) → ny nøgle
+    const r = await this.call('createDraft', { ...body, idem: 'draft:' + reference + ':' + fnv(JSON.stringify(body)) });
+    return { draftNumber: r.draftNumber, gross: r.gross, net: r.net };
+  }
+  async bookInvoice(draftNumber, { sendBy, reference } = {}) {
+    const r = await this.call('book', { draftNumber, sendBy, idem: 'book:' + reference });
+    if (r.alreadyBooked) { const f = await this.call('findBooked', { reference }); if (!f) throw new Error('Kladden findes ikke længere, og ingen bogført faktura har referencen ' + reference); return { invoiceNumber: f.invoiceNumber, gross: f.gross, recovered: true }; }
+    return { invoiceNumber: r.invoiceNumber, gross: r.gross };
+  }
+  async getStatuses(numbers) { return this.call('status', { numbers }); }
+  async getInvoiceStatus(n) { const s = (await this.getStatuses([n]))[n]; if (s?.error) throw new Error(s.error); return { status: s.remainder <= 0 ? 'betalt' : s.remainder < s.gross ? 'delvis' : 'åben', remainder: s.remainder, gross: s.gross }; }
+  async registerPayment({ customerNumber, invoiceNumber, amount, date, text, method, key }) {
+    const account = method === 'mobilepay' ? this.cfg.mobilepayAccount || this.cfg.cashAccount : this.cfg.cashAccount;
+    if (!this.cfg.journal || !account) throw new Error('Vælg kassekladde og konto for kontant/MobilePay under Admin → e-conomic');
+    return this.call('payment', { journal: this.cfg.journal, account, customerNumber, invoiceNumber, amount, date, text, idem: 'pay:' + key });
+  }
 }
 
 /**

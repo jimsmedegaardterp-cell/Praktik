@@ -1,7 +1,7 @@
 // UI for prototypen. Al forretningslogik ligger i domain.js / services.js.
 import * as D from './domain.js';
 import * as S from './services.js';
-import { MockEconomic, MockSms, mapsDirections, mapsRoute, smsLink, suggestOrder, routeKm } from './adapters.js';
+import { MockEconomic, EconomicApi, MockSms, mapsDirections, mapsRoute, smsLink, suggestOrder, routeKm } from './adapters.js';
 import { seedDb, freshDb } from './seed.js';
 import * as I from './import.js';
 import * as G from './gdpr.js';
@@ -13,12 +13,15 @@ import { SupabaseCloud, MemoryCloud } from './cloud.js';
 import { SUPABASE } from './config.js';
 import * as KV from './store.js';
 
-export const VERSION = '2026-11-02 #33';
+export const VERSION = '2026-11-02 #34';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
 let eco = new MockEconomic(db.mock.economic);
 let sms = new MockSms(db.mock.sms);
+/** Rigtig e-conomic når den er slået til og man er admin i den fælles database; ellers øve-udgaven (mock). */
+const ecoReal = () => !!(db.settings.economic?.enabled && cloud?.economic && member?.role === 'admin');
+const ecoApi = () => (ecoReal() ? new EconomicApi((op, p) => cloud.economic(op, p), db.settings.economic) : eco);
 function setDb(nd) { db = nd; db.mock ||= { economic: {}, sms: {} }; eco = new MockEconomic(db.mock.economic); sms = new MockSms(db.mock.sms); }
 /* ---------- Fælles database (login + synkronisering) ---------- */
 let cloud = null;      // forbindelse (SupabaseCloud / MemoryCloud) – null = kun lokalt
@@ -626,7 +629,7 @@ function applyDecisions(pairs) {
   for (const { v, d } of pairs) {
     const split = d.split ?? defaultSplit(v); const extras = (d.extras || []).filter((x) => x.text);
     if (d.result === 'udfoert') ent.push({ visitId: v.id, result: 'udfoert', service: d.service, split, extras });
-    else if (d.result === 'kontant') ent.push({ visitId: v.id, result: 'udfoert', service: d.service, split, extras, cashAmount: d.cashAmount ?? Math.round(D.visitTotal({ ...v, extras }) * 125) / 100 });
+    else if (d.result === 'kontant') ent.push({ visitId: v.id, result: 'udfoert', service: d.service, split, extras, cashAmount: d.cashAmount ?? Math.round(D.visitTotal({ ...v, extras }) * 125) / 100, payMethod: d.payMethod || db.settings.defaultPayMethod || 'mobilepay' });
     else if ((d.skip || 'skip') === 'skip') ent.push({ visitId: v.id, result: 'aflyst', note: 'Sprunget over' });
     else if (d.skip === 'forgaeves') ent.push({ visitId: v.id, result: 'forgaeves', note: 'Forgæves besøg' });
     else { S.moveVisit(db, ui.user, v.id, d.skip === 'reinsert' ? D.nextWorkday(D.addDays(v.plannedDate, 1), db.closedDays) : d.moveDate, d.skip === 'shift' ? 'shift' : 'keep'); moved++; }
@@ -679,7 +682,7 @@ function ruter() {
           ${(a.photos || []).length ? `<div class="thumbs">${a.photos.map((ph) => `<img src="${ph.src}" data-act="photo" data-src="${ph.id}" data-a="${a.id}" alt="">`).join('')}</div>` : ''}
           <div class="noprint">${extrasHtml(v, d, done)}</div></td>
         <td>${done ? `<span class="pill ${v.status === 'udfoert' || v.status === 'delvis' ? 'ok' : 'warn'}">${esc(doneLabel(v))}</span>` : statusSeg(v, res)}
-          ${!done && res === 'kontant' ? `<div class="sub"><input type="number" min="0" step="1" class="cash" data-cash="${v.id}" value="${d.cashAmount ?? ''}" placeholder="${kr(Math.round(D.visitTotal({ ...v, extras: d.extras }) * 1.25))}"> <span class="small mute">kontant</span></div>` : ''}
+          ${!done && res === 'kontant' ? `<div class="sub"><input type="number" min="0" step="1" class="cash" data-cash="${v.id}" value="${d.cashAmount ?? ''}" placeholder="${kr(Math.round(D.visitTotal({ ...v, extras: d.extras }) * 1.25))}"> <select data-paym="${v.id}" class="small">${[['mobilepay', 'MobilePay'], ['kontant', 'Kontant']].map(([k, t]) => `<option value="${k}" ${(d.payMethod || db.settings.defaultPayMethod || 'mobilepay') === k ? 'selected' : ''}>${t}</option>`).join('')}</select></div>` : ''}
           ${!done && res === 'spring' ? `<div class="sub"><select data-skip="${v.id}">${skipOptions(v, d)}</select>${d.skip === 'move' || d.skip === 'shift' ? `<input type="date" data-mdate="${v.id}" value="${d.moveDate || ''}">` : ''}</div>` : ''}</td>
         <td class="hide-m">${done ? `<span class="small">${esc(v.service)} · ${kr(D.visitTotal(v))}</span>` : `<select data-svc="${v.id}">${[...new Set([d.service || v.service, ...services()])].map((x) => `<option value="${esc(x)}" ${x === (d.service || v.service) ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select><div class="small mute">${kr(v.price)} · ${D.hm(v.durationMin ?? 15)}</div>`}</td>
         <td class="hide-m small"><a href="#" data-act="fmSplitOne" data-id="${v.id}">${splitTxt(sp)}</a></td></tr>`; }).join('')}</table>
@@ -697,6 +700,7 @@ function ruter() {
   document.getElementById('rday').onchange = (e) => { ui.day = e.target.value; render(); };
   $view.querySelectorAll('[data-sel]').forEach((c) => (c.onchange = () => { c.checked ? ui.sel.add(c.dataset.sel) : ui.sel.delete(c.dataset.sel); render(); }));
   const upd = (id, f) => { dr[id] = { ...(dr[id] || {}), ...f }; };
+  $view.querySelectorAll('[data-paym]').forEach((x) => (x.onchange = () => { upd(x.dataset.paym, { payMethod: x.value }); db.settings.defaultPayMethod = x.value; }));
   $view.querySelectorAll('[data-cash]').forEach((x) => (x.onchange = () => { upd(x.dataset.cash, { cashAmount: x.value === '' ? null : +x.value, ...(x.value ? { result: 'kontant' } : {}) }); render(); }));
   $view.querySelectorAll('[data-skip]').forEach((x) => (x.onchange = () => { upd(x.dataset.skip, { skip: x.value }); render(); }));
   $view.querySelectorAll('[data-mdate]').forEach((x) => (x.onchange = () => { upd(x.dataset.mdate, { moveDate: x.value }); save(); }));
@@ -753,11 +757,14 @@ function mobil() {
 /** Dagsrute: Udført/Betalt registreres med det samme; Udsæt åbner valg. */
 function mobileStatus(id, val) {
   const v = db.visits.find((x) => x.id === id); const d = { ...(vdraft()[id] || {}), result: val };
-  const go = (dd) => { if (ui.offline) { const ent = { visitId: id, result: dd.result === 'kontant' ? 'udfoert' : dd.result, opId: 'm:' + id, extras: dd.extras, cashAmount: dd.cashAmount, split: defaultSplit(v) };
+  const go = (dd) => { if (ui.offline) { const ent = { visitId: id, result: dd.result === 'kontant' ? 'udfoert' : dd.result, opId: 'm:' + id, extras: dd.extras, cashAmount: dd.cashAmount, payMethod: dd.payMethod, split: defaultSplit(v) };
       if (dd.result === 'spring') return toast('Udsæt kræver net'); ui.outbox.push(ent); delete vdraft()[id]; toast('Gemt – sendes når der er net'); return render(); }
     const r = applyDecisions([{ v, d: dd }]); toast(r.conflicts.length ? 'Konflikt: ' + r.conflicts[0] : `${cust(v.customerId).name}: ${STLABEL[dd.result]}`); save(); render(); };
   if (val === 'udfoert') return go(d);
-  if (val === 'kontant') return openDlg(`<h2>💰 Betalt kontant – ${esc(cust(v.customerId).name)}</h2><label><span>Modtaget beløb (inkl. moms)</span><input name="amount" type="number" min="0" step="1" value="${Math.round(D.visitTotal({ ...v, extras: d.extras }) * 1.25)}" required></label>`, (f) => go({ ...d, cashAmount: Number(f.amount) || 0 }));
+  if (val === 'kontant') { const pm = db.settings.defaultPayMethod || 'mobilepay';
+    return openDlg(`<h2>💰 Betalt – ${esc(cust(v.customerId).name)}</h2><label><span>Modtaget beløb (inkl. moms)</span><input name="amount" type="number" min="0" step="1" value="${Math.round(D.visitTotal({ ...v, extras: d.extras }) * 1.25)}" required></label>
+      <div class="seg" style="margin-top:8px">${[['mobilepay', '📱 MobilePay'], ['kontant', '💵 Kontant']].map(([k, t]) => `<label class="btn"><input type="radio" name="pm" value="${k}" ${pm === k ? 'checked' : ''}> ${t}</label>`).join('')}</div>`,
+      (f) => { db.settings.defaultPayMethod = f.pm || pm; go({ ...d, cashAmount: Number(f.amount) || 0, payMethod: f.pm || pm }); }); }
   return openDlg(`<h2>⏭ Udsæt – ${esc(cust(v.customerId).name)}</h2><label><span>Hvad skal der ske?</span><select name="skip">${skipOptions(v, {})}</select></label><label><span>Ny dato (kun ved "Skub til ny dato")</span><input type="date" name="moveDate"></label>`,
     (f) => { if ((f.skip === 'move' || f.skip === 'shift') && !f.moveDate) return 'Vælg ny dato'; go({ ...d, skip: f.skip, moveDate: f.moveDate }); });
 }
@@ -790,14 +797,14 @@ function faktura() {
   const q = D.invoiceQueue(db.visits, db.invoiceLinks).sort((a, b) => a.completion.at.localeCompare(b.completion.at));
   const links = [...db.invoiceLinks].reverse();
   $view.innerHTML = `<div class="card"><div class="row"><h2 class="sp">Faktureringskø (${q.length})</h2><label class="small"><input type="checkbox" id="perC" ${db.settings.perCustomerInvoice ? 'checked' : ''}> Samlefaktura pr. kunde</label></div>
-    ${q.length ? `<table><tr><th><input type="checkbox" id="all" checked></th><th>Udført</th><th>Kunde</th><th class="hide-m">Ydelse</th><th>Af</th><th>Pris</th></tr>${q.map((v) => `<tr><td><input type="checkbox" class="qv" value="${v.id}" checked></td><td>${fmt(v.completion.at.slice(0, 10))}</td><td>${esc(cust(v.customerId).name)}${cust(v.customerId).billTo ? `<div class="small mute">💳 faktureres via ${esc(cust(cust(v.customerId).billTo)?.name)}</div>` : ''}</td><td class="hide-m small">${esc(v.service)}${v.status === 'delvis' ? ' (delvis)' : ''}${v.completion.priceChanged ? ' <span class="pill warn">pris ændret</span>' : ''}${v.completion.note ? `<br>💬 ${esc(v.completion.note)}` : ''}</td><td>${esc(emp(v.completion.by)?.name ?? v.completion.by)}<div class="small mute">${esc(PAY[cust(v.customerId).paymentMethod] ?? '')}${v.completion.cashPaid ? ' <span class="pill ok">kontant modtaget</span>' : ''}</div></td><td>${kr(v.price)}</td></tr>`).join('')}</table>
-    ${q.some((v) => v.completion.cashPaid) ? '<p class="small mute">Kontant modtaget: fakturaen oprettes som normalt; registrér indbetalingen i e-conomic (kassekladde). Automatisk registrering SKAL VERIFICERES.</p>' : ''}
-    <div class="row" style="margin-top:10px"><button class="pri" data-act="approve">Godkend valgte → opret kladder i e-conomic (mock)</button><label class="small"><input type="checkbox" id="fail" ${eco.failNext ? 'checked' : ''}> Simulér timeout ved næste kald</label></div>` : '<p class="mute">Intet klar til fakturering. Registrér et besøg som udført i 📱 Dagsrute.</p>'}</div>
-  <div class="card"><div class="row"><h2 class="sp">Fakturaer (e-conomic mock)</h2><button data-act="syncPay">Hent betalingsstatus</button></div>
+    ${q.length ? `<table><tr><th><input type="checkbox" id="all" checked></th><th>Udført</th><th>Kunde</th><th class="hide-m">Ydelse</th><th>Af</th><th>Pris</th></tr>${q.map((v) => `<tr><td><input type="checkbox" class="qv" value="${v.id}" checked></td><td>${fmt(v.completion.at.slice(0, 10))}</td><td>${esc(cust(v.customerId).name)}${cust(v.customerId).billTo ? `<div class="small mute">💳 faktureres via ${esc(cust(cust(v.customerId).billTo)?.name)}</div>` : ''}</td><td class="hide-m small">${esc(v.service)}${v.status === 'delvis' ? ' (delvis)' : ''}${v.completion.priceChanged ? ' <span class="pill warn">pris ændret</span>' : ''}${v.completion.note ? `<br>💬 ${esc(v.completion.note)}` : ''}</td><td>${esc(emp(v.completion.by)?.name ?? v.completion.by)}<div class="small mute">${esc(PAY[cust(v.customerId).paymentMethod] ?? '')}${v.completion.cashPaid ? ` <span class="pill ok">${v.completion.payMethod === 'kontant' ? 'kontant' : 'MobilePay'} modtaget</span>` : ''}</div></td><td>${kr(v.price)}</td></tr>`).join('')}</table>
+    <div class="row" style="margin-top:10px"><button class="pri" data-act="approve">${ecoReal() ? 'Godkend valgte → fakturér i e-conomic' : 'Godkend valgte → opret kladder (øve-udgave)'}</button>${ecoReal() ? '' : `<label class="small"><input type="checkbox" id="fail" ${eco.failNext ? 'checked' : ''}> Simulér timeout ved næste kald</label>`}</div>
+    ${ecoReal() ? `<p class="small mute">Fakturaerne bogføres og ${db.settings.economic.sendEmail === false ? '<b>sendes ikke</b> (slået fra under Admin)' : 'sendes pr. mail til kunder med e-mail og "Email"-faktura'}. Betalt på stedet registreres som indbetaling i kassekladden (bogføres i e-conomic).</p>` : '<p class="small mute">⚠️ e-conomic er ikke forbundet – dette er en øve-udgave uden rigtige fakturaer. Opsætning: Admin → e-conomic.</p>'}` : '<p class="mute">Intet klar til fakturering. Registrér et besøg som udført i 📱 Dagsrute.</p>'}</div>
+  <div class="card"><div class="row"><h2 class="sp">Fakturaer${ecoReal() ? '' : ' (øve-udgave)'}</h2><button data-act="syncPay">Hent betalingsstatus</button></div>
     ${links.length ? `<table><tr><th>Kunde</th><th>Besøg</th><th>Beløb</th><th>e-conomic</th><th>Status</th><th></th></tr>${links.map((l) => `<tr><td>${esc(cust(l.customerId)?.name)}</td><td>${l.visitIds.length}</td><td>${kr(l.total)}${l.gross ? `<div class="small mute">${kr(l.gross)} inkl. moms</div>` : ''}</td><td class="small">${l.invoiceNumber ? 'Faktura ' + l.invoiceNumber : l.draftNumber ? 'Kladde ' + l.draftNumber : '–'}${l.error ? `<div style="color:var(--bad)">${esc(l.error)}</div>` : ''}</td>
-      <td><span class="pill ${INV[l.status]}">${l.status}</span> ${l.payment ? `<span class="pill ${l.payment === 'betalt' ? 'ok' : 'warn'}">${l.payment}</span>` : ''}</td>
-      <td>${l.status === 'fejl' ? `<button data-act="retry" data-id="${l.id}">Prøv igen</button>` : ''}${l.status === 'kladde' ? `<button data-act="book" data-id="${l.id}">Bogfør & send</button>` : ''}${l.status === 'bogført' && l.payment !== 'betalt' ? `<button class="small" data-act="pay" data-id="${l.id}" title="Kun demo">Simulér betaling</button>` : ''}</td></tr>`).join('')}</table>` : '<p class="mute">Ingen endnu.</p>'}
-    <p class="small mute">Status vises først som "kladde"/"bogført", når (mock-)e-conomic har bekræftet. Bogføring, moms, bank og betalinger ligger i e-conomic – appen henter kun status.</p></div>`;
+      <td><span class="pill ${INV[l.status]}">${l.status}</span> ${l.payment ? `<span class="pill ${l.payment === 'betalt' ? 'ok' : 'warn'}">${l.payment}</span>` : ''}${l.sentBy === 'Email' ? ' <span class="pill">✉️ sendt</span>' : ''}${l.paymentRegistered ? ` <span class="pill ok" title="Indbetaling lagt i kassekladden">${l.paymentRegistered.method === 'kontant' ? '💵' : '📱'} ${kr(l.paymentRegistered.amount)}</span>` : ''}</td>
+      <td>${l.status === 'fejl' ? `<button data-act="retry" data-id="${l.id}">Prøv igen</button>` : ''}${l.status === 'kladde' ? `<button data-act="book" data-id="${l.id}">Bogfør & send</button>` : ''}${l.status === 'bogført' && l.payment !== 'betalt' && !ecoReal() ? `<button class="small" data-act="pay" data-id="${l.id}" title="Kun øve-udgave">Simulér betaling</button>` : ''}</td></tr>`).join('')}</table>` : '<p class="mute">Ingen endnu.</p>'}
+    <p class="small mute">Status vises først som "kladde"/"bogført", når e-conomic har bekræftet. Regnskab, moms og bank ligger i e-conomic – appen henter betalingsstatus.</p></div>`;
   const all = document.getElementById('all'); if (all) all.onchange = () => $view.querySelectorAll('.qv').forEach((x) => (x.checked = all.checked));
   document.getElementById('perC').onchange = (e) => { db.settings.perCustomerInvoice = e.target.checked; save(); };
   const fl = document.getElementById('fail'); if (fl) fl.onchange = (e) => (eco.failNext = e.target.checked ? 1 : 0);
@@ -963,6 +970,7 @@ function admin() {
   </div>
   ${!db.settings.printInvoices ? '' : `<div class="card"><h2>Firma (bruges på A4-fakturaer)</h2><div class="grid">${[['name', 'Firmanavn', 'Sindal Vinduespolering'], ['address', 'Adresse', 'Vej 1, 9870 Sindal'], ['cvr', 'CVR', ''], ['phone', 'Telefon', ''], ['email', 'E-mail', ''], ['bank', 'Bank reg. og konto', '1234 1234567'], ['mobilepay', 'MobilePay-nr.', '']].map(([k, l, ph]) => `<label><span>${l}</span><input data-firm="${k}" value="${esc(db.settings.firm?.[k] || '')}" placeholder="${ph}"></label>`).join('')}</div></div>`}
   <div class="card" id="cloudCard"></div>
+  <div class="card" id="ecoCard"></div>
   <div class="card"><h2>Kørsel og Google Maps</h2>
     <div class="grid"><label><span>Firmaets startadresse (her starter og slutter dagen)</span><input id="stAddr" value="${esc(db.settings.start?.address || '')}" placeholder="Vej 1, 9870 Sindal"></label>
       <label><span>Koordinater for startadresse (valgfrit, "57.47, 10.21" – højreklik i Google Maps)</span><input id="stLL" value="${db.settings.start?.lat != null ? db.settings.start.lat + ', ' + db.settings.start.lng : ''}"></label>
@@ -986,7 +994,7 @@ function admin() {
   document.getElementById('comMonth').onchange = (e) => { ui.comMonth = e.target.value; render(); };
   document.getElementById('comVat').onchange = (e) => { db.settings.commissionInclVat = e.target.checked; S.audit(db, ui.user.id, 'commission.vat', '-', { inclVat: e.target.checked }); render(); };
   $view.querySelectorAll('[data-rate]').forEach((i) => (i.onchange = () => { const v = Number(i.value); if (!(v >= 0 && v <= 100)) return toast('Ugyldig sats'); const e = emp(i.dataset.rate); e.commissionRate = v / 100; S.audit(db, ui.user.id, 'commission.rate', e.id, { rate: v }); render(); }));
-  cloudCard();
+  cloudCard(); ecoCard();
   $view.querySelectorAll('[data-firm]').forEach((x) => (x.onchange = () => { db.settings.firm ||= {}; db.settings.firm[x.dataset.firm] = x.value.trim(); save(); toast('Gemt'); }));
   const saveStart = () => { const ll = (document.getElementById('stLL').value.match(/(-?\d+(?:[.,]\d+)?)\s*[,; ]\s*(-?\d+(?:[.,]\d+)?)/) || []);
     db.settings.start = { address: document.getElementById('stAddr').value.trim(), lat: ll[1] ? +ll[1].replace(',', '.') : null, lng: ll[2] ? +ll[2].replace(',', '.') : null }; save(); toast('Startadresse gemt'); };
@@ -1056,11 +1064,13 @@ document.addEventListener('click', async (e) => {
       case 'up': case 'down': { const st = ui._stops; const i = +b.dataset.i; const j = act === 'up' ? i - 1 : i + 1; if (j < 0 || j >= st.length) return; [st[i], st[j]] = [st[j], st[i]]; setOrder(st.map((v) => v.addressId)); break; }
       case 'applySuggest': setOrder(ui._sug.map((a) => a.id)); toast('Ny fast rækkefølge gemt'); break;
       case 'reg': return regDialog(id, b.dataset.r, b.dataset.cash);
-      case 'approve': { const ids = [...$view.querySelectorAll('.qv:checked')].map((x) => x.value); if (!ids.length) return; b.disabled = true; b.textContent = 'Opretter…'; const r = await S.approveInvoices(db, ui.user, ids, eco); toast(`${r.filter((l) => l.status === 'kladde').length} kladde(r) oprettet${r.some((l) => l.status === 'fejl') ? ', ' + r.filter((l) => l.status === 'fejl').length + ' fejl' : ''}`); break; }
-      case 'retry': b.disabled = true; await S.retryInvoice(db, ui.user, id, eco); break;
-      case 'book': b.disabled = true; await S.bookInvoice(db, ui.user, id, eco); break;
+      case 'approve': { const ids = [...$view.querySelectorAll('.qv:checked')].map((x) => x.value); if (!ids.length) return; b.disabled = true; b.textContent = 'Opretter…'; const real = ecoReal(); if (real && !confirm(`Fakturér ${ids.length} besøg i e-conomic? Fakturaerne bogføres${db.settings.economic.sendEmail === false ? '' : ' og sendes til kunderne'} med det samme.`)) { b.disabled = false; return render(); }
+        const r = await S.approveAndBook(db, ui.user, ids, ecoApi(), { book: real });
+        const n = (st) => r.filter((l) => l.status === st).length; toast(real ? `${n('bogført')} faktura(er) bogført${n('kladde') ? ', ' + n('kladde') + ' kladde(r) mangler bogføring' : ''}${n('fejl') ? ', ' + n('fejl') + ' fejl' : ''}` : `${n('kladde')} kladde(r) oprettet${n('fejl') ? ', ' + n('fejl') + ' fejl' : ''}`); break; }
+      case 'retry': { b.disabled = true; const l = await S.retryInvoice(db, ui.user, id, ecoApi()); if (ecoReal() && l.status === 'kladde') await S.bookInvoice(db, ui.user, id, ecoApi()); break; }
+      case 'book': b.disabled = true; await S.bookInvoice(db, ui.user, id, ecoApi()); break;
       case 'pay': eco.simulatePayment(db.invoiceLinks.find((l) => l.id === id).invoiceNumber); await S.syncPayments(db, eco); break;
-      case 'syncPay': await S.syncPayments(db, eco); toast('Betalingsstatus hentet'); break;
+      case 'syncPay': try { await S.syncPayments(db, ecoApi(), ui.user); toast('Betalingsstatus hentet'); } catch (er) { toast('Fejl: ' + er.message); } break;
       case 'fakeInbound': return openDlg(`<h2>Simulér indgående SMS</h2><label><span>Fra nummer</span><select name="from">${db.customers.filter((c) => !c.deleted).map((c) => `<option value="${esc(c.phone)}">${esc(c.name)} (${esc(c.phone)})</option>`).join('')}<option value="+4599887766">Ukendt: +45 99 88 77 66</option></select></label><label><span>Tekst</span><input name="text" value="Det passer fint, tak!" required></label>`, (f) => { S.receiveSms(db, { providerId: S.uid('in'), from: f.from, text: f.text }); });
       case 'comCsv': { const { com, mon } = ui._com; const rows = [['Måned', 'Medarbejder', 'Besøg', 'Grundlag', 'Sats', 'Provision']];
         for (const e of db.employees) { const x = com[e.id]; if (x) rows.push([mon, e.name, x.visits, x.base.toFixed(2).replace('.', ','), String(x.rate * 100).replace('.', ',') + ' %', x.commission.toFixed(2).replace('.', ',')]); }
@@ -1132,6 +1142,7 @@ document.addEventListener('click', async (e) => {
       case 'syncNow': return doSync(true).then(() => toast(syncInfo.error ? 'Fejl: ' + syncInfo.error : 'Synkroniseret'));
       case 'ivCreate': { const code = await cloud.createInvite(member.orgId, document.getElementById('ivRole').value, document.getElementById('ivEmp').value, null); S.audit(db, ui.user.id, 'user.invite', document.getElementById('ivEmp').value);
         openDlg(`<h2>Invitationskode</h2><p style="font-size:30px;font-weight:700;letter-spacing:3px" class="code">${esc(code)}</p><p class="small">Giv koden til medarbejderen. De åbner <b>${esc(location.origin + location.pathname)}</b>, opretter en bruger og indtaster koden.</p>`, null, 'Luk'); return cloudCard(); }
+      case 'ecoRetry': ui._ecoOpts = null; return ecoCard();
       case 'ivDel': await cloud.deleteInvite(id); return cloudCard();
       case 'cmRemove': if (!confirm('Fjern brugerens adgang til firmaets data?')) return; await cloud.removeMember(member.orgId, id); S.audit(db, ui.user.id, 'user.remove', id); return cloudCard();
       case 'cfSave': { const url = document.getElementById('cfUrl').value.trim(), key2 = document.getElementById('cfKey').value.trim(); if (!/^https:\/\/.+/.test(url) || !key2) return toast('Udfyld URL og nøgle');
@@ -1362,6 +1373,32 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 window.addEventListener('online', () => doSync());
 
 /** Admin: brugere, invitationer og forbindelse */
+/** Admin: forbindelse og opsætning af e-conomic */
+async function ecoCard() {
+  const el = document.getElementById('ecoCard'); if (!el) return;
+  const cfg = (db.settings.economic ||= {});
+  const head = `<h2>e-conomic</h2>`;
+  if (!cloud?.economic || !member) { el.innerHTML = head + '<p class="small mute">Kræver login i den fælles database (Supabase) – ikke i testdatabasen.</p>'; return; }
+  if (member.role !== 'admin') { el.innerHTML = head + '<p class="small mute">Kun admin.</p>'; return; }
+  el.innerHTML = head + '<p class="small mute">Forbinder …</p>';
+  let info, opts;
+  try { info = await cloud.economic('ping'); opts = ui._ecoOpts || (ui._ecoOpts = await cloud.economic('options')); }
+  catch (e) { el.innerHTML = head + `<p class="warn-t">${esc(e.message)}</p><p class="small">Opsætning: se <b>vindue/supabase/OPSÆTNING.md → e-conomic</b>. Fakturering kører i øve-udgave, indtil forbindelsen virker.</p><button data-act="ecoRetry">Prøv igen</button>`; return; }
+  const sel = (key, list, label, fmt = (x) => `${x.id} · ${x.name}`) => `<label><span>${label}</span><select data-eco="${key}"><option value="">– vælg –</option>${list.map((x) => `<option value="${esc(x.id)}" ${String(cfg[key] ?? '') === String(x.id) ? 'selected' : ''}>${esc(fmt(x))}</option>`).join('')}</select></label>`;
+  const need = ['layout', 'paymentTerms', 'vatZone', 'customerGroup', 'product'];
+  const missing = need.filter((k) => !cfg[k]);
+  el.innerHTML = head + `<p class="small">✓ Forbundet til <b>${esc(info.company || '')}</b> (aftale ${esc(info.agreementNumber)})</p>
+    <div class="grid">${sel('customerGroup', opts.customerGroups, 'Kundegruppe for nye kunder')}${sel('paymentTerms', opts.paymentTerms, 'Betalingsbetingelse')}${sel('vatZone', opts.vatZones, 'Momszone')}
+    ${sel('layout', opts.layouts, 'Fakturalayout')}${sel('product', opts.products, 'Vare på fakturalinjer', (x) => `${x.id} · ${x.name}`)}</div>
+    <h3>Betaling på stedet</h3><div class="grid">${sel('journal', opts.journals, 'Kassekladde')}${sel('cashAccount', opts.accounts.filter((a) => a.type === 'status'), 'Konto for kontant')}${sel('mobilepayAccount', opts.accounts.filter((a) => a.type === 'status'), 'Konto for MobilePay')}</div>
+    <label class="small"><input type="checkbox" data-eco="sendEmail" ${cfg.sendEmail === false ? '' : 'checked'}> Send fakturaen pr. mail ved bogføring (kunder med e-mail og fakturatype "Email")</label><br>
+    <label class="small"><input type="checkbox" data-eco="enabled" ${cfg.enabled ? 'checked' : ''} ${missing.length ? 'disabled' : ''}> <b>Brug e-conomic til fakturering</b>${missing.length ? ' – udfyld felterne ovenfor først' : ''}</label>
+    <p class="small mute">Når den er slået til, laver "Fakturering" rigtige fakturaer i e-conomic. Kunder oprettes automatisk (med samme kundenummer som i appen, når det er ledigt).</p>
+    <div class="row"><button data-act="ecoRetry">Genindlæs lister</button></div>`;
+  el.querySelectorAll('[data-eco]').forEach((x) => (x.onchange = () => { const k = x.dataset.eco;
+    cfg[k] = x.type === 'checkbox' ? x.checked : x.value === '' ? null : (k === 'product' ? x.value : Number(x.value));
+    S.audit(db, ui.user.id, 'economic.settings', k, { value: cfg[k] }); save(); ecoCard(); }));
+}
 async function cloudCard() {
   const el = document.getElementById('cloudCard'); if (!el) return;
   if (!cloud || !member) { const c = cloudConf();

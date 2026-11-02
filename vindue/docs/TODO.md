@@ -23,3 +23,9 @@
 - [x] Lokalt lager i IndexedDB, separat pr. indlogget bruger
 - [ ] Konfliktvisning når to enheder ændrer samme post
 - [ ] Backup/gendannelse fra Supabase testet
+
+## e-conomic – SKAL VERIFICERES i prøve-regnskab
+- [ ] Opret kunde (PUT ved opdatering bevarer øvrige felter?)
+- [ ] Kladde → bogført → mail modtaget af kunde
+- [ ] Indbetaling i kassekladde: fortegn (kundens saldo skal falde) og at fakturaen lukkes, når kladden bogføres
+- [ ] Genoptagelse efter tabt svar (findBooked via reference)

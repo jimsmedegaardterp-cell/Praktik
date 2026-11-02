@@ -65,7 +65,7 @@ export function finishRoute(db, user, entries) {
   const out = { done: 0, skipped: 0, conflicts: [] };
   for (const e of entries) {
     if (!e.result || e.result === 'aaben') { out.skipped++; continue; }
-    const r = registerVisit(db, user, e.visitId, { result: e.result, opId: 'fm:' + e.visitId, cashAmount: Number(e.cashAmount) || 0, service: e.service, note: e.note, split: e.split, extras: e.extras });
+    const r = registerVisit(db, user, e.visitId, { result: e.result, opId: 'fm:' + e.visitId, cashAmount: Number(e.cashAmount) || 0, payMethod: e.payMethod, service: e.service, note: e.note, split: e.split, extras: e.extras });
     if (r.conflict) out.conflicts.push(r.conflict); else if (r.changed) out.done++;
   }
   audit(db, user.id, 'route.finish', '-', out);
@@ -111,18 +111,52 @@ async function pushDraft(db, user, link, economic) {
   const c = db.customers.find((x) => x.id === link.customerId);
   link.attempts++;
   try {
-    if (!c.economicNumber) { const { externalId } = await economic.upsertCustomer(c); c.economicNumber = externalId; audit(db, user.id, 'economic.customer', c.id, { externalId }); }
+    const addr = splitAddr(db.addresses.find((a) => a.customerId === c.id && a.billing) || db.addresses.find((a) => a.customerId === c.id));
+    if (!c.economicNumber || (economic.real && !c.economicSynced)) { const { externalId } = await economic.upsertCustomer(c, { address: addr }); c.economicNumber = externalId; if (economic.real) c.economicSynced = true; audit(db, user.id, 'economic.customer', c.id, { externalId }); }
     const lines = link.visitIds.map((id) => { const v = db.visits.find((x) => x.id === id); const a = db.addresses.find((x) => x.id === v.addressId);
       const dc = v.customerId !== c.id ? db.customers.find((x) => x.id === v.customerId)?.name + ', ' : '';
       return [{ description: `${v.service} – ${dc}${a?.street ?? ''} (${v.completion.at.slice(0, 10)})`, quantity: 1, unitNetPrice: v.price },
         ...(v.extras || []).filter((x) => x.text).map((x) => ({ description: `Ekstra: ${x.text} – ${a?.street ?? ''}`, quantity: 1, unitNetPrice: Number(x.price) || 0 }))]; }).flat();
-    const { draftNumber } = await economic.createDraftInvoice({ idempotencyKey: link.idempotencyKey, customerExternalId: c.economicNumber, lines });
-    Object.assign(link, { status: 'kladde', draftNumber, error: null, total: lines.reduce((s, l) => s + l.unitNetPrice, 0) });
+    const dates = link.visitIds.map((id) => db.visits.find((x) => x.id === id)?.completion?.at?.slice(0, 10)).filter(Boolean).sort();
+    const { draftNumber, gross } = await economic.createDraftInvoice({ idempotencyKey: link.idempotencyKey, customerExternalId: c.economicNumber, lines,
+      reference: 'SV-' + link.id, recipient: { name: c.name, ...addr }, date: dates[dates.length - 1] || now().slice(0, 10) });
+    Object.assign(link, { status: 'kladde', draftNumber, error: null, total: lines.reduce((s, l) => s + l.unitNetPrice * (l.quantity || 1), 0), ...(gross ? { gross } : {}) });
     audit(db, user.id, 'invoice.draft', link.id, { draftNumber });
   } catch (e) {
     Object.assign(link, { status: 'fejl', error: e.message });
     audit(db, user.id, 'invoice.error', link.id, { error: e.message });
   }
+  return link;
+}
+
+const splitAddr = (a) => { const m = String(a?.street || '').match(/^(.*?),\s*(\d{4})\s+(.+)$/); return m ? { address: m[1].trim(), zip: m[2], city: m[3].trim() } : a?.street ? { address: a.street } : {}; };
+
+/** Godkend → kladde → (bogfør og send) → registrér betaling på stedet. Hvert trin kan genoptages ved fejl. */
+export async function approveAndBook(db, user, visitIds, economic, { book = true } = {}) {
+  const links = await approveInvoices(db, user, visitIds, economic);
+  if (book) for (const l of links) { if (l.status === 'kladde') await bookInvoice(db, user, l.id, economic); }
+  return links;
+}
+
+/** Fakturaen sendes pr. mail, hvis kunden vil have mail og har en adresse. */
+export const sendByFor = (c) => ((c?.invoiceType || 'email') === 'email' && c?.email ? 'Email' : 'none');
+
+/** Betalt på stedet (kontant/MobilePay) → indbetaling i e-conomic, så fakturaen ikke står åben. */
+export async function registerOnSitePayment(db, user, link, economic) {
+  if (link.status !== 'bogført' || link.paymentRegistered || !economic.registerPayment) return link;
+  const vs = link.visitIds.map((id) => db.visits.find((v) => v.id === id)).filter((v) => v?.completion?.cashPaid);
+  if (!vs.length) return link;
+  const c = db.customers.find((x) => x.id === link.customerId);
+  const all = vs.length === link.visitIds.length;
+  const amount = vs.reduce((s, v) => s + (Number(v.completion.cashAmount) || 0), 0) || (all ? link.gross : 0);
+  if (!amount) { link.error = 'Betalt på stedet, men beløbet kendes ikke – registrér i e-conomic'; return link; }
+  const method = vs.some((v) => v.completion.payMethod === 'mobilepay') ? 'mobilepay' : 'kontant';
+  try {
+    await economic.registerPayment({ customerNumber: c.economicNumber, invoiceNumber: link.invoiceNumber, amount, date: vs.map((v) => v.completion.at.slice(0, 10)).sort().pop(),
+      text: `${method === 'mobilepay' ? 'MobilePay' : 'Kontant'} faktura ${link.invoiceNumber}`, method, key: link.id });
+    Object.assign(link, { paymentRegistered: { amount, method, at: now() }, error: null });
+    audit(db, user.id, 'invoice.payment', link.id, { amount, method });
+  } catch (e) { link.error = 'Betaling ikke registreret: ' + e.message; audit(db, user.id, 'invoice.error', link.id, { error: e.message }); }
   return link;
 }
 
@@ -141,16 +175,26 @@ export async function bookInvoice(db, user, linkId, economic) {
   if (link.booking) return link; // lås mod dobbeltklik
   link.booking = true;
   try {
-    const { invoiceNumber } = await economic.bookInvoice(link.draftNumber);
-    Object.assign(link, { status: 'bogført', invoiceNumber, payment: 'åben' });
-    audit(db, user.id, 'invoice.booked', link.id, { invoiceNumber });
+    const c = db.customers.find((x) => x.id === link.customerId); const sendBy = db.settings.economic?.sendEmail === false ? 'none' : sendByFor(c);
+    const { invoiceNumber, gross } = await economic.bookInvoice(link.draftNumber, { sendBy, reference: 'SV-' + link.id });
+    Object.assign(link, { status: 'bogført', invoiceNumber, payment: 'åben', sentBy: sendBy, error: null, ...(gross ? { gross } : {}) });
+    audit(db, user.id, 'invoice.booked', link.id, { invoiceNumber, sendBy });
   } catch (e) { link.error = e.message; audit(db, user.id, 'invoice.error', link.id, { error: e.message }); }
   finally { delete link.booking; }
+  if (link.status === 'bogført') await registerOnSitePayment(db, user, link, economic);
   return link;
 }
 
-export async function syncPayments(db, economic) {
-  for (const l of db.invoiceLinks.filter((x) => x.status === 'bogført' && x.payment !== 'betalt')) {
+export async function syncPayments(db, economic, user) {
+  const open = db.invoiceLinks.filter((x) => x.status === 'bogført' && x.payment !== 'betalt');
+  if (user) for (const l of open) if (!l.paymentRegistered) await registerOnSitePayment(db, user, l, economic);
+  if (economic.getStatuses && open.length) {
+    for (let i = 0; i < open.length; i += 100) { const part = open.slice(i, i + 100); const st = await economic.getStatuses(part.map((l) => l.invoiceNumber));
+      for (const l of part) { const s = st[l.invoiceNumber]; if (!s || s.error) { l.error = s?.error || 'Ukendt faktura'; continue; }
+        Object.assign(l, { remainder: s.remainder, gross: s.gross, payment: s.remainder <= 0 ? 'betalt' : s.remainder < s.gross ? 'delvis' : 'åben' }); } }
+    return;
+  }
+  for (const l of open) {
     try { const s = await economic.getInvoiceStatus(l.invoiceNumber); l.payment = s.status; l.remainder = s.remainder; l.gross = s.gross; } catch (e) { l.error = e.message; }
   }
 }
