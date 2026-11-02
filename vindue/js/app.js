@@ -14,7 +14,7 @@ import { SUPABASE } from './config.js';
 import { showRouteMap } from './map.js';
 import * as KV from './store.js';
 
-export const VERSION = '2026-11-02 #44';
+export const VERSION = '2026-11-02 #45';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -331,7 +331,6 @@ function econ(vs, byRoute = false) {
   const groups = new Map(); for (const v of live) { const k = (v.routeId || '-') + '|' + v.plannedDate; groups.set(k, [...(groups.get(k) || []), v]); }
   let km = 0; for (const [, g] of groups) { const r = route(g[0].routeId); const o = r?.order || []; g.sort((a, b) => (o.indexOf(a.addressId) + 1 || 999) - (o.indexOf(b.addressId) + 1 || 999)); km += routeKm(g.map((v) => addr(v.addressId)).filter(Boolean)) * 1.3; }
   const prov = live.reduce((s2, v) => s2 + D.visitTotal(v) * ((v.split?.length ? v.split : defaultSplit(v)).reduce((t2, x) => t2 + x.pct, 0) / 100), 0);
-  const hours = min / 60;
   // Google-køretid pr. dag (samme som dagsplanen) eller pr. rute; skøn kun hvis Google mangler
   let gSec = 0, gM = 0, gOk = !!db.settings.googleKey && live.length > 0, gWait = false;
   if (gOk) {
@@ -343,7 +342,8 @@ function econ(vs, byRoute = false) {
       if (r && !r.error) { const t = DP.sumLegs(r.legs); gSec += t.sec; gM += t.m; } else { gOk = false; gWait = !r?.error; }
     }
   }
-  return { n: live.length, sum, min, km: gOk ? Math.round(gM / 1000) : Math.round(km), drive: gOk ? Math.round(gSec / 60) : Math.round(km / 50 * 60), google: gOk, gWait, prov, perHour: hours ? sum / hours : 0, wage: hours ? prov / hours : 0 };
+  const drive = gOk ? Math.round(gSec / 60) : Math.round(km / 50 * 60); const total = (min + drive) / 60; // timer i alt = arbejde + kørsel
+  return { n: live.length, sum, min, km: gOk ? Math.round(gM / 1000) : Math.round(km), drive, google: gOk, gWait, prov, perHour: total ? sum / total : 0, wage: total ? prov / total : 0 };
 }
 function kalender() {
   const ws = ui.weekStart; const rf = ui.calRoute || '';
@@ -379,7 +379,7 @@ function kalender() {
       ${ui.calPick ? `<div class="sidemenu">${routeMenuButtons(pick[0], pick[1])}</div>` : ''}
       <dl><dt>Antal besøg</dt><dd>${e.n}</dd><dt>Planlagt omsætning</dt><dd>${kr(Math.round(e.sum))}</dd><dt>Inkl. moms</dt><dd>${kr(Math.round(e.sum * 1.25))}</dd>
       <dt>Tidsforbrug</dt><dd>${D.hm(e.min)} t</dd><dt>Forventet kørsel</dt><dd>${e.google ? '' : '≈ '}${D.hm(e.drive)} t (${e.km} km)</dd><dt>Provision</dt><dd>${kr(Math.round(e.prov))}</dd>
-      <dt>Oms. pr. time</dt><dd>${kr(Math.round(e.perHour))}</dd><dt>Timeløn (provision)</dt><dd>${kr(Math.round(e.wage))}</dd></dl>
+      <dt title="Omsætning delt med arbejde + kørsel">Oms. pr. time</dt><dd>${kr(Math.round(e.perHour))}</dd><dt>Timeløn (provision)</dt><dd>${kr(Math.round(e.wage))}</dd></dl>
       <h3>Fakturering</h3><dl>${ecoReal() ? (() => { const od = open.filter((l) => l.dueDate && l.dueDate < t); return `<dt><a href="#" data-tab="faktura">Ikke betalt til tiden</a></dt><dd${od.length ? ' style="color:var(--bad)"' : ''}>${od.length} · ${kr(Math.round(od.reduce((s2, l) => s2 + (l.remainder ?? l.gross ?? 0), 0)))}</dd>`; })()
         : `<dt><a href="#" data-tab="faktura">Klar til fakturering</a></dt><dd>${q.length} · ${kr(Math.round(q.reduce((s2, v) => s2 + D.visitTotal(v), 0)))}</dd>`}
       <dt>Åbne fakturaer</dt><dd>${open.length} · ${kr(Math.round(open.reduce((s2, l) => s2 + (l.remainder ?? l.total * 1.25), 0)))}</dd></dl>
@@ -793,7 +793,7 @@ function ruter() {
   const mapBlock = `<div class="noprint">${ui.hideRouteMap ? '' : '<div id="routeMap" class="map"></div>'}<div class="row small"><button class="link" data-act="toggleRouteMap">${ui.hideRouteMap ? '🗺 Vis kort' : 'Skjul kort'}</button><span class="sp"></span>${gmLinks.map((u, k) => `<a class="btn small" target="_blank" rel="noopener" href="${u}">Navigér i Google Maps${gmLinks.length > 1 ? ` (del ${k + 1})` : ''} ↗</a>`).join('')}</div></div>`;
   const fixedIds = fixedRouteOrder(r, stops).map((v) => v.id); const isDiff = stops.length > 1 && fixedIds.join() !== stops.map((v) => v.id).join();
   const dayDiff = isDiff && isAdmin() ? `<div class="row noprint small" style="margin-top:8px"><span class="pill warn">Dagens rækkefølge afviger fra rutens faste</span><button class="small" data-act="rdFix">Gør til rutens faste rækkefølge</button><button class="small" data-act="rdReset">↺ Brug den faste</button></div>` : '';
-  const stats = `<div class="row small" style="margin:6px 0"><span>${stops.length} besøg</span><span>Oms.: <b>${kr(total)}</b> (${kr(total * 1.25)} inkl. moms)</span><span>Tid: <b>${D.hm(mins(stops))}</b></span><span>${rsum ? `Kørsel <b>${D.hm(Math.round(rsum.sec / 60))}</b> (${Math.round(rsum.m / 1000)} km, Google)` : `Kørsel ca. <b>${Math.round(cur * 1.3)} km</b>${db.settings.googleKey && !rg0?.error ? ' <span class="mute">(henter Google …)</span>' : ''}`}</span><span>Provision ca. <b>${kr(Math.round(est))}</b></span>${mins(live) ? `<span>Oms./time: <b>${kr(Math.round(total / (mins(live) / 60)))}</b></span>` : ''}</div>`;
+  const stats = `<div class="row small" style="margin:6px 0"><span>${stops.length} besøg</span><span>Oms.: <b>${kr(total)}</b> (${kr(total * 1.25)} inkl. moms)</span><span>Tid: <b>${D.hm(mins(stops))}</b></span><span>${rsum ? `Kørsel <b>${D.hm(Math.round(rsum.sec / 60))}</b> (${Math.round(rsum.m / 1000)} km, Google)` : `Kørsel ca. <b>${Math.round(cur * 1.3)} km</b>${db.settings.googleKey && !rg0?.error ? ' <span class="mute">(henter Google …)</span>' : ''}`}</span><span>Provision ca. <b>${kr(Math.round(est))}</b></span>${mins(live) ? (() => { const dm = rsum ? Math.round(rsum.sec / 60) : Math.round(cur * 1.3 / 50 * 60); return `<span title="Omsætning delt med arbejde + kørsel">Oms./time: <b>${kr(Math.round(total / ((mins(live) + dm) / 60)))}</b></span>`; })() : ''}</div>`;
   if (mode === 'order') return routeOrderView(r, head);
   if (mode === 'fm') {
     $view.innerHTML = head + `<div class="card"><h2>Færdigmelding – ${esc(r.name)} <span class="mute">${fmt(day)} ${day.slice(0, 4)}</span></h2>${stats}${mapBlock}
