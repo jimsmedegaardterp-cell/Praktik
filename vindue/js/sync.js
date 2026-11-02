@@ -72,16 +72,23 @@ export function applyRecords(db, rows) {
   return db;
 }
 
-/** Hurtig, stabil hash af en værdi (FNV-1a over JSON). */
+/** JSON med sorterede nøgler – databasen (jsonb) gemmer ikke nøglernes rækkefølge, så hashen må ikke afhænge af den. */
+export function canon(v) {
+  if (Array.isArray(v)) return '[' + v.map((x) => (x === undefined || typeof x === 'function' ? 'null' : canon(x))).join(',') + ']';
+  if (v && typeof v === 'object') { if (typeof v.toJSON === 'function') return canon(v.toJSON());
+    return '{' + Object.keys(v).sort().filter((k) => v[k] !== undefined && typeof v[k] !== 'function').map((k) => JSON.stringify(k) + ':' + canon(v[k])).join(',') + '}'; }
+  return JSON.stringify(v) ?? 'null';
+}
+/** Hurtig, stabil hash af en værdi (FNV-1a over kanonisk JSON). */
 export function hash(v) {
-  const s = JSON.stringify(v); let h = 0x811c9dc5;
+  const s = canon(v); let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
   return (h >>> 0).toString(36) + ':' + s.length;
 }
 const key = (r) => r.kind + '/' + r.id;
 
 const rhash = (data, emps) => hash(data) + '|' + (emps == null ? '*' : emps.join(','));
-const STATE_V = 2; // v2: poster har adgangsliste (emps)
+const STATE_V = 3; // v2: adgangsliste (emps); v3: hash uafhængig af nøglerækkefølge
 
 /**
  * SyncEngine
@@ -131,7 +138,10 @@ export class SyncEngine {
     const since = full ? null : new Date(new Date(this.s.lastPull).getTime() - 60000).toISOString();
     const rows = await this.b.pull(this.s.orgId, since);
     const local = new Map(toRecords(db).map((r) => [key(r), hash(r.data)]));
-    const incoming = rows.filter((r) => (r.deleted ? local.has(key(r)) : local.get(key(r)) !== hash(r.data)));
+    const settingsAfter = (d) => { const t = applyRecords({ settings: db.settings, templates: db.templates, closedDays: db.closedDays, closedInfo: db.closedInfo }, [{ kind: 'settings', id: 'main', data: d }]);
+      return hash({ settings: t.settings || {}, templates: t.templates || {}, closedDays: t.closedDays || [], closedInfo: t.closedInfo || {} }); };
+    // indstillinger flettes med lokale felter → kun "ny" hvis fletningen faktisk ændrer noget
+    const incoming = rows.filter((r) => (r.deleted ? local.has(key(r)) : r.kind === 'settings' ? settingsAfter(r.data) !== local.get(key(r)) : local.get(key(r)) !== hash(r.data)));
     if (full && this.role !== 'admin') {
       // afstemning: alt lokalt som serveren ikke (længere) viser denne medarbejder, fjernes
       const there = new Set(rows.map(key));
@@ -159,6 +169,12 @@ export class SyncEngine {
   }
 }
 
+/** Som PostgreSQL jsonb: nøgler sorteres (korteste først), værdier bevares. */
+function jsonb(v) {
+  if (Array.isArray(v)) return v.map(jsonb);
+  if (v && typeof v === 'object') return Object.fromEntries(Object.keys(v).sort((a, b) => a.length - b.length || (a < b ? -1 : a > b ? 1 : 0)).filter((k) => v[k] !== undefined).map((k) => [k, jsonb(v[k])]));
+  return v;
+}
 /** Database i hukommelsen med samme regler som Supabase (til test og demo uden server). */
 export class MemoryBackend {
   constructor(store = { rows: {}, clock: 0 }) { this.store = store; this.role = 'admin'; this.emp = null; }
@@ -170,7 +186,7 @@ export class MemoryBackend {
       if (this.role !== 'admin' && (!EMPLOYEE_KINDS.has(r.kind) || (old && !this.sees(old)) || !(r.emps || []).includes(this.emp)))
         throw new Error('new row violates row-level security policy');
       const t = new Date(Date.UTC(2026, 0, 1) + ++this.store.clock * 1000).toISOString();
-      this.store.rows[k] = { ...JSON.parse(JSON.stringify(r)), org_id: orgId, updated_at: t };
+      this.store.rows[k] = { ...JSON.parse(JSON.stringify(r)), data: jsonb(r.data), org_id: orgId, updated_at: t };
     }
   }
   async pull(orgId, since) {

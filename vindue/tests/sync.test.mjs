@@ -114,3 +114,15 @@ test('samtidige ændringer på forskellige poster flettes', async () => {
   assert.equal(a.customers.find((c) => c.id === b.customers[1].id).notes, 'fra B');
   assert.equal(b.customers.find((c) => c.id === a.customers[0].id).notes, 'fra A');
 });
+
+test('rolig tilstand: gentagne synk skubber og henter intet (jsonb ændrer nøglerækkefølge)', async () => {
+  const server = new SY.MemoryBackend(); const org = 'o';
+  const a = seedDb('2026-11-02'); a.settings.zz = 1; a.settings.a = 2; const aS = new SY.SyncEngine({ backend: server.as('admin'), state: { orgId: org }, role: 'admin' });
+  await aS.sync(a); await aS.sync(a);
+  for (let i = 0; i < 3; i++) { const r = await aS.sync(a); assert.deepEqual(r, { pushed: 0, pulled: 0 }, 'admin runde ' + i); }
+  const m = freshDb(); const mS = new SY.SyncEngine({ backend: server.as('medarbejder', 'e2'), state: { orgId: org }, role: 'medarbejder' });
+  await mS.sync(m); await mS.sync(m);
+  for (let i = 0; i < 3; i++) { const r = await mS.sync(m); assert.deepEqual(r, { pushed: 0, pulled: 0 }, 'medarbejder runde ' + i); }
+  a.customers[0].notes = 'ny'; const r1 = await aS.sync(a); assert.equal(r1.pushed, 1);
+  await aS.sync(a); assert.deepEqual(await aS.sync(a), { pushed: 0, pulled: 0 });
+});
