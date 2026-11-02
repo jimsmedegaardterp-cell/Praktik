@@ -89,18 +89,18 @@ export function moveVisit(db, user, visitId, newDate, mode) {
  *  3) ved succes → 'kladde'; ved fejl → 'fejl' (kan genforsøges med SAMME nøgle)
  * Et besøg med et link i 'afventer'/'kladde'/'bogført' kan ikke komme i køen igen.
  */
-export async function approveInvoices(db, user, visitIds, economic) {
+export async function approveInvoices(db, user, visitIds, economic, { perCustomer } = {}) {
   require_(user, 'invoice.approve');
   const queue = D.invoiceQueue(db.visits, db.invoiceLinks).filter((v) => visitIds.includes(v.id));
   // betaler = den kunde der faktureres (kan være en anden konto end leveringskunden)
   const payerOf = (v) => db.customers.find((c) => c.id === v.customerId)?.billTo || v.customerId;
-  const groups = D.groupForInvoicing(queue.map((v) => ({ ...v, customerId: payerOf(v), deliveryCustomerId: v.customerId })), { perCustomer: db.settings.perCustomerInvoice });
+  const groups = D.groupForInvoicing(queue.map((v) => ({ ...v, customerId: payerOf(v), deliveryCustomerId: v.customerId })), { perCustomer: perCustomer ?? db.settings.perCustomerInvoice });
   const results = [];
   for (const g of groups) {
     const key = D.idempotencyKey(g.map((v) => v.id));
     let link = db.invoiceLinks.find((l) => l.idempotencyKey === key);
     if (link && link.status !== 'fejl') { results.push(link); continue; }
-    if (!link) { link = { id: uid('inv'), idempotencyKey: key, customerId: g[0].customerId, visitIds: g.map((v) => v.id), status: 'afventer', createdAt: now(), attempts: 0 }; db.invoiceLinks.push(link); }
+    if (!link) { link = { id: 'inv_' + fnv(key), idempotencyKey: key, customerId: g[0].customerId, visitIds: g.map((v) => v.id), status: 'afventer', createdAt: now(), attempts: 0 }; db.invoiceLinks.push(link); }
     else link.status = 'afventer';
     results.push(await pushDraft(db, user, link, economic));
   }
@@ -117,6 +117,8 @@ async function pushDraft(db, user, link, economic) {
       const dc = v.customerId !== c.id ? db.customers.find((x) => x.id === v.customerId)?.name + ', ' : '';
       return [{ description: `${v.service} – ${dc}${a?.street ?? ''} (${v.completion.at.slice(0, 10)})`, quantity: 1, unitNetPrice: v.price },
         ...(v.extras || []).filter((x) => x.text).map((x) => ({ description: `Ekstra: ${x.text} – ${a?.street ?? ''}`, quantity: 1, unitNetPrice: Number(x.price) || 0 }))]; }).flat();
+    if (economic.findBooked) { const f = await economic.findBooked('SV-' + link.id);
+      if (f) { Object.assign(link, { status: 'bogført', invoiceNumber: f.invoiceNumber, gross: f.gross, payment: 'åben', error: null }); audit(db, user.id, 'invoice.found', link.id, { invoiceNumber: f.invoiceNumber }); return link; } }
     const dates = link.visitIds.map((id) => db.visits.find((x) => x.id === id)?.completion?.at?.slice(0, 10)).filter(Boolean).sort();
     const { draftNumber, gross } = await economic.createDraftInvoice({ idempotencyKey: link.idempotencyKey, customerExternalId: c.economicNumber, lines,
       reference: 'SV-' + link.id, recipient: { name: c.name, ...addr }, date: dates[dates.length - 1] || now().slice(0, 10) });
@@ -129,11 +131,37 @@ async function pushDraft(db, user, link, economic) {
   return link;
 }
 
+const fnv = (str) => { let h = 0x811c9dc5; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193); } return (h >>> 0).toString(36); };
 const splitAddr = (a) => { const m = String(a?.street || '').match(/^(.*?),\s*(\d{4})\s+(.+)$/); return m ? { address: m[1].trim(), zip: m[2], city: m[3].trim() } : a?.street ? { address: a.street } : {}; };
 
+/**
+ * Automatisk fakturering: alt færdigmeldt (ældre end graceMin minutter, så fejl kan nå at rettes) faktureres.
+ * Kunder med "samlet pr. måned" faktureres samlet, når måneden er slut.
+ */
+export async function autoInvoice(db, user, economic, { nowMs = Date.now(), graceMin = 5, from } = {}) {
+  if (!from) return []; // kun besøg færdigmeldt efter automatikken blev slået til (gamle/importerede er faktureret andetsteds)
+  const cutoff = nowMs - graceMin * 60000; const month = new Date(nowMs).toISOString().slice(0, 7);
+  const payer = (v) => db.customers.find((c) => c.id === (db.customers.find((x) => x.id === v.customerId)?.billTo || v.customerId));
+  const q = D.invoiceQueue(db.visits, db.invoiceLinks).filter((v) => Date.parse(v.completion.at) <= cutoff && v.completion.at >= from);
+  const monthly = q.filter((v) => payer(v)?.invoiceInterval === 'maaned');
+  const each = q.filter((v) => payer(v)?.invoiceInterval !== 'maaned').map((v) => v.id);
+  const dueMonthly = monthly.filter((v) => v.completion.at.slice(0, 7) < month).map((v) => v.id);
+  const out = [];
+  if (each.length) out.push(...(await approveAndBook(db, user, each, economic, { perCustomer: false })));
+  if (dueMonthly.length) out.push(...(await approveAndBook(db, user, dueMonthly, economic, { perCustomer: true })));
+  // fejlede kladder/bogføringer prøves igen (højst hvert 10. minut pr. faktura)
+  const fresh = new Set(out.map((l) => l.id)); out.forEach((l) => { if (l.status !== 'bogført') l.lastTry = nowMs; });
+  for (const l of db.invoiceLinks) {
+    if (!fresh.has(l.id) && (l.status === 'fejl' || l.status === 'kladde') && (!l.lastTry || nowMs - l.lastTry > 600000) && (l.attempts || 0) < 6) {
+      l.lastTry = nowMs; if (l.status === 'fejl') await retryInvoice(db, user, l.id, economic); if (l.status === 'kladde') await bookInvoice(db, user, l.id, economic); out.push(l);
+    }
+  }
+  return out;
+}
+
 /** Godkend → kladde → (bogfør og send) → registrér betaling på stedet. Hvert trin kan genoptages ved fejl. */
-export async function approveAndBook(db, user, visitIds, economic, { book = true } = {}) {
-  const links = await approveInvoices(db, user, visitIds, economic);
+export async function approveAndBook(db, user, visitIds, economic, { book = true, perCustomer } = {}) {
+  const links = await approveInvoices(db, user, visitIds, economic, { perCustomer });
   if (book) for (const l of links) { if (l.status === 'kladde') await bookInvoice(db, user, l.id, economic); }
   return links;
 }
@@ -144,7 +172,8 @@ export const sendByFor = (c) => ((c?.invoiceType || 'email') === 'email' && c?.e
 /** Betalt på stedet (kontant/MobilePay) → indbetaling i e-conomic, så fakturaen ikke står åben. */
 export async function registerOnSitePayment(db, user, link, economic) {
   if (link.status !== 'bogført' || link.paymentRegistered || !economic.registerPayment) return link;
-  const vs = link.visitIds.map((id) => db.visits.find((v) => v.id === id)).filter((v) => v?.completion?.cashPaid);
+  // kun kontant – MobilePay/bank afstemmes af e-conomic (Betalingslink/bankafstemning)
+  const vs = link.visitIds.map((id) => db.visits.find((v) => v.id === id)).filter((v) => v?.completion?.cashPaid && v.completion.payMethod !== 'mobilepay');
   if (!vs.length) return link;
   const c = db.customers.find((x) => x.id === link.customerId);
   const all = vs.length === link.visitIds.length;
@@ -191,7 +220,7 @@ export async function syncPayments(db, economic, user) {
   if (economic.getStatuses && open.length) {
     for (let i = 0; i < open.length; i += 100) { const part = open.slice(i, i + 100); const st = await economic.getStatuses(part.map((l) => l.invoiceNumber));
       for (const l of part) { const s = st[l.invoiceNumber]; if (!s || s.error) { l.error = s?.error || 'Ukendt faktura'; continue; }
-        Object.assign(l, { remainder: s.remainder, gross: s.gross, payment: s.remainder <= 0 ? 'betalt' : s.remainder < s.gross ? 'delvis' : 'åben' }); } }
+        Object.assign(l, { remainder: s.remainder, gross: s.gross, dueDate: s.dueDate || l.dueDate, payment: s.remainder <= 0 ? 'betalt' : s.remainder < s.gross ? 'delvis' : 'åben' }); } }
     return;
   }
   for (const l of open) {

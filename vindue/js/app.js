@@ -13,7 +13,7 @@ import { SupabaseCloud, MemoryCloud } from './cloud.js';
 import { SUPABASE } from './config.js';
 import * as KV from './store.js';
 
-export const VERSION = '2026-11-02 #34';
+export const VERSION = '2026-11-02 #35';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -310,6 +310,12 @@ function alertsStrip() {
   if (left) out.push(`<span class="alert">📱 SMS til ${fmt(nd)}: ${left} mangler <button data-act="smsTomorrow">Send</button></span>`);
   const dbl = D.findDoubleBookings(db.visits.filter((v) => v.plannedDate >= t));
   if (dbl.length) out.push(`<span class="alert">⚠️ ${dbl.length} mulige dobbeltbookinger <button data-act="showDbl">Vis</button></span>`);
+  if (isAdmin()) {
+    const od = db.invoiceLinks.filter((l) => l.status === 'bogført' && l.payment !== 'betalt' && l.dueDate && l.dueDate < t);
+    if (od.length) out.push(`<span class="alert">💸 ${od.length} faktura${od.length > 1 ? 'er' : ''} ikke betalt til tiden (${kr(Math.round(od.reduce((s2, l) => s2 + (l.remainder ?? l.gross ?? 0), 0)))}) <button data-tab="faktura">Vis</button></span>`);
+    const bad = db.invoiceLinks.filter((l) => l.status === 'fejl' || (l.status === 'kladde' && (l.attempts || 0) >= 3));
+    if (bad.length) out.push(`<span class="alert">⚠️ ${bad.length} faktura${bad.length > 1 ? 'er' : ''} kunne ikke laves i e-conomic <button data-tab="faktura">Vis</button></span>`);
+  }
   const chk = dataCheck().slice(0, 2).reduce((s2, [, it]) => s2 + it.length, 0);
   if (chk) out.push(`<span class="alert">📋 ${chk} ting at tjekke i data <button data-act="showCheck">Vis</button></span>`);
   return out.length ? `<div class="alerts">${out.join('')}</div>` : '';
@@ -798,11 +804,11 @@ function faktura() {
   const links = [...db.invoiceLinks].reverse();
   $view.innerHTML = `<div class="card"><div class="row"><h2 class="sp">Faktureringskø (${q.length})</h2><label class="small"><input type="checkbox" id="perC" ${db.settings.perCustomerInvoice ? 'checked' : ''}> Samlefaktura pr. kunde</label></div>
     ${q.length ? `<table><tr><th><input type="checkbox" id="all" checked></th><th>Udført</th><th>Kunde</th><th class="hide-m">Ydelse</th><th>Af</th><th>Pris</th></tr>${q.map((v) => `<tr><td><input type="checkbox" class="qv" value="${v.id}" checked></td><td>${fmt(v.completion.at.slice(0, 10))}</td><td>${esc(cust(v.customerId).name)}${cust(v.customerId).billTo ? `<div class="small mute">💳 faktureres via ${esc(cust(cust(v.customerId).billTo)?.name)}</div>` : ''}</td><td class="hide-m small">${esc(v.service)}${v.status === 'delvis' ? ' (delvis)' : ''}${v.completion.priceChanged ? ' <span class="pill warn">pris ændret</span>' : ''}${v.completion.note ? `<br>💬 ${esc(v.completion.note)}` : ''}</td><td>${esc(emp(v.completion.by)?.name ?? v.completion.by)}<div class="small mute">${esc(PAY[cust(v.customerId).paymentMethod] ?? '')}${v.completion.cashPaid ? ` <span class="pill ok">${v.completion.payMethod === 'kontant' ? 'kontant' : 'MobilePay'} modtaget</span>` : ''}</div></td><td>${kr(v.price)}</td></tr>`).join('')}</table>
-    <div class="row" style="margin-top:10px"><button class="pri" data-act="approve">${ecoReal() ? 'Godkend valgte → fakturér i e-conomic' : 'Godkend valgte → opret kladder (øve-udgave)'}</button>${ecoReal() ? '' : `<label class="small"><input type="checkbox" id="fail" ${eco.failNext ? 'checked' : ''}> Simulér timeout ved næste kald</label>`}</div>
-    ${ecoReal() ? `<p class="small mute">Fakturaerne bogføres og ${db.settings.economic.sendEmail === false ? '<b>sendes ikke</b> (slået fra under Admin)' : 'sendes pr. mail til kunder med e-mail og "Email"-faktura'}. Betalt på stedet registreres som indbetaling i kassekladden (bogføres i e-conomic).</p>` : '<p class="small mute">⚠️ e-conomic er ikke forbundet – dette er en øve-udgave uden rigtige fakturaer. Opsætning: Admin → e-conomic.</p>'}` : '<p class="mute">Intet klar til fakturering. Registrér et besøg som udført i 📱 Dagsrute.</p>'}</div>
+    <div class="row" style="margin-top:10px"><button class="${ecoReal() ? '' : 'pri'}" data-act="approve">${ecoReal() ? 'Fakturér valgte nu' : 'Godkend valgte → opret kladder (øve-udgave)'}</button>${ecoReal() ? '' : `<label class="small"><input type="checkbox" id="fail" ${eco.failNext ? 'checked' : ''}> Simulér timeout ved næste kald</label>`}</div>
+    ${ecoReal() ? `<p class="small"><b>Automatisk:</b> færdigmeldte besøg faktureres af sig selv efter 5 minutter (så fejl kan nå at rettes). Kunder med "samlet pr. måned" faktureres den 1. i næste måned. Det sker, mens appen er åben hos en admin.</p><p class="small mute">Fakturaerne bogføres og ${db.settings.economic.sendEmail === false ? '<b>sendes ikke</b> (slået fra under Admin)' : 'sendes pr. mail til kunder med e-mail og "Email"-faktura'}. Kontant betalt på stedet lægges i kassekladden; bank og MobilePay afstemmes i e-conomic.</p>` : '<p class="small mute">⚠️ e-conomic er ikke forbundet – dette er en øve-udgave uden rigtige fakturaer. Opsætning: Admin → e-conomic.</p>'}` : '<p class="mute">Intet klar til fakturering. Registrér et besøg som udført i 📱 Dagsrute.</p>'}</div>
   <div class="card"><div class="row"><h2 class="sp">Fakturaer${ecoReal() ? '' : ' (øve-udgave)'}</h2><button data-act="syncPay">Hent betalingsstatus</button></div>
     ${links.length ? `<table><tr><th>Kunde</th><th>Besøg</th><th>Beløb</th><th>e-conomic</th><th>Status</th><th></th></tr>${links.map((l) => `<tr><td>${esc(cust(l.customerId)?.name)}</td><td>${l.visitIds.length}</td><td>${kr(l.total)}${l.gross ? `<div class="small mute">${kr(l.gross)} inkl. moms</div>` : ''}</td><td class="small">${l.invoiceNumber ? 'Faktura ' + l.invoiceNumber : l.draftNumber ? 'Kladde ' + l.draftNumber : '–'}${l.error ? `<div style="color:var(--bad)">${esc(l.error)}</div>` : ''}</td>
-      <td><span class="pill ${INV[l.status]}">${l.status}</span> ${l.payment ? `<span class="pill ${l.payment === 'betalt' ? 'ok' : 'warn'}">${l.payment}</span>` : ''}${l.sentBy === 'Email' ? ' <span class="pill">✉️ sendt</span>' : ''}${l.paymentRegistered ? ` <span class="pill ok" title="Indbetaling lagt i kassekladden">${l.paymentRegistered.method === 'kontant' ? '💵' : '📱'} ${kr(l.paymentRegistered.amount)}</span>` : ''}</td>
+      <td><span class="pill ${INV[l.status]}">${l.status}</span> ${l.payment ? `<span class="pill ${l.payment === 'betalt' ? 'ok' : l.dueDate && l.dueDate < todayIso() ? 'bad' : 'warn'}">${l.payment === 'betalt' ? 'betalt' : l.dueDate && l.dueDate < todayIso() ? 'forfalden ' + fmt(l.dueDate) : l.payment}</span>` : ''}${l.sentBy === 'Email' ? ' <span class="pill">✉️ sendt</span>' : ''}${l.paymentRegistered ? ` <span class="pill ok" title="Indbetaling lagt i kassekladden">${l.paymentRegistered.method === 'kontant' ? '💵' : '📱'} ${kr(l.paymentRegistered.amount)}</span>` : ''}</td>
       <td>${l.status === 'fejl' ? `<button data-act="retry" data-id="${l.id}">Prøv igen</button>` : ''}${l.status === 'kladde' ? `<button data-act="book" data-id="${l.id}">Bogfør & send</button>` : ''}${l.status === 'bogført' && l.payment !== 'betalt' && !ecoReal() ? `<button class="small" data-act="pay" data-id="${l.id}" title="Kun øve-udgave">Simulér betaling</button>` : ''}</td></tr>`).join('')}</table>` : '<p class="mute">Ingen endnu.</p>'}
     <p class="small mute">Status vises først som "kladde"/"bogført", når e-conomic har bekræftet. Regnskab, moms og bank ligger i e-conomic – appen henter betalingsstatus.</p></div>`;
   const all = document.getElementById('all'); if (all) all.onchange = () => $view.querySelectorAll('.qv').forEach((x) => (x.checked = all.checked));
@@ -1341,8 +1347,23 @@ async function doSync(force) {
   try { stampAudit(); const r = await syncer.sync(db); syncInfo.status = 'ok'; syncInfo.at = Date.now(); syncInfo.error = null;
     await persist(); await KV.set(syncer._key, syncer.s);
     if (r.pulled) { S.planAhead(db, D.addDays(todayIso(), 120)); softRender(); } else renderNet();
+    autoEconomic();
   } catch (e) { syncInfo.status = 'error'; syncInfo.error = e.message; renderNet(); if (force) toast('Synkronisering fejlede: ' + e.message); }
 }
+/** Automatik (kun admin, kun når e-conomic er slået til): fakturér færdigmeldte besøg og hent betalingsstatus. */
+let autoBusy = false;
+async function autoEconomic() {
+  if (autoBusy || !ecoReal() || gate || !navigator.onLine) return; autoBusy = true;
+  try {
+    if (!db.settings.economic.autoFrom) { db.settings.economic.autoFrom = new Date().toISOString(); await save(); } // allerede slået til før denne version
+    const api = ecoApi(); const r = await S.autoInvoice(db, ui.user, api, { from: db.settings.economic.autoFrom });
+    const last = +(localStorage.getItem('vindue-paysync') || 0);
+    if (Date.now() - last > 3 * 3600e3 && db.invoiceLinks.some((l) => l.status === 'bogført' && l.payment !== 'betalt')) { await S.syncPayments(db, api, ui.user); localStorage.setItem('vindue-paysync', String(Date.now())); r.push(1); }
+    if (r.length) { await save(); softRender(); }
+  } catch (e) { console.warn('Automatisk fakturering', e); }
+  finally { autoBusy = false; }
+}
+setInterval(() => { if (document.visibilityState === 'visible') autoEconomic(); }, 60000);
 /** Tegn kun forfra, når brugeren ikke er i gang med at skrive eller har en dialog åben (ellers når de er færdige). */
 let renderPending = false;
 const busy = () => document.getElementById('dlg')?.open || (document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName) && document.activeElement.id !== 'user');
@@ -1393,10 +1414,11 @@ async function ecoCard() {
     <h3>Betaling på stedet</h3><div class="grid">${sel('journal', opts.journals, 'Kassekladde')}${sel('cashAccount', opts.accounts.filter((a) => a.type === 'status'), 'Konto for kontant')}${sel('mobilepayAccount', opts.accounts.filter((a) => a.type === 'status'), 'Konto for MobilePay')}</div>
     <label class="small"><input type="checkbox" data-eco="sendEmail" ${cfg.sendEmail === false ? '' : 'checked'}> Send fakturaen pr. mail ved bogføring (kunder med e-mail og fakturatype "Email")</label><br>
     <label class="small"><input type="checkbox" data-eco="enabled" ${cfg.enabled ? 'checked' : ''} ${missing.length ? 'disabled' : ''}> <b>Brug e-conomic til fakturering</b>${missing.length ? ' – udfyld felterne ovenfor først' : ''}</label>
-    <p class="small mute">Når den er slået til, laver "Fakturering" rigtige fakturaer i e-conomic. Kunder oprettes automatisk (med samme kundenummer som i appen, når det er ledigt).</p>
+    ${cfg.autoFrom ? `<p class="small">Automatisk fakturering af besøg færdigmeldt efter <b>${fmtTs(cfg.autoFrom)}</b>. Ældre besøg kan faktureres manuelt under Fakturering.</p>` : ''}<p class="small mute">Når den er slået til, laver "Fakturering" rigtige fakturaer i e-conomic. Kunder oprettes automatisk (med samme kundenummer som i appen, når det er ledigt).</p>
     <div class="row"><button data-act="ecoRetry">Genindlæs lister</button></div>`;
   el.querySelectorAll('[data-eco]').forEach((x) => (x.onchange = () => { const k = x.dataset.eco;
     cfg[k] = x.type === 'checkbox' ? x.checked : x.value === '' ? null : (k === 'product' ? x.value : Number(x.value));
+    if (k === 'enabled' && x.checked && !cfg.autoFrom) cfg.autoFrom = new Date().toISOString(); // gamle besøg faktureres ikke automatisk
     S.audit(db, ui.user.id, 'economic.settings', k, { value: cfg[k] }); save(); ecoCard(); }));
 }
 async function cloudCard() {

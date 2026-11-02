@@ -70,6 +70,14 @@ Appen taler med e-conomic gennem en lille serverfunktion i Supabase (`supabase/f
 
 I e-conomic skal firmaets e-mail være udfyldt (Indstillinger → Firma), ellers kan fakturaer ikke sendes pr. mail.
 
+### Automatik i hverdagen
+- Færdigmeldte besøg faktureres **automatisk** efter 5 minutter (bogføres og sendes pr. mail). Kunder med "samlet pr. måned" faktureres den 1. i næste måned. Kører, mens appen er åben hos en admin (senere evt. på serveren).
+- Kun besøg færdigmeldt **efter** automatikken blev slået til faktureres automatisk.
+- Forfaldne fakturaer vises på forsiden. Betalingsstatus hentes hver 3. time.
+- **Betalingslink** i e-conomic (MobilePay/kort-knap i fakturamailen, via Pensopay – kræver godkendelse/KYC): betalinger registreres automatisk i e-conomic. Slås til i e-conomic, ikke i appen. Priser SKAL VERIFICERES.
+- **Bankintegration/bankafstemning** i e-conomic afstemmer bankindbetalinger. Opsættes i e-conomic.
+- Kontant betalt på stedet lægges af appen i kassekladden.
+
 ### Når det skal i drift
 Lav den rigtige regnskabsaftale, åbn Installation URL dér, og udskift `ECONOMIC_GRANT` med den nye token. Opsætningen i appen skal vælges igen (numrene kan være anderledes).
 

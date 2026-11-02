@@ -55,13 +55,10 @@ test('uden e-mail → bogføres uden afsendelse; mail slået fra i opsætning re
   const [l2] = await S.approveAndBook(db2, admin, ids2, f2.api); assert.equal(l2.sentBy, 'none');
 });
 
-test('betalt med MobilePay på stedet → indbetaling på MobilePay-kontoen og fakturaen står betalt', async () => {
+test('MobilePay på stedet registreres IKKE af appen (e-conomic afstemmer bank/Betalingslink)', async () => {
   const db = seedDb('2026-11-02'); db.settings.economic = cfg; const { st, api } = fakeServer();
-  const ids = doneVisits(db, 1, { cashAmount: 285, payMethod: 'mobilepay' });
-  const [l] = await S.approveAndBook(db, admin, ids, api);
-  assert.equal(st.payments.length, 1); assert.equal(st.payments[0].account, 5820); assert.equal(st.payments[0].amount, 285); assert.equal(st.payments[0].invoiceNumber, l.invoiceNumber);
-  assert.deepEqual(l.paymentRegistered.method, 'mobilepay');
-  await S.syncPayments(db, api, admin); assert.equal(st.payments.length, 1, 'ikke registreret to gange');
+  const [l] = await S.approveAndBook(db, admin, doneVisits(db, 1, { cashAmount: 285, payMethod: 'mobilepay' }), api);
+  assert.equal(l.status, 'bogført'); assert.equal(st.payments.length, 0);
 });
 
 test('kontant går på kassekontoen', async () => {
@@ -91,4 +88,46 @@ test('færdigmelding af ruten bevarer betalingsmåde', () => {
   const db = seedDb('2026-11-02'); const v = db.visits.find((x) => x.status === 'planlagt');
   S.finishRoute(db, admin, [{ visitId: v.id, result: 'udfoert', cashAmount: 300, payMethod: 'mobilepay' }]);
   const c = db.visits.find((x) => x.id === v.id).completion; assert.equal(c.cashPaid, true); assert.equal(c.payMethod, 'mobilepay');
+});
+
+test('automatisk fakturering: venter 5 min, fakturerer derefter hvert besøg for sig', async () => {
+  const db = seedDb('2026-11-02'); db.settings.economic = cfg; const { st, api } = fakeServer();
+  const ids = doneVisits(db, 3); const t = Date.parse(db.visits.find((v) => v.id === ids[0]).completion.at);
+  assert.equal((await S.autoInvoice(db, admin, api, { from: '2000-01-01', nowMs: t + 60000 })).length, 0, 'for tidligt');
+  const r = await S.autoInvoice(db, admin, api, { from: '2000-01-01', nowMs: t + 6 * 60000 });
+  assert.equal(r.length, 3); assert.ok(r.every((l) => l.status === 'bogført'));
+  assert.equal((await S.autoInvoice(db, admin, api, { from: '2000-01-01', nowMs: t + 60 * 60000 })).length, 0, 'intet igen');
+});
+
+test('automatisk: kunder med "samlet pr. måned" faktureres samlet efter månedens udløb', async () => {
+  const db = seedDb('2026-11-02'); db.settings.economic = cfg; const { st, api } = fakeServer();
+  const c = db.customers[0]; c.invoiceInterval = 'maaned';
+  const vs = db.visits.filter((v) => v.customerId === c.id && v.status === 'planlagt').slice(0, 2);
+  vs.forEach((v, i) => S.registerVisit(db, admin, v.id, { result: 'udfoert', opId: 'm' + i, at: '2026-11-0' + (3 + i) + 'T10:00:00Z' }));
+  assert.equal((await S.autoInvoice(db, admin, api, { from: '2000-01-01', nowMs: Date.parse('2026-11-20T10:00:00Z') })).length, 0, 'ikke før måneden er slut');
+  const r = await S.autoInvoice(db, admin, api, { from: '2000-01-01', nowMs: Date.parse('2026-12-01T08:00:00Z') });
+  assert.equal(r.length, 1); assert.equal(r[0].visitIds.length, 2);
+});
+
+test('to admin-enheder fakturerer samme besøg → kun én faktura (fundet via reference)', async () => {
+  const a = seedDb('2026-11-02'); a.settings.economic = cfg; const { st, api } = fakeServer();
+  const ids = doneVisits(a, 1); const b = JSON.parse(JSON.stringify(a));
+  const t = Date.parse(a.visits.find((v) => v.id === ids[0]).completion.at) + 6 * 60000;
+  await S.autoInvoice(a, admin, api, { from: '2000-01-01', nowMs: t }); const [lb] = await S.autoInvoice(b, admin, api, { from: '2000-01-01', nowMs: t });
+  assert.equal(Object.keys(st.booked).length, 1); assert.equal(lb.status, 'bogført'); assert.equal(lb.invoiceNumber, a.invoiceLinks[0].invoiceNumber);
+});
+
+test('automatisk: fejl prøves igen senere', async () => {
+  const db = seedDb('2026-11-02'); db.settings.economic = cfg; const { api } = fakeServer();
+  let fail = true; const orig = api.call; api.call = async (op, p) => { if (op === 'createDraft' && fail) { fail = false; throw new Error('timeout'); } return orig(op, p); };
+  const ids = doneVisits(db, 1); const t = Date.parse(db.visits.find((v) => v.id === ids[0]).completion.at) + 6 * 60000;
+  const [l] = await S.autoInvoice(db, admin, api, { from: '2000-01-01', nowMs: t }); assert.equal(l.status, 'fejl');
+  await S.autoInvoice(db, admin, api, { from: '2000-01-01', nowMs: t + 11 * 60000 }); assert.equal(l.status, 'bogført');
+});
+
+test('automatisk fakturerer ikke besøg fra før automatikken blev slået til', async () => {
+  const db = seedDb('2026-11-02'); db.settings.economic = cfg; const { api } = fakeServer();
+  const ids = doneVisits(db, 2); const at = db.visits.find((v) => v.id === ids[0]).completion.at;
+  assert.equal((await S.autoInvoice(db, admin, api, { nowMs: Date.parse(at) + 1e7 })).length, 0, 'uden startdato: intet');
+  assert.equal((await S.autoInvoice(db, admin, api, { from: new Date(Date.parse(at) + 1000).toISOString(), nowMs: Date.parse(at) + 1e7 })).length, 0, 'ældre end start: intet');
 });
