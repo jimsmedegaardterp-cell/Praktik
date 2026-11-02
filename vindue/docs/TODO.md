@@ -26,6 +26,6 @@
 
 ## e-conomic – SKAL VERIFICERES i prøve-regnskab
 - [ ] Opret kunde (PUT ved opdatering bevarer øvrige felter?)
-- [ ] Kladde → bogført → mail modtaget af kunde
-- [ ] Indbetaling i kassekladde: fortegn (kundens saldo skal falde) og at fakturaen lukkes, når kladden bogføres
+- [x] Fortegn rettet til negativt (positivt øgede saldoen) – [ ] bekræft at saldo bliver 0 efter ny test
+- [x] Kunde oprettes, kladde → bogført → mail modtaget
 - [ ] Genoptagelse efter tabt svar (findBooked via reference)
