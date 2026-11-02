@@ -89,7 +89,7 @@ export const isBillable = (v) => BILLABLE.has(v.status);
 /** Besøgets samlede beløb ekskl. moms: pris + ekstra opgaver. */
 export const visitTotal = (v) => (v.price || 0) + (v.extras || []).reduce((s, x) => s + (Number(x.price) || 0), 0);
 
-export function completeVisit(visit, { result, opId, by, at, note = '', price, cashPaid = false, cashAmount = 0, service, split, extras }) {
+export function completeVisit(visit, { result, opId, by, at, note = '', price, cashPaid = false, cashAmount = 0, payMethod, service, split, extras }) {
   if (!RESULTS[result]) throw new Error(`Ukendt resultat: ${result}`);
   if (visit.completion) {
     if (visit.completion.opId === opId) return { visit, changed: false }; // samme handling gentaget
@@ -101,7 +101,7 @@ export function completeVisit(visit, { result, opId, by, at, note = '', price, c
   const p = price ?? visit.price;
   const next = {
     ...visit, status: result, price: p, service: service || visit.service, split: split ?? visit.split, extras: extras ?? visit.extras,
-    completion: { opId, by, at, note, result, priceChanged: p !== visit.price, originalPrice: visit.price, cashPaid: (!!cashPaid || cashAmount > 0) && BILLABLE.has(result), cashAmount: BILLABLE.has(result) ? cashAmount : 0 },
+    completion: { opId, by, at, note, result, priceChanged: p !== visit.price, originalPrice: visit.price, cashPaid: (!!cashPaid || cashAmount > 0) && BILLABLE.has(result), cashAmount: BILLABLE.has(result) ? cashAmount : 0, ...((!!cashPaid || cashAmount > 0) && BILLABLE.has(result) ? { payMethod: payMethod === 'mobilepay' ? 'mobilepay' : 'kontant' } : {}) },
     history: [...visit.history, { at, by, action: result, note, price: p }],
   };
   return { visit: next, changed: true };

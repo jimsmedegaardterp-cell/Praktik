@@ -48,6 +48,14 @@ export class SupabaseCloud {
   async createOrg(name) { const { data, error } = await this.c.rpc('create_org', { org_name: name }); err(error); return data; }
   async acceptInvite(code) { const { data, error } = await this.c.rpc('accept_invite', { invite_code: code }); err(error); return data; }
   async createInvite(orgId, role, employeeId, note) { const { data, error } = await this.c.rpc('create_invite', { o: orgId, r: role, emp: employeeId, n: note || null }); err(error); return data; }
+  /** Kald serverfunktionen til e-conomic (nøglerne ligger kun på serveren). */
+  async economic(op, params = {}) {
+    const { data, error } = await this.c.functions.invoke('economic', { body: { op, ...params } });
+    if (error) { let m = error.message; try { const b = await error.context?.json?.(); if (b?.error) m = b.error; } catch {}
+      throw new Error(/Failed to send|FunctionsFetchError|404/i.test(m) ? 'Serverfunktionen "economic" er ikke installeret i Supabase endnu (se OPSÆTNING.md)' : m); }
+    if (!data?.ok) throw new Error(data?.error || 'Ukendt fejl fra e-conomic-funktionen');
+    return data.data;
+  }
   async members(orgId) { const { data, error } = await this.c.from('members').select('user_id, role, employee_id, email, created_at').eq('org_id', orgId).order('created_at'); err(error); return data; }
   async invites(orgId) { const { data, error } = await this.c.from('invites').select('code, role, employee_id, note, expires_at, used_at').eq('org_id', orgId).is('used_at', null).order('created_at', { ascending: false }); err(error); return data; }
   async updateMember(orgId, userId, patch) { const { error } = await this.c.from('members').update(patch).eq('org_id', orgId).eq('user_id', userId); err(error); }

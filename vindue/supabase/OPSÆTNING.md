@@ -46,6 +46,33 @@ delete from auth.mfa_factors where user_id = (select id from auth.users where em
 ```
 Log derefter ind med kodeord – appen beder dig sætte to-trinslogin op igen.
 
+## e-conomic
+Appen taler med e-conomic gennem en lille serverfunktion i Supabase (`supabase/functions/economic/index.ts`). e-conomic-nøglerne ligger **kun** dér – aldrig i appen/browseren. Kun admin (med to-trinslogin) kan bruge den.
+
+### 1. Konti hos e-conomic (til test)
+1. **Udvikleraftale** (gratis) – bruges kun til at lave "appen" og nøglen. Login kommer pr. mail.
+2. **Prøve-regnskab** (sandkasse) med testdata: <https://www.e-conomic.dk/regnskabsprogram/demo-alle> (14 dage; e-conomic kan forlænge på api@e-conomic.com).
+
+### 2. Lav appen og hent nøglerne
+1. Log ind på **udvikleraftalen** → fanen **Apps** → **New app** → navn `Sindal Vinduespolering`, rolle **SuperUser** → opret. Kopiér **AppSecretToken** (vises kun én gang).
+2. Klik **Tokens** ved appen → kopiér **Installation URL**.
+3. **Log ud** af udvikleraftalen, log ind på **prøve-regnskabet**, og åbn Installation URL → godkend. Kopiér den **AgreementGrantToken**, der vises.
+
+### 3. Installér serverfunktionen i Supabase
+1. Supabase → **Edge Functions** → **Deploy a new function** → **Via Editor**.
+2. Navn: `economic` (præcis). Slet eksempelkoden, indsæt hele `supabase/functions/economic/index.ts`, **Deploy**.
+3. **Edge Functions → Secrets** → tilføj:
+   - `ECONOMIC_APP_SECRET` = AppSecretToken
+   - `ECONOMIC_GRANT` = AgreementGrantToken
+
+### 4. I appen
+**Admin → e-conomic**: vælg kundegruppe, betalingsbetingelse, momszone (Domestic/Indland), layout og den vare, fakturalinjerne skal bogføres på (opret evt. varen "Vinduespolering" i e-conomic med 25 % moms). Til betaling på stedet: kassekladde og konti for kontant og MobilePay. Slå **"Brug e-conomic til fakturering"** til.
+
+I e-conomic skal firmaets e-mail være udfyldt (Indstillinger → Firma), ellers kan fakturaer ikke sendes pr. mail.
+
+### Når det skal i drift
+Lav den rigtige regnskabsaftale, åbn Installation URL dér, og udskift `ECONOMIC_GRANT` med den nye token. Opsætningen i appen skal vælges igen (numrene kan være anderledes).
+
 ## GDPR og drift – SKAL VERIFICERES
 - Indgå Supabase's databehandleraftale (DPA) under organisationens indstillinger.
 - Gratis-planen kan sætte projekter på pause efter en periode uden aktivitet og har begrænset backup. Tjek gældende vilkår; overvej betalt plan før rigtig drift.
