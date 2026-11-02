@@ -116,7 +116,7 @@ const OPS: Record<string, (p: any) => Promise<unknown>> = {
     const d0 = /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : new Date().toISOString().slice(0, 10);
     const body = { accountingYear: { year: d0.slice(0, 4) }, journal: { journalNumber: num(journal, 'kassekladde') },
       entries: { customerPayments: [clean({ customer: { customerNumber: num(customerNumber, 'kundenummer') }, customerInvoice: num(invoiceNumber, 'fakturanummer'),
-        amount: Math.abs(Math.round(Number(amount) * 100) / 100), /* positivt som dokumentationens eksempel – SKAL VERIFICERES: kundens saldo skal falde */ contraAccount: { accountNumber: num(account, 'konto') }, currency: { code: 'DKK' }, date: d0, text: str(text, 250) })] } };
+        amount: -Math.abs(Math.round(Number(amount) * 100) / 100), /* negativt = kunden krediteres (testet i prøve-regnskab: positivt øgede saldoen) */ contraAccount: { accountNumber: num(account, 'konto') }, currency: { code: 'DKK' }, date: d0, text: str(text, 250) })] } };
     const d = await eco(`/journals/${body.journal.journalNumber}/vouchers`, { method: 'POST', body, idem });
     return { voucher: Array.isArray(d) ? d[0]?.voucherNumber : d?.voucherNumber };
   },
