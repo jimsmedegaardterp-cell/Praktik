@@ -14,7 +14,7 @@ import { SUPABASE } from './config.js';
 import { showRouteMap } from './map.js';
 import * as KV from './store.js';
 
-export const VERSION = '2026-11-03 #49';
+export const VERSION = '2026-11-03 #50';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -170,13 +170,34 @@ const kTabs = () => `<div class="seg subtabs"><button data-act="kview" data-v="k
 function kunder() {
   if (ui.customer && cust(ui.customer)) return kundekort(cust(ui.customer));
   if (ui.kView === 'ruter') return ruteOversigt();
-  const q = ui.q.toLowerCase();
-  const list = db.customers.filter((c) => !c.deleted && (!q || c.name.toLowerCase().includes(q) || String(c.customerNo || c.skvizbizId || '').includes(q) || c.phone.replace(/\s/g, '').includes(q.replace(/\s/g, '')) || db.addresses.some((a) => a.customerId === c.id && a.street.toLowerCase().includes(q))));
-  $view.innerHTML = kTabs() + `<div class="card"><div class="row"><input id="q" placeholder="Søg navn, kundenr., telefon, adresse" value="${esc(ui.q)}" class="sp"><button data-act="fitCustomer">📍 Hvor passer en ny kunde ind?</button><button class="pri" data-act="newCustomer">+ Ny kunde</button></div></div>
-  <div class="card"><div class="small mute" style="margin-bottom:6px">${list.length} kunder</div><table class="clickable"><tr><th>Kundenr.</th><th>Navn / firma</th><th>Adresse</th><th class="hide-m">Interval</th><th class="hide-m">Rute</th><th class="hide-m">Næste besøg</th></tr>
-  ${list.slice(0, 500).map((c) => { const ags = db.agreements.filter((a) => a.customerId === c.id && a.active); const a0 = db.addresses.find((a) => a.customerId === c.id);
-    const next = db.visits.filter((v) => v.customerId === c.id && v.status === 'planlagt' && v.plannedDate >= todayIso()).sort((a, b) => a.plannedDate.localeCompare(b.plannedDate))[0];
-    return `<tr data-cust="${c.id}"><td class="small">${esc(c.customerNo || c.skvizbizId || '')}</td><td><b>${esc(c.name)}</b></td><td class="small">${esc(a0?.street)}${db.addresses.filter((a) => a.customerId === c.id).length > 1 ? ' <span class="pill">+1</span>' : ''}</td><td class="hide-m small">${ags.map(agrDesc).join(', ') || '–'}</td><td class="hide-m small">${esc([...new Set(ags.map((a) => route(a.routeId)?.name).filter(Boolean))].join(', '))}</td><td class="hide-m small">${next ? fmt(next.plannedDate) : ''}</td></tr>`; }).join('')}</table></div>`;
+  const q = ui.q.toLowerCase(); const t = todayIso(); ui.kSel ||= new Set(); ui.kSort ||= { k: 'name', d: 1 }; ui.kF ||= {};
+  // næste besøg pr. kunde i ét gennemløb
+  const nextOf = new Map(); for (const v of db.visits) if (v.status === 'planlagt' && v.plannedDate >= t) { const n = nextOf.get(v.customerId); if (!n || v.plannedDate < n) nextOf.set(v.customerId, v.plannedDate); }
+  const rows = db.customers.filter((c) => !c.deleted && (!q || c.name.toLowerCase().includes(q) || String(c.customerNo || c.skvizbizId || '').includes(q) || (c.phone || '').replace(/\s/g, '').includes(q.replace(/\s/g, '')) || db.addresses.some((a) => a.customerId === c.id && a.street.toLowerCase().includes(q))))
+    .map((c) => { const ags = db.agreements.filter((a) => a.customerId === c.id && a.active); const a0 = db.addresses.find((a) => a.customerId === c.id);
+      const zip = (a0?.street.match(/\b(\d{4})\b/) || [])[1] || ''; const routes = [...new Set(ags.map((a) => route(a.routeId)?.name).filter(Boolean))];
+      return { c, ags, a0, zip, routes, interval: ags.length ? Math.min(...ags.map((a) => a.intervalWeeks || 999)) : 1000, next: nextOf.get(c.id) || '', year: ags.reduce((s2, a) => s2 + D.annualRevenue(a), 0) }; })
+    .filter((x) => (!ui.kF.group || (x.c.group || 'Privat kunder') === ui.kF.group) && (!ui.kF.route || (ui.kF.route === '-' ? !x.routes.length : x.ags.some((a) => a.routeId === ui.kF.route))) && (!ui.kF.int || x.ags.some((a) => String(a.intervalWeeks) === ui.kF.int)));
+  const SK = { no: (x) => Number(x.c.customerNo || x.c.skvizbizId) || 0, name: (x) => x.c.name.toLowerCase(), street: (x) => (x.a0?.street || '').toLowerCase(), zip: (x) => x.zip, interval: (x) => x.interval, route: (x) => x.routes[0] || '~', next: (x) => x.next || '9999', year: (x) => -x.year };
+  const kf = SK[ui.kSort.k] || SK.name; rows.sort((a, b) => { const A = kf(a), B = kf(b); return (A < B ? -1 : A > B ? 1 : 0) * ui.kSort.d || a.c.name.localeCompare(b.c.name); });
+  const th = (k, label, cls = '') => `<th class="${cls} sortable" data-act="kSort" data-k="${k}">${label}${ui.kSort.k === k ? (ui.kSort.d > 0 ? ' ▲' : ' ▼') : ''}</th>`;
+  const sel = rows.filter((x) => ui.kSel.has(x.c.id)); const allSel = rows.length && sel.length === rows.length;
+  const selAll = [...ui.kSel].map((id) => cust(id)).filter((c) => c && !c.deleted);
+  const sAgs = db.agreements.filter((a) => a.active && ui.kSel.has(a.customerId)); const sYear = sAgs.reduce((s2, a) => s2 + D.annualRevenue(a), 0); const sMin = sAgs.reduce((s2, a) => s2 + (a.durationMin ?? 15), 0);
+  const sRev = sAgs.reduce((s2, a) => s2 + a.price, 0); const sProv = sAgs.reduce((s2, a) => { const e = emp(route(a.routeId)?.employeeId); return s2 + a.price * (e?.commissionRate ?? db.settings.commissionRate); }, 0);
+  const ints = [...new Set(db.agreements.filter((a) => a.active).map((a) => a.intervalWeeks))].sort((a, b) => a - b);
+  $view.innerHTML = kTabs() + `<div class="card"><div class="row"><input id="q" placeholder="Søg navn, kundenr., telefon, adresse" value="${esc(ui.q)}" class="sp"><button data-act="fitCustomer">📍 Hvor passer en ny kunde ind?</button><button class="pri" data-act="newCustomer">+ Ny kunde</button></div>
+    <div class="row small" style="margin-top:8px"><select data-kf="group"><option value="">Alle grupper</option>${GROUPS.map((g) => `<option ${ui.kF.group === g ? 'selected' : ''}>${esc(g)}</option>`).join('')}</select>
+      <select data-kf="route"><option value="">Alle ruter</option><option value="-" ${ui.kF.route === '-' ? 'selected' : ''}>Uden rute</option>${db.routes.map((r) => `<option value="${r.id}" ${ui.kF.route === r.id ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</select>
+      <select data-kf="int"><option value="">Alle intervaller</option>${ints.map((n) => `<option value="${n}" ${ui.kF.int === String(n) ? 'selected' : ''}>${n ? 'Hver ' + n + '. uge' : 'Ikke fast'}</option>`).join('')}</select>
+      ${ui.kF.group || ui.kF.route || ui.kF.int ? '<button class="small" data-act="kFclear">Nulstil filtre</button>' : ''}</div></div>
+  ${selAll.length ? `<div class="card selbar"><div class="row"><b>${selAll.length} valgt</b><span>${sAgs.length} aftaler</span><span>Oms./år <b>${kr(Math.round(sYear))}</b> (${kr(Math.round(sYear * 1.25))} inkl. moms)</span><span>Pr. gang <b>${kr(Math.round(sRev))}</b> · ${D.hm(sMin)} t</span>${sMin ? `<span title="Oms. pr. gang / arbejdstid (uden kørsel)">Oms./time <b>${kr(Math.round(sRev / (sMin / 60)))}</b></span><span title="Provision pr. gang / arbejdstid (uden kørsel)">Timeløn <b>${kr(Math.round(sProv / (sMin / 60)))}</b></span>` : ''}<span class="sp"></span><button class="small" data-act="kSelClear">Ryd valg</button></div>
+    <div class="row" style="margin-top:6px"><button data-act="kBulk" data-v="sms">📱 SMS</button><button data-act="kBulk" data-v="price">💰 Prisregulering</button><button data-act="kBulk" data-v="route">🗺 Flyt til rute</button><button data-act="kBulk" data-v="group">👥 Kundegruppe</button><button data-act="kBulk" data-v="interval">🧾 Fakturainterval</button><button data-act="kBulk" data-v="remember">📝 Husk næste gang</button><button data-act="kBulk" data-v="csv">⬇ Eksportér</button></div></div>` : ''}
+  <div class="card"><div class="small mute" style="margin-bottom:6px">${rows.length} kunder · klik på en kolonne for at sortere</div><table class="clickable"><tr><th class="w1"><input type="checkbox" data-ksel="__all" ${allSel ? 'checked' : ''} title="Vælg alle viste"></th>${th('no', 'Kundenr.')}${th('name', 'Navn / firma')}${th('street', 'Adresse')}${th('zip', 'Postnr.', 'hide-m')}${th('interval', 'Interval', 'hide-m')}${th('route', 'Rute', 'hide-m')}${th('next', 'Næste besøg', 'hide-m')}${th('year', 'Oms./år', 'hide-m')}</tr>
+  ${rows.slice(0, 1000).map((x) => { const c = x.c;
+    return `<tr data-cust="${c.id}" class="${ui.kSel.has(c.id) ? 'ksel' : ''}"><td><input type="checkbox" data-ksel="${c.id}" ${ui.kSel.has(c.id) ? 'checked' : ''}></td><td class="small">${esc(c.customerNo || c.skvizbizId || '')}</td><td><b>${esc(c.name)}</b></td><td class="small">${esc(x.a0?.street)}${db.addresses.filter((a) => a.customerId === c.id).length > 1 ? ' <span class="pill">+1</span>' : ''}</td><td class="hide-m small">${esc(x.zip)}</td><td class="hide-m small">${x.ags.map(agrDesc).join(', ') || '–'}</td><td class="hide-m small">${esc(x.routes.join(', '))}</td><td class="hide-m small">${x.next ? fmt(x.next) : ''}</td><td class="hide-m small" style="text-align:right">${x.year ? kr(Math.round(x.year)) : ''}</td></tr>`; }).join('')}</table>${rows.length > 1000 ? '<p class="small mute">Viser de første 1000 – brug søgning/filter.</p>' : ''}</div>`;
+  ui._kRows = rows.map((x) => x.c.id);
+  $view.querySelectorAll('[data-kf]').forEach((x) => (x.onchange = () => { ui.kF[x.dataset.kf] = x.value; render(); }));
   const qi = document.getElementById('q'); qi.oninput = () => { ui.q = qi.value; const pos = qi.selectionStart; kunder(); const n = document.getElementById('q'); n.focus(); n.setSelectionRange(pos, pos); };
 }
 function kundekort(c) {
@@ -318,13 +339,34 @@ function fitDialog() {
   }, 'Luk');
   const ok = document.querySelector('#dlgBody button[value=ok]'); if (ok) ok.textContent = 'Find bedste rute';
 }
+/** Fælles handlinger på valgte kunder */
+function bulkCustomers(kind) {
+  const cs = [...ui.kSel].map((id) => cust(id)).filter((c) => c && !c.deleted); if (!cs.length) return;
+  const ids = cs.map((c) => c.id); const n = cs.length;
+  if (kind === 'price') return priceDialog({ type: 'customers', ids });
+  if (kind === 'csv') { const rows = [['Kundenr', 'Navn', 'Adresse', 'Telefon', 'E-mail', 'Gruppe', 'Ydelse', 'Pris ekskl. moms', 'Interval (uger)', 'Rute']];
+    for (const c of cs) { const a0 = db.addresses.find((a) => a.customerId === c.id); const ags = db.agreements.filter((a) => a.customerId === c.id && a.active);
+      for (const ag of ags.length ? ags : [null]) rows.push([c.customerNo || '', c.name, a0?.street || '', c.phone || '', c.email || '', c.group || '', ag?.service || '', ag ? String(ag.price).replace('.', ',') : '', ag?.intervalWeeks ?? '', route(ag?.routeId)?.name || '']); }
+    const csv = rows.map((r) => r.map((x) => `"${String(x).replace(/"/g, '""')}"`).join(';')).join('\r\n');
+    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv' })); a.download = `kunder-${todayIso()}.csv`; a.click(); S.audit(db, ui.user.id, 'customers.export', '-', { n }); return; }
+  if (kind === 'sms') return openDlg(`<h2>📱 SMS til ${n} kunder</h2><label><span>Besked ({navn} = fornavn)</span><textarea name="text" required rows="4">Hej {navn}. </textarea></label><p class="small mute">Næste skridt: tryk på hver kunde – telefonens SMS-app åbner med teksten.</p>`, (f) => {
+    ui._smsList = cs.filter((c) => D.normalizePhone(c.phone)).map((c) => ({ c, text: D.renderTemplate(f.text, { navn: c.name.split(' ')[0] }) }));
+    setTimeout(() => openDlg(`<h2>Send SMS (${ui._smsList.length})</h2>${ui._smsList.map((x, i) => `<div class="row" style="border-bottom:1px solid var(--line);padding:6px 0"><div class="sp"><b>${esc(x.c.name)}</b><div class="small mute">${esc(x.text)}</div></div><a class="btn pri" data-smsi="${i}" href="${smsLink(D.normalizePhone(x.c.phone), x.text)}">📱 Send</a></div>`).join('')}`, null, 'Luk'), 50); });
+  if (kind === 'group') return openDlg(`<h2>👥 Kundegruppe for ${n} kunder</h2><label><span>Ny gruppe</span><select name="g">${GROUPS.map((g) => `<option>${esc(g)}</option>`).join('')}</select></label>`, (f) => { cs.forEach((c) => (c.group = f.g)); S.audit(db, ui.user.id, 'customers.group', '-', { n, group: f.g }); toast(`${n} kunder flyttet til ${f.g}`); });
+  if (kind === 'interval') return openDlg(`<h2>🧾 Fakturainterval for ${n} kunder</h2><label><span>Faktura</span><select name="iv"><option value="besoeg">Ved hvert besøg</option><option value="maaned">Samlet pr. måned</option></select></label>`, (f) => { cs.forEach((c) => (c.invoiceInterval = f.iv)); S.audit(db, ui.user.id, 'customers.invoiceInterval', '-', { n, v: f.iv }); toast('Fakturainterval opdateret'); });
+  if (kind === 'remember') return openDlg(`<h2>📝 Husk næste gang – ${n} kunder</h2><label><span>Tekst (udskrives på ruteseddel én gang)</span><input name="t" required></label>`, (f) => { cs.forEach((c) => (c.rememberNext = f.t.trim())); S.audit(db, ui.user.id, 'customers.remember', '-', { n }); toast('Gemt på ' + n + ' kunder'); });
+  if (kind === 'route') { const ags = db.agreements.filter((a) => a.active && ids.includes(a.customerId));
+    return openDlg(`<h2>🗺 Flyt ${n} kunder til rute</h2><label><span>Rute</span><select name="r">${db.routes.map((r) => `<option value="${r.id}">${esc(r.name)} (hver ${r.intervalWeeks}. uge · næste ${fmt(D.nextRouteDate(r, todayIso()) || todayIso())})</option>`).join('')}</select></label>
+      <p class="small">${ags.length} aftaler flyttes. Fremtidige besøg planlægges om på rutens dage fra næste gang den kører. Udførte besøg røres ikke. Kunderne sættes sidst i rutens rækkefølge (ret under ruten → ↕ Rækkefølge).</p>`, (f) => {
+      const r = S.moveToRoute(db, ui.user, ags.map((a) => a.id), f.r, todayIso(), D.addDays(todayIso(), 120)); toast(`${r.moved} aftaler flyttet · ${r.visits} besøg planlagt fra ${fmt(r.anchor)}`); }); }
+}
 /** Prisregulering med forhåndsvisning */
-function priceDialog() {
+function priceDialog(preset) {
   const d = new Date(); const next1 = new Date(d.getFullYear(), d.getMonth() + 1, 1); const iso = `${next1.getFullYear()}-${String(next1.getMonth() + 1).padStart(2, '0')}-01`;
   openDlg(`<h2>💰 Prisregulering</h2>
     <div class="row"><label><span>Ændring</span><input name="value" type="number" step="0.1" value="3" style="width:90px"></label><label><span>&nbsp;</span><select name="mode"><option value="pct">%</option><option value="kr">kr (ekskl. moms)</option></select></label>
       <label><span>Afrunding</span><select name="round"><option value="1">hele kr</option><option value="5">nærmeste 5 kr</option><option value="0">ingen</option></select></label><label><span>Fra dato</span><input name="from" type="date" value="${iso}"></label></div>
-    <label><span>Gælder</span><select name="filter"><option value="all|">Alle aktive aftaler</option>${GROUPS.map((g) => `<option value="group|${esc(g)}">Kundegruppe: ${esc(g)}</option>`).join('')}${db.routes.map((r) => `<option value="route|${r.id}">Rute: ${esc(r.name)}</option>`).join('')}</select></label>
+    <label><span>Gælder</span><select name="filter">${preset?.type === 'customers' ? `<option value="customers|">Valgte kunder (${preset.ids.length})</option>` : ''}<option value="all|">Alle aktive aftaler</option>${GROUPS.map((g) => `<option value="group|${esc(g)}">Kundegruppe: ${esc(g)}</option>`).join('')}${db.routes.map((r) => `<option value="route|${r.id}">Rute: ${esc(r.name)}</option>`).join('')}</select></label>
     <div id="pvOut"></div>`, (f) => {
     const opt = optsOf(f); const { rows } = S.priceAdjust(db, ui.user, opt); if (!rows.length) return 'Ingen aftaler ændres';
     if (!confirm(`Ændr prisen på ${rows.length} aftaler fra ${fmt(opt.from)}? Planlagte besøg fra datoen får den nye pris.`)) return false;
@@ -332,12 +374,12 @@ function priceDialog() {
     toast(`${r.sum.n} aftaler og ${r.sum.visits} planlagte besøg opdateret`);
     setTimeout(() => priceSmsDialog(r.rows, opt.from), 50);
   });
-  const optsOf = (f) => { const [type, value] = String(f.filter).split('|'); return { mode: f.mode, value: Number(f.value) || 0, round: Number(f.round), from: f.from, filter: { type, value } }; };
+  const optsOf = (f) => { const [type, value] = String(f.filter).split('|'); return { mode: f.mode, value: Number(f.value) || 0, round: Number(f.round), from: f.from, filter: { type, value, ids: preset?.ids } }; };
   const body = document.getElementById('dlgBody');
   const pv = () => { const f = Object.fromEntries(new FormData(body)); const { rows, sum } = S.priceAdjust(db, ui.user, optsOf(f));
     document.getElementById('pvOut').innerHTML = `<p><b>${sum.n}</b> aftaler · årlig omsætning <b>${kr(Math.round(sum.oldYear))}</b> → <b>${kr(Math.round(sum.newYear))}</b> (${sum.newYear >= sum.oldYear ? '+' : ''}${kr(Math.round(sum.newYear - sum.oldYear))})</p>
       <div style="max-height:260px;overflow:auto"><table><tr><th>Kunde</th><th>Ydelse</th><th style="text-align:right">Før</th><th style="text-align:right">Efter</th></tr>${rows.slice(0, 200).map((r) => `<tr class="small"><td>${esc(r.c.name)}</td><td>${esc(r.a.service)}</td><td style="text-align:right">${kr(r.old)}</td><td style="text-align:right"><b>${kr(r.new)}</b></td></tr>`).join('')}</table></div>`; };
-  body.addEventListener('input', pv); pv();
+  body.oninput = () => document.getElementById('pvOut') && pv(); pv();
   const ok = body.querySelector('button[value=ok]'); if (ok) ok.textContent = 'Gennemfør';
 }
 function priceSmsDialog(rows, from) {
@@ -369,7 +411,7 @@ function saveAgreement(a, customerId, addressId, f) {
     Object.assign(a, vals, { active: !!f.active });
     // fremtidige planlagte besøg får ny pris/rute; ved ændret rytme genplanlægges de
     const t = todayIso();
-    if (rhythmChanged) db.visits = db.visits.filter((v) => !(v.agreementId === a.id && v.status === 'planlagt' && v.plannedDate >= t));
+    if (rhythmChanged) { a.idPrefix = `${a.id}~${a.anchorDate}~${a.intervalWeeks}`; db.visits = db.visits.filter((v) => !(v.agreementId === a.id && v.status === 'planlagt' && !v.manual && v.plannedDate >= t)); }
     else db.visits.forEach((v) => { if (v.agreementId === a.id && v.status === 'planlagt' && v.plannedDate >= t) Object.assign(v, { price, routeId: a.routeId, service: a.service, durationMin: a.durationMin }); });
   }
   if (a.active) { const mine = db.visits.filter((v) => v.agreementId === a.id); db.visits.push(...D.generateVisits(a, todayIso() > a.anchorDate ? todayIso() : a.anchorDate, D.addDays(todayIso(), 120), mine, db.closedDays)); }
@@ -954,7 +996,9 @@ function ruteOversigt() {
     const ids = next ? routeStops(r.id, next).filter((v) => v.status !== 'aflyst' && v.status !== 'forgaeves').map((v) => v.id) : [];
     const gk = gKey('route:' + r.id + next, ids);
     const g0 = db.settings.googleKey && ids.length ? googleFor(gk, ids, { start: startPoint(), optimize: false }) : null; const g = g0 && !g0.error ? g0 : null;
-    return { r, n: new Set(ags.map((a) => a.customerId)).size, year: ags.reduce((s, a) => s + D.annualRevenue(a), 0), min: ags.filter((a) => next && D.generateVisits(a, next, next).length).reduce((s, a) => s + (a.durationMin ?? 15), 0), next, gk, ids, gErr: g0?.error, drive: g ? DP.sumLegs(g.legs) : null }; });
+    const nvs = next ? routeStops(r.id, next).filter((v) => v.status !== 'aflyst' && v.status !== 'forgaeves') : []; const nRev = nvs.reduce((t2, v) => t2 + D.visitTotal(v), 0);
+    const nRate = emp(r.employeeId)?.commissionRate ?? db.settings.commissionRate;
+    return { r, nRev, nRate, n: new Set(ags.map((a) => a.customerId)).size, year: ags.reduce((s, a) => s + D.annualRevenue(a), 0), min: ags.filter((a) => next && D.generateVisits(a, next, next).length).reduce((s, a) => s + (a.durationMin ?? 15), 0), next, gk, ids, gErr: g0?.error, drive: g ? DP.sumLegs(g.legs) : null }; });
   ui._ovKeys = rows.filter((x) => x.ids.length).map((x) => ({ k: x.gk, ids: x.ids }));
   const tot = rows.reduce((s, x) => s + x.year, 0);
   $view.innerHTML = kTabs() + `<div class="card"><div class="row"><h2 class="sp">Faste ruter (${db.routes.length})</h2><button data-act="addRoute">+ Opret rute</button></div>
@@ -962,9 +1006,9 @@ function ruteOversigt() {
     ${['M', 'T', 'O', 'T', 'F'].map((dn, i) => `<tr><td class="hm">${dn}</td>${weeks.map((w) => { const d = D.addDays(w, i); const n = load.get(d) || 0; return `<td title="${fmt(d)}: ${n} besøg" style="background:${n ? `rgba(31,95,139,${0.15 + 0.85 * n / maxN})` : 'var(--chip)'}"></td>`; }).join('')}</tr>`).join('')}</table></div>
     <p class="small mute">Belastning pr. dag de næste 12 måneder (mørkere = flere besøg).</p></div>
   <div class="card">${db.settings.googleKey ? `<div class="row small" style="margin-bottom:6px"><span class="sp mute">Kørsel = Google Maps for næste gang ruten kører (fra startadressen og hjem). Gemmes på enheden.</span><button class="small" data-act="routesRegoogle">🔄 Genberegn alle køretider</button></div>` : '<p class="small mute">Sæt en Google-nøgle under Admin for at se rigtige køretider.</p>'}
-    <table class="clickable"><tr><th>Rutenavn</th><th>Medarbejder</th><th>Rytme</th><th>Størrelse</th><th>Næste</th><th style="text-align:right">Oms./år</th><th style="text-align:right">Inkl. moms</th><th>Arbejde</th><th>Kørsel</th><th>I alt</th></tr>
-    ${rows.map((x) => `<tr data-route="${x.r.id}"><td><b>${esc(x.r.name)}</b></td><td>${esc(emp(x.r.employeeId)?.name)}</td><td>hver ${x.r.intervalWeeks}. uge</td><td>${x.n} kunder</td><td>${(() => { const op = openPastDay(x.r); return op ? `<span style="color:var(--bad)">${fmt(op)} ${op.slice(0, 4)} – åbne besøg</span><br>` : ''; })()}${x.r.anchorUnknown ? '<span style="color:var(--bad)">ukendt – sæt dato under Admin</span>' : x.next ? fmt(x.next) + ' ' + x.next.slice(0, 4) : '–'}</td><td style="text-align:right">${kr(Math.round(x.year))}</td><td style="text-align:right">${kr(Math.round(x.year * 1.25))}</td><td>${D.hm(x.min)}</td><td>${x.drive ? `${D.hm(Math.round(x.drive.sec / 60))} <span class="small mute">${Math.round(x.drive.m / 1000)} km</span>` : x.gErr ? '<span class="warn-t small">fejl</span>' : x.ids.length && db.settings.googleKey ? '<span class="mute small">henter …</span>' : '–'}</td><td><b>${x.drive ? D.hm(x.min + Math.round(x.drive.sec / 60)) : D.hm(x.min)}</b></td></tr>`).join('')}
-    <tr><td colspan="5"><b>Total</b></td><td style="text-align:right"><b>${kr(Math.round(tot))}</b></td><td style="text-align:right"><b>${kr(Math.round(tot * 1.25))}</b></td><td colspan="3"></td></tr></table>
+    <table class="clickable"><tr><th>Rutenavn</th><th>Medarbejder</th><th>Rytme</th><th>Størrelse</th><th>Næste</th><th style="text-align:right">Oms./år</th><th style="text-align:right">Inkl. moms</th><th>Arbejde</th><th>Kørsel</th><th>I alt</th><th style="text-align:right" title="Omsætning næste gang / (arbejde + kørsel)">Oms./time</th><th style="text-align:right" title="Provision næste gang / (arbejde + kørsel)">Timeløn</th></tr>
+    ${rows.map((x) => `<tr data-route="${x.r.id}"><td><b>${esc(x.r.name)}</b></td><td>${esc(emp(x.r.employeeId)?.name)}</td><td>hver ${x.r.intervalWeeks}. uge</td><td>${x.n} kunder</td><td>${(() => { const op = openPastDay(x.r); return op ? `<span style="color:var(--bad)">${fmt(op)} ${op.slice(0, 4)} – åbne besøg</span><br>` : ''; })()}${x.r.anchorUnknown ? '<span style="color:var(--bad)">ukendt – sæt dato under Admin</span>' : x.next ? fmt(x.next) + ' ' + x.next.slice(0, 4) : '–'}</td><td style="text-align:right">${kr(Math.round(x.year))}</td><td style="text-align:right">${kr(Math.round(x.year * 1.25))}</td><td>${D.hm(x.min)}</td><td>${x.drive ? `${D.hm(Math.round(x.drive.sec / 60))} <span class="small mute">${Math.round(x.drive.m / 1000)} km</span>` : x.gErr ? '<span class="warn-t small">fejl</span>' : x.ids.length && db.settings.googleKey ? '<span class="mute small">henter …</span>' : '–'}</td><td><b>${x.drive ? D.hm(x.min + Math.round(x.drive.sec / 60)) : D.hm(x.min)}</b></td>${(() => { const h = (x.min + (x.drive ? x.drive.sec / 60 : 0)) / 60; return `<td style="text-align:right">${h && x.nRev ? kr(Math.round(x.nRev / h)) : '–'}</td><td style="text-align:right">${h && x.nRev ? kr(Math.round(x.nRev * x.nRate / h)) : '–'}</td>`; })()}</tr>`).join('')}
+    <tr><td colspan="5"><b>Total</b></td><td style="text-align:right"><b>${kr(Math.round(tot))}</b></td><td style="text-align:right"><b>${kr(Math.round(tot * 1.25))}</b></td><td colspan="5"></td></tr></table>
     <p class="small mute">Oms./år er beregnet ud fra aftalernes pris, interval og sæson.</p></div>`;
 }
 /* ---------------- Mobil dagsrute ---------------- */
@@ -1040,8 +1084,9 @@ function monthStats(vs) {
   const live = vs.filter((v) => v.status !== 'aflyst' && v.status !== 'forgaeves'); const done = live.filter((v) => DONE.has(v.status));
   const plan = live.filter((v) => v.status === 'planlagt' || v.status === 'udsat');
   const rev = done.reduce((t, v) => t + D.visitTotal(v), 0); const planRev = plan.reduce((t, v) => t + D.visitTotal(v), 0);
-  const work = mins(done); const dr = driveOf(done);
-  return { n: done.length, nPlan: plan.length, rev, planRev, work, drive: dr.min, km: dr.km, est: dr.est, perHour: work + dr.min ? rev / ((work + dr.min) / 60) : 0 };
+  const work = mins(done); const dr = driveOf(done); const h = (work + dr.min) / 60;
+  const prov = done.reduce((t2, v) => t2 + D.visitTotal(v) * ((v.split?.length ? v.split : defaultSplit(v)).reduce((a2, x) => a2 + x.pct, 0) / 100), 0);
+  return { n: done.length, nPlan: plan.length, rev, planRev, work, drive: dr.min, km: dr.km, est: dr.est, prov, perHour: h ? rev / h : 0, wage: h ? prov / h : 0 };
 }
 function okonomi() {
   const t = todayIso(); const thisM = t.slice(0, 7);
@@ -1057,14 +1102,14 @@ function okonomi() {
   const rRows = [...byR].map(([rid, vs]) => ({ r: route(rid), ...monthStats(vs) })).filter((x) => x.n || x.nPlan).sort((a, b) => b.rev + b.planRev - (a.rev + a.planRev));
   const y = (k) => rows.filter((r) => r.ym.slice(0, 4) === thisM.slice(0, 4)).reduce((s2, r) => s2 + r[k], 0);
   $view.innerHTML = `<div class="card"><div class="row"><h2 class="sp">Økonomi pr. måned</h2><span class="small mute">I år: <b>${kr(Math.round(y('rev')))}</b> udført · ${kr(Math.round(y('planRev')))} planlagt (ekskl. moms)</span></div>
-    <table class="eco"><tr><th>Måned</th><th></th><th style="text-align:right">Besøg</th><th style="text-align:right">Omsætning</th><th style="text-align:right" class="hide-m">Arbejde</th><th style="text-align:right" class="hide-m">Kørsel</th><th style="text-align:right">Oms./time</th></tr>
+    <table class="eco"><tr><th>Måned</th><th></th><th style="text-align:right">Besøg</th><th style="text-align:right">Omsætning</th><th style="text-align:right" class="hide-m">Arbejde</th><th style="text-align:right" class="hide-m">Kørsel</th><th style="text-align:right">Oms./time</th><th style="text-align:right" title="Provision / (arbejde + kørsel)">Timeløn</th></tr>
     ${rows.map((r) => `<tr class="${r.ym === sel ? 'on' : ''}" data-act="ecoM" data-m="${r.ym}" style="cursor:pointer"><td><b>${mLabel(r.ym)}</b>${r.ym === thisM ? ' <span class="pill">nu</span>' : ''}</td>
       <td class="barcell"><div class="bar"><span style="width:${(r.rev / max) * 100}%"></span><span class="plan" style="width:${(r.planRev / max) * 100}%"></span></div></td>
       <td style="text-align:right">${r.n}${r.nPlan ? `<span class="mute small"> +${r.nPlan}</span>` : ''}</td><td style="text-align:right"><b>${kr(Math.round(r.rev))}</b>${r.planRev ? `<div class="small mute">+${kr(Math.round(r.planRev))} planlagt</div>` : ''}</td>
-      <td style="text-align:right" class="hide-m">${D.hm(r.work)}</td><td style="text-align:right" class="hide-m">${r.drive ? (r.est ? '≈ ' : '') + D.hm(r.drive) : '–'}</td><td style="text-align:right">${r.perHour ? kr(Math.round(r.perHour)) : '–'}</td></tr>`).join('')}</table>
-    <p class="small mute">Omsætning = udførte besøg (ekskl. moms). Lys bjælke = planlagt. Kørsel fra gemte Google-dagsplaner, ellers skøn (≈). Oms./time = omsætning / (arbejde + kørsel). Klik på en måned for detaljer.</p></div>
-  <div class="grid2"><div class="card"><h2>${mLabel(sel)} pr. rute</h2><table><tr><th>Rute</th><th style="text-align:right">Besøg</th><th style="text-align:right">Omsætning</th><th style="text-align:right">Oms./time</th></tr>
-    ${rRows.map((x) => `<tr><td>${esc(x.r?.name ?? 'Uden rute')}</td><td style="text-align:right">${x.n}${x.nPlan ? `<span class="mute small"> +${x.nPlan}</span>` : ''}</td><td style="text-align:right">${kr(Math.round(x.rev))}${x.planRev ? `<div class="small mute">+${kr(Math.round(x.planRev))}</div>` : ''}</td><td style="text-align:right">${x.perHour ? kr(Math.round(x.perHour)) : '–'}</td></tr>`).join('') || '<tr><td colspan="4" class="mute">Ingen besøg</td></tr>'}</table></div>
+      <td style="text-align:right" class="hide-m">${D.hm(r.work)}</td><td style="text-align:right" class="hide-m">${r.drive ? (r.est ? '≈ ' : '') + D.hm(r.drive) : '–'}</td><td style="text-align:right">${r.perHour ? kr(Math.round(r.perHour)) : '–'}</td><td style="text-align:right">${r.wage ? kr(Math.round(r.wage)) : '–'}</td></tr>`).join('')}</table>
+    <p class="small mute">Omsætning = udførte besøg (ekskl. moms). Lys bjælke = planlagt. Kørsel fra gemte Google-dagsplaner, ellers skøn (≈). Oms./time = omsætning / (arbejde + kørsel). Timeløn = provision / (arbejde + kørsel). Klik på en måned for detaljer.</p></div>
+  <div class="grid2"><div class="card"><h2>${mLabel(sel)} pr. rute</h2><table><tr><th>Rute</th><th style="text-align:right">Besøg</th><th style="text-align:right">Omsætning</th><th style="text-align:right">Oms./time</th><th style="text-align:right">Timeløn</th></tr>
+    ${rRows.map((x) => `<tr><td>${esc(x.r?.name ?? 'Uden rute')}</td><td style="text-align:right">${x.n}${x.nPlan ? `<span class="mute small"> +${x.nPlan}</span>` : ''}</td><td style="text-align:right">${kr(Math.round(x.rev))}${x.planRev ? `<div class="small mute">+${kr(Math.round(x.planRev))}</div>` : ''}</td><td style="text-align:right">${x.perHour ? kr(Math.round(x.perHour)) : '–'}</td><td style="text-align:right">${x.wage ? kr(Math.round(x.wage)) : '–'}</td></tr>`).join('') || '<tr><td colspan="5" class="mute">Ingen besøg</td></tr>'}</table></div>
   <div class="card"><h2>${mLabel(sel)} pr. medarbejder</h2><table><tr><th>Medarbejder</th><th style="text-align:right">Besøg</th><th style="text-align:right">Grundlag</th><th style="text-align:right">Provision</th></tr>
     ${db.employees.filter((e) => com[e.id]).map((e) => `<tr><td>${esc(e.name)}</td><td style="text-align:right">${com[e.id].visits}</td><td style="text-align:right">${kr(Math.round(com[e.id].base))}</td><td style="text-align:right"><b>${kr(Math.round(com[e.id].commission))}</b></td></tr>`).join('') || '<tr><td colspan="4" class="mute">Ingen provision denne måned</td></tr>'}</table>
     <p class="small mute">Provision efter satserne under Admin (udført arbejde${db.settings.commissionInclVat ? ' inkl.' : ' ekskl.'} moms).</p></div></div>`;
@@ -1326,7 +1371,7 @@ function admin() {
 
 /* ---------------- Dialog-hjælper ---------------- */
 function openDlg(html, onSubmit, closeLabel = 'Annuller') {
-  const dlg = document.getElementById('dlg'), body = document.getElementById('dlgBody');
+  const dlg = document.getElementById('dlg'), body = document.getElementById('dlgBody'); body.oninput = null;
   body.innerHTML = html + `<div class="row" style="margin-top:14px"><span class="sp"></span><button value="cancel" formnovalidate>${closeLabel}</button>${onSubmit ? '<button class="pri" value="ok">Gem</button>' : ''}</div><p class="small" id="dlgErr" style="color:var(--bad)"></p>`;
   body.onsubmit = async (e) => {
     if (e.submitter?.value !== 'ok') return;
@@ -1341,6 +1386,9 @@ function openDlg(html, onSubmit, closeLabel = 'Annuller') {
 /* ---------------- Hændelser ---------------- */
 document.addEventListener('click', async (e) => {
   const tab = e.target.closest('[data-tab]'); if (tab) { ui.tab = tab.dataset.tab; ui.customer = null; return render(); }
+  const ks = e.target.closest('[data-ksel]'); if (ks) { ui.kSel ||= new Set(); const id = ks.dataset.ksel;
+    if (id === '__all') { const all = (ui._kRows || []).every((x) => ui.kSel.has(x)); for (const x of ui._kRows || []) all ? ui.kSel.delete(x) : ui.kSel.add(x); }
+    else ui.kSel.has(id) ? ui.kSel.delete(id) : ui.kSel.add(id); return render(); }
   const cu = e.target.closest('[data-cust]'); if (cu) { e.preventDefault(); document.getElementById('dlg').open && document.getElementById('dlg').close(); ui.tab = 'kunder'; ui.customer = cu.dataset.cust; return render(); }
   const vsl = (e.ctrlKey || e.metaKey || e.shiftKey) && e.target.closest('.vline[data-visit]');
   if (vsl) { e.preventDefault(); ui.visSel ||= new Set(); const id = vsl.dataset.visit; ui.visSel.has(id) ? ui.visSel.delete(id) : ui.visSel.add(id); return render(); }
@@ -1366,6 +1414,10 @@ document.addEventListener('click', async (e) => {
       case 'back': ui.customer = null; break;
       case 'newCustomer': return customerForm();
       case 'fitCustomer': return fitDialog();
+      case 'kSort': { const k = b.dataset.k; ui.kSort = ui.kSort?.k === k ? { k, d: -ui.kSort.d } : { k, d: 1 }; break; }
+      case 'kFclear': ui.kF = {}; break;
+      case 'kSelClear': ui.kSel = new Set(); break;
+      case 'kBulk': return bulkCustomers(b.dataset.v);
       case 'priceAdj': return priceDialog();
       case 'ecoM': ui.ecoMonth = b.dataset.m; break;
       case 'install': return installApp();

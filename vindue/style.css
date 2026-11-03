@@ -222,3 +222,10 @@ table.eco tr.on td{background:var(--pri-soft)}
 .bar{display:flex;height:10px;background:var(--soft);border-radius:6px;overflow:hidden;min-width:60px}
 .bar span{background:var(--pri)}.bar span.plan{background:var(--pri-soft);border-left:1px solid #fff}
 @media (max-width:820px){.barcell{display:none}}
+
+/* Kundeliste: valg og sortering */
+th.sortable{cursor:pointer;user-select:none;white-space:nowrap}
+th.sortable:hover{color:var(--pri)}
+tr.ksel td{background:var(--pri-soft)}
+.selbar{position:sticky;top:52px;z-index:4;border:2px solid var(--pri)}
+@media (max-width:820px){.selbar{top:0}}

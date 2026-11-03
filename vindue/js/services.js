@@ -300,7 +300,7 @@ export function priceAdjust(db, user, { mode = 'pct', value = 0, filter = { type
   if (apply) require_(user, 'agreement.edit');
   const custOf = (a) => db.customers.find((c) => c.id === a.customerId);
   const hit = db.agreements.filter((a) => a.active !== false && custOf(a) && !custOf(a).deleted
-    && (filter.type === 'all' || (filter.type === 'group' && (custOf(a).group || 'Privat kunder') === filter.value) || (filter.type === 'route' && a.routeId === filter.value)));
+    && (filter.type === 'all' || (filter.type === 'customers' && (filter.ids || []).includes(a.customerId)) || (filter.type === 'group' && (custOf(a).group || 'Privat kunder') === filter.value) || (filter.type === 'route' && a.routeId === filter.value)));
   const rnd = (x) => (round ? Math.round(x / round) * round : Math.round(x * 100) / 100);
   const rows = hit.map((a) => { const nw = Math.max(0, rnd(mode === 'pct' ? a.price * (1 + value / 100) : a.price + value)); return { a, c: custOf(a), old: a.price, new: nw }; }).filter((r) => r.new !== r.old);
   const yearly = (r, p) => D.annualRevenue({ ...r.a, price: p });
@@ -316,4 +316,30 @@ export function priceAdjust(db, user, { mode = 'pct', value = 0, filter = { type
     sum.visits = visits;
   }
   return { rows, sum };
+}
+
+/* --------- Flyt aftaler til en anden rute --------- */
+/**
+ * Aftalerne flyttes til ruten; fremtidige planlagte besøg planlægges om på rutens dage fra næste gang ruten kører.
+ * Udførte og tidligere besøg røres ikke. Adresserne sættes sidst i rutens faste rækkefølge.
+ */
+export function moveToRoute(db, user, agreementIds, routeId, todayIso, untilIso) {
+  require_(user, 'agreement.edit');
+  const r = db.routes.find((x) => x.id === routeId); if (!r) throw new Error('Ukendt rute');
+  const anchor = D.nextRouteDate(r, todayIso); if (!anchor) throw new Error('Ruten har ingen næste dato');
+  let moved = 0, visits = 0;
+  for (const a of db.agreements.filter((x) => agreementIds.includes(x.id))) {
+    if (a.routeId === routeId) continue;
+    a.routeId = routeId;
+    if (a.intervalWeeks) {
+      a.anchorDate = anchor; a.idPrefix = `${a.id}~${anchor}`;
+      db.visits = db.visits.filter((v) => !(v.agreementId === a.id && v.status === 'planlagt' && !v.manual && v.plannedDate >= todayIso));
+      const nv = D.generateVisits(a, anchor, untilIso, db.visits.filter((v) => v.agreementId === a.id), db.closedDays); db.visits.push(...nv); visits += nv.length;
+    }
+    for (const v of db.visits) if (v.agreementId === a.id && v.status === 'planlagt' && v.manual && v.plannedDate >= todayIso) v.routeId = routeId;
+    r.order = [...(r.order || []).filter((x) => x !== a.addressId), a.addressId];
+    moved++;
+  }
+  audit(db, user.id, 'agreements.moveRoute', routeId, { n: moved, visits });
+  return { moved, visits, anchor };
 }
