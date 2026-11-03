@@ -14,7 +14,7 @@ import { SUPABASE } from './config.js';
 import { showRouteMap } from './map.js';
 import * as KV from './store.js';
 
-export const VERSION = '2026-11-03 #47';
+export const VERSION = '2026-11-03 #48';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -709,13 +709,19 @@ function makeSortable(listEl, onDrop) {
 }
 /** Google-køretider (og vejrute) for en rækkefølge af besøg – hentes automatisk og huskes. */
 const gKey = (k, ids, opt) => k + '|' + (opt ? [...ids].sort() : ids).join(',');
+/** Googles svar gemmes på enheden (IndexedDB), så de samme ruter ikke hentes igen efter genstart. Højst 400, nyeste beholdes. */
+let gSaveT = null;
+function persistGoogle() { clearTimeout(gSaveT); gSaveT = setTimeout(() => {
+  const ok = Object.entries(ui._google || {}).filter(([, v]) => v && !v.error && v.t).sort((a, b) => b[1].t - a[1].t).slice(0, 400);
+  KV.set('vindue-gcache', Object.fromEntries(ok)).catch(() => {}); }, 2000); }
+KV.get('vindue-gcache').then((c) => { if (c && typeof c === 'object') { const max = Date.now() - 120 * 864e5; ui._google = { ...Object.fromEntries(Object.entries(c).filter(([, v]) => v?.t > max)), ...(ui._google || {}) }; softRender(); } }).catch(() => {});
 function googleFor(cacheKey, ids, { start, end, optimize, pointOf, onDone }) {
   const c = (ui._google ||= {}); if (c[cacheKey] || !db.settings.googleKey || !ids.length) return c[cacheKey] || null;
   if ((ui._gBusy ||= new Set()).has(cacheKey)) return null;
   ui._gBusy.add(cacheKey);
   const A = pointOf || ((id) => addr(db.visits.find((v) => v.id === id).addressId));
   DP.googleDay(db.settings.googleKey, { start, end, stops: ids.map(A), optimize })
-    .then((r) => { c[cacheKey] = { order: r.order.map((k) => ids[k]), legs: r.legs, polylines: r.polylines }; onDone?.(c[cacheKey]); S.audit(db, ui.user.id, 'google.routes', cacheKey.slice(0, 40), { stops: ids.length }); })
+    .then((r) => { c[cacheKey] = { order: r.order.map((k) => ids[k]), legs: r.legs, polylines: r.polylines, t: Date.now() }; persistGoogle(); onDone?.(c[cacheKey]); S.audit(db, ui.user.id, 'google.routes', cacheKey.slice(0, 40), { stops: ids.length }); })
     .catch((err) => { c[cacheKey] = { error: err.message }; toast(err.message); })
     .finally(() => { ui._gBusy.delete(cacheKey); softRender(); });
   return null;
@@ -937,15 +943,20 @@ function ruteOversigt() {
   const weeks = []; for (let w = D.addDays(t, -D.weekday(t)); w <= end; w = D.addDays(w, 7)) weeks.push(w);
   const MONTHS = ['jan', 'feb', 'mar', 'apr', 'maj', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec'];
   const rows = db.routes.map((r) => { const ags = db.agreements.filter((a) => a.routeId === r.id && a.active); const next = nextRouteDay(r, t);
-    return { r, n: new Set(ags.map((a) => a.customerId)).size, year: ags.reduce((s, a) => s + D.annualRevenue(a), 0), min: ags.filter((a) => next && D.generateVisits(a, next, next).length).reduce((s, a) => s + (a.durationMin ?? 15), 0), next }; });
+    const ids = next ? routeStops(r.id, next).filter((v) => v.status !== 'aflyst' && v.status !== 'forgaeves').map((v) => v.id) : [];
+    const gk = gKey('route:' + r.id + next, ids);
+    const g0 = db.settings.googleKey && ids.length ? googleFor(gk, ids, { start: startPoint(), optimize: false }) : null; const g = g0 && !g0.error ? g0 : null;
+    return { r, n: new Set(ags.map((a) => a.customerId)).size, year: ags.reduce((s, a) => s + D.annualRevenue(a), 0), min: ags.filter((a) => next && D.generateVisits(a, next, next).length).reduce((s, a) => s + (a.durationMin ?? 15), 0), next, gk, ids, gErr: g0?.error, drive: g ? DP.sumLegs(g.legs) : null }; });
+  ui._ovKeys = rows.filter((x) => x.ids.length).map((x) => ({ k: x.gk, ids: x.ids }));
   const tot = rows.reduce((s, x) => s + x.year, 0);
   $view.innerHTML = kTabs() + `<div class="card"><div class="row"><h2 class="sp">Faste ruter (${db.routes.length})</h2><button data-act="addRoute">+ Opret rute</button></div>
     <div style="overflow-x:auto"><table class="heat"><tr><td></td>${weeks.map((w) => `<td class="hm">${D.toDate(w).getUTCDate() <= 7 ? MONTHS[D.month(w) - 1] : ''}</td>`).join('')}</tr>
     ${['M', 'T', 'O', 'T', 'F'].map((dn, i) => `<tr><td class="hm">${dn}</td>${weeks.map((w) => { const d = D.addDays(w, i); const n = load.get(d) || 0; return `<td title="${fmt(d)}: ${n} besøg" style="background:${n ? `rgba(31,95,139,${0.15 + 0.85 * n / maxN})` : 'var(--chip)'}"></td>`; }).join('')}</tr>`).join('')}</table></div>
     <p class="small mute">Belastning pr. dag de næste 12 måneder (mørkere = flere besøg).</p></div>
-  <div class="card"><table class="clickable"><tr><th>Rutenavn</th><th>Medarbejder</th><th>Rytme</th><th>Størrelse</th><th>Næste</th><th style="text-align:right">Oms./år</th><th style="text-align:right">Inkl. moms</th><th>Tid næste gang</th></tr>
-    ${rows.map((x) => `<tr data-route="${x.r.id}"><td><b>${esc(x.r.name)}</b></td><td>${esc(emp(x.r.employeeId)?.name)}</td><td>hver ${x.r.intervalWeeks}. uge</td><td>${x.n} kunder</td><td>${(() => { const op = openPastDay(x.r); return op ? `<span style="color:var(--bad)">${fmt(op)} ${op.slice(0, 4)} – åbne besøg</span><br>` : ''; })()}${x.r.anchorUnknown ? '<span style="color:var(--bad)">ukendt – sæt dato under Admin</span>' : x.next ? fmt(x.next) + ' ' + x.next.slice(0, 4) : '–'}</td><td style="text-align:right">${kr(Math.round(x.year))}</td><td style="text-align:right">${kr(Math.round(x.year * 1.25))}</td><td>${D.hm(x.min)}</td></tr>`).join('')}
-    <tr><td colspan="5"><b>Total</b></td><td style="text-align:right"><b>${kr(Math.round(tot))}</b></td><td style="text-align:right"><b>${kr(Math.round(tot * 1.25))}</b></td><td></td></tr></table>
+  <div class="card">${db.settings.googleKey ? `<div class="row small" style="margin-bottom:6px"><span class="sp mute">Kørsel = Google Maps for næste gang ruten kører (fra startadressen og hjem). Gemmes på enheden.</span><button class="small" data-act="routesRegoogle">🔄 Genberegn alle køretider</button></div>` : '<p class="small mute">Sæt en Google-nøgle under Admin for at se rigtige køretider.</p>'}
+    <table class="clickable"><tr><th>Rutenavn</th><th>Medarbejder</th><th>Rytme</th><th>Størrelse</th><th>Næste</th><th style="text-align:right">Oms./år</th><th style="text-align:right">Inkl. moms</th><th>Arbejde</th><th>Kørsel</th><th>I alt</th></tr>
+    ${rows.map((x) => `<tr data-route="${x.r.id}"><td><b>${esc(x.r.name)}</b></td><td>${esc(emp(x.r.employeeId)?.name)}</td><td>hver ${x.r.intervalWeeks}. uge</td><td>${x.n} kunder</td><td>${(() => { const op = openPastDay(x.r); return op ? `<span style="color:var(--bad)">${fmt(op)} ${op.slice(0, 4)} – åbne besøg</span><br>` : ''; })()}${x.r.anchorUnknown ? '<span style="color:var(--bad)">ukendt – sæt dato under Admin</span>' : x.next ? fmt(x.next) + ' ' + x.next.slice(0, 4) : '–'}</td><td style="text-align:right">${kr(Math.round(x.year))}</td><td style="text-align:right">${kr(Math.round(x.year * 1.25))}</td><td>${D.hm(x.min)}</td><td>${x.drive ? `${D.hm(Math.round(x.drive.sec / 60))} <span class="small mute">${Math.round(x.drive.m / 1000)} km</span>` : x.gErr ? '<span class="warn-t small">fejl</span>' : x.ids.length && db.settings.googleKey ? '<span class="mute small">henter …</span>' : '–'}</td><td><b>${x.drive ? D.hm(x.min + Math.round(x.drive.sec / 60)) : D.hm(x.min)}</b></td></tr>`).join('')}
+    <tr><td colspan="5"><b>Total</b></td><td style="text-align:right"><b>${kr(Math.round(tot))}</b></td><td style="text-align:right"><b>${kr(Math.round(tot * 1.25))}</b></td><td colspan="3"></td></tr></table>
     <p class="small mute">Oms./år er beregnet ud fra aftalernes pris, interval og sæson.</p></div>`;
 }
 /* ---------------- Mobil dagsrute ---------------- */
@@ -1476,7 +1487,7 @@ document.addEventListener('click', async (e) => {
         const k = gKey('opt:' + r.id + '|' + JSON.stringify(so) + '|' + ui._ordEnd, pre, true);
         googleFor(k, pre, { start: startPt, end: endOpt, optimize: true, pointOf: A, onDone: (res) => {
           ui._ord = [...(fixedFirst ? [fixedFirst] : []), ...res.order];
-          (ui._google ||= {})[gKey('ord:' + r.id + '|' + JSON.stringify(so) + '|' + ui._ordEnd, res.order)] = res; toast('Optimeret – træk evt. kunder på plads, og tryk Gem'); } });
+          (ui._google ||= {})[gKey('ord:' + r.id + '|' + JSON.stringify(so) + '|' + ui._ordEnd, res.order)] = { ...res, t: Date.now() }; persistGoogle(); toast('Optimeret – træk evt. kunder på plads, og tryk Gem'); } });
         return; }
       case 'ordReset': ui._ordFor = null; break;
       case 'ordSave': { const { r, so } = ui._ordCtx; r.order = [...ui._ord, ...(r.order || []).filter((a) => !ui._ord.includes(a))]; r.optStart = so; r.optEnd = ui._ordEnd;
@@ -1491,12 +1502,13 @@ document.addEventListener('click', async (e) => {
           for (const a of list) { const p = r[k++]; if (p) { a.lat = p.lat; a.lng = p.lng; ok++; } }
           S.audit(db, ui.user.id, 'geo.fill', '-', { ok, of: streets.length }); toast(`${ok} af ${streets.length} adresser fik koordinater${ok < streets.length ? ' – resten kunne Google ikke finde (ret adressen)' : ''}`); }
         catch (er) { toast(er.message); } break; }
+      case 'routesRegoogle': { const c = ui._google || {}; for (const { k } of ui._ovKeys || []) delete c[k]; toast('Henter køretider fra Google …'); break; }
       case 'calWeek': ui.calDay = null; ui.calPick = null; break;
       case 'toggleRouteMap': ui.hideRouteMap = !ui.hideRouteMap; break;
       case 'planGoogle': { const day = ui.planDay; const k = gKey(day + 'cur', ui._planOrder); if (ui._google) delete ui._google[k]; googleFor(k, [...ui._planOrder], { start: startPoint(), optimize: false }); break; }
       case 'planOpt': { const day = ui.planDay; const vs = db.visits.filter((v) => v.plannedDate === day && v.status !== 'aflyst' && v.status !== 'forgaeves'); const st = startPoint();
         const pre = DP.localOptimal(vs, (v) => addr(v.addressId) || {}, st); b.disabled = true; b.textContent = 'Optimerer …';
-        googleFor(gKey(day + 'opt', pre, true), pre, { start: st, optimize: true, onDone: (res) => { (ui._google ||= {})[gKey(day + 'cur', res.order)] = res; setDayOrder(day, res.order, { legs: res.legs, polylines: res.polylines, legsFor: res.order.join(',') }); toast('Dagen er optimeret – træk evt. kunder på plads'); } }); return; }
+        googleFor(gKey(day + 'opt', pre, true), pre, { start: st, optimize: true, onDone: (res) => { (ui._google ||= {})[gKey(day + 'cur', res.order)] = { ...res, t: Date.now() }; persistGoogle(); setDayOrder(day, res.order, { legs: res.legs, polylines: res.polylines, legsFor: res.order.join(',') }); toast('Dagen er optimeret – træk evt. kunder på plads'); } }); return; }
       case 'printRoute': document.getElementById('dlg').open && document.getElementById('dlg').close(); ui.tab = 'ruter'; ui.route = b.dataset.r; ui.day = b.dataset.d; ui._routeDayFor = ui.route + ui.day; ui.routeMode = 'sheet'; render(); setTimeout(() => window.print(), 300); return;
       case 'smsTomorrow': { const nd = D.nextWorkday(D.addDays(todayIso(), 1), db.closedDays);
         const mine = db.visits.filter((v) => v.plannedDate === nd && v.status === 'planlagt' && (isAdmin() || route(v.routeId)?.employeeId === ui.user.employeeId));
