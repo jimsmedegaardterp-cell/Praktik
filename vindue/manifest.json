@@ -1,5 +1,7 @@
 {
+  "id": "./",
   "name": "Sindal Vinduespolering",
+  "description": "Kunder, ruter, dagsrute og fakturering",
   "short_name": "Sindal Vindue",
   "start_url": "./",
   "scope": "./",
