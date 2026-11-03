@@ -14,7 +14,7 @@ import { SUPABASE } from './config.js';
 import { showRouteMap } from './map.js';
 import * as KV from './store.js';
 
-export const VERSION = '2026-11-02 #45';
+export const VERSION = '2026-11-03 #46';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -304,6 +304,11 @@ function saveAgreement(a, customerId, addressId, f) {
 
 /* ---------------- Kalender (uge) ---------------- */
 /** Advarsler øverst i kalenderen (erstatter Overblik). */
+/** Driftspåmindelser i appen (vises fra datoen og indtil "Klaret"). Se vindue/docs/DRIFT.md. */
+const DRIFT = [
+  { id: 'google-trial', from: '2027-01-10', text: 'Google Cloud-prøven udløber ca. 31/1 – opgradér til fuld konto (Billing → Upgrade), ellers stopper Google-køretiderne.' },
+  { id: 'supabase-pro', from: '2027-01-10', text: 'Supabase: køb Pro-planen før rigtig drift (gratis-projekter pauses efter 7 dage uden brug).' },
+];
 function alertsStrip() {
   const t = todayIso(); const out = [];
   const overdue = db.visits.filter((v) => (v.status === 'planlagt' || v.status === 'udsat') && v.plannedDate < t);
@@ -315,6 +320,11 @@ function alertsStrip() {
   const dbl = D.findDoubleBookings(db.visits.filter((v) => v.plannedDate >= t));
   if (dbl.length) out.push(`<span class="alert">⚠️ ${dbl.length} mulige dobbeltbookinger <button data-act="showDbl">Vis</button></span>`);
   if (isAdmin()) {
+    // ugentlig backup
+    const lb = db.settings.lastBackupAt; const age = lb ? Math.floor((Date.now() - Date.parse(lb)) / 864e5) : null;
+    if (db.settings.realData && (age == null || age >= 7)) out.push(`<span class="alert">💾 ${age == null ? 'Der er ikke taget backup endnu' : `Sidste backup er ${age} dage gammel`} <button data-act="backup">Download backup</button></span>`);
+    // driftspåmindelser (se docs/DRIFT.md)
+    for (const d of DRIFT) if (t >= d.from && !db.settings.driftDone?.[d.id]) out.push(`<span class="alert">🔔 ${d.text} <button data-act="driftOk" data-id="${d.id}">Klaret</button></span>`);
     const od = db.invoiceLinks.filter((l) => l.status === 'bogført' && l.payment !== 'betalt' && l.dueDate && l.dueDate < t);
     if (od.length) out.push(`<span class="alert">💸 ${od.length} faktura${od.length > 1 ? 'er' : ''} ikke betalt til tiden (${kr(Math.round(od.reduce((s2, l) => s2 + (l.remainder ?? l.gross ?? 0), 0)))}) <button data-tab="faktura">Vis</button></span>`);
     const bad = db.invoiceLinks.filter((l) => l.status === 'fejl' || (l.status === 'kladde' && (l.attempts || 0) >= 3));
@@ -1356,7 +1366,8 @@ document.addEventListener('click', async (e) => {
       case 'bookVisit': { const a = db.agreements.find((x) => x.id === id); return openDlg(`<h2>Book besøg – ${esc(cust(a.customerId).name)}</h2><p class="small">${esc(a.service)} · ${esc(addr(a.addressId)?.street)}</p><label><span>Dato</span><input type="date" name="date" required value="${D.nextWorkday(D.addDays(todayIso(), 1), db.closedDays)}"></label><label><span>Rute (valgfri)</span><select name="routeId"><option value="">Ingen</option>${db.routes.map((r) => `<option value="${r.id}" ${r.id === a.routeId ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</select></label>`, (f) => { const v = D.manualVisit(a, f.date, db.visits); v.routeId = f.routeId || null; db.visits.push(v); S.audit(db, ui.user.id, 'visit.book', v.id); toast('Besøg booket'); }); }
       case 'print': window.print(); return;
       case 'routesAll': ui.route = null; ui.sel = new Set(); ui.tab = 'kunder'; ui.kView = 'ruter'; break;
-      case 'backup': download(`sindal-vinduespolering-backup-${todayIso()}.json`, db); S.audit(db, ui.user.id, 'backup.export', '-'); break;
+      case 'backup': db.settings.lastBackupAt = new Date().toISOString(); download(`sindal-vinduespolering-backup-${todayIso()}.json`, db); S.audit(db, ui.user.id, 'backup.export', '-'); toast('Backup downloadet – gem filen et sikkert sted (den indeholder kundedata)'); break;
+      case 'driftOk': (db.settings.driftDone ||= {})[b.dataset.id] = new Date().toISOString(); break;
       case 'planMore': toast(`${S.planAhead(db, D.addDays(todayIso(), 183))} nye besøg planlagt`); break;
       case 'wipe': if (!confirm('Slet ALT i appen (testkunder, ruter, besøg) og start helt tomt? Tag evt. en backup først.')) return; db = freshDb(); save().then(() => location.reload()); return;
       case 'reset': if (!confirm('Slet alle data og indlæs testdata igen?')) return; localStorage.removeItem(KEY + '-ui'); KV.del(dbKey).then(() => location.reload()); return;
