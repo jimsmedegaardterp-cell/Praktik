@@ -14,7 +14,7 @@ import { SUPABASE } from './config.js';
 import { showRouteMap } from './map.js';
 import * as KV from './store.js';
 
-export const VERSION = '2026-11-03 #51';
+export const VERSION = '2026-11-03 #52';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -187,14 +187,14 @@ function kunder() {
   const sRev = sAgs.reduce((s2, a) => s2 + a.price, 0);
   // pr. år: tid og provision vægtes med antal besøg pr. år (som SkvizBiz)
   const sYearMin = sAgs.reduce((s2, a) => s2 + (a.durationMin ?? 15) * D.visitsPerYear(a), 0);
-  const sYearProv = sAgs.reduce((s2, a) => { const e = emp(route(a.routeId)?.employeeId); return s2 + D.annualRevenue(a) * (e?.commissionRate ?? db.settings.commissionRate); }, 0);
+  const sYearProv = sAgs.reduce((s2, a) => s2 + D.annualRevenue(a) * wageRate(a.routeId), 0);
   const ints = [...new Set(db.agreements.filter((a) => a.active).map((a) => a.intervalWeeks))].sort((a, b) => a - b);
   $view.innerHTML = kTabs() + `<div class="card"><div class="row"><input id="q" placeholder="Søg navn, kundenr., telefon, adresse" value="${esc(ui.q)}" class="sp"><button data-act="fitCustomer">📍 Hvor passer en ny kunde ind?</button><button class="pri" data-act="newCustomer">+ Ny kunde</button></div>
     <div class="row small" style="margin-top:8px"><select data-kf="group"><option value="">Alle grupper</option>${GROUPS.map((g) => `<option ${ui.kF.group === g ? 'selected' : ''}>${esc(g)}</option>`).join('')}</select>
       <select data-kf="route"><option value="">Alle ruter</option><option value="-" ${ui.kF.route === '-' ? 'selected' : ''}>Uden rute</option>${db.routes.map((r) => `<option value="${r.id}" ${ui.kF.route === r.id ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</select>
       <select data-kf="int"><option value="">Alle intervaller</option>${ints.map((n) => `<option value="${n}" ${ui.kF.int === String(n) ? 'selected' : ''}>${n ? 'Hver ' + n + '. uge' : 'Ikke fast'}</option>`).join('')}</select>
       ${ui.kF.group || ui.kF.route || ui.kF.int ? '<button class="small" data-act="kFclear">Nulstil filtre</button>' : ''}</div></div>
-  ${selAll.length ? `<div class="card selbar"><div class="row"><b>${selAll.length} valgt</b><span>${sAgs.length} aftaler</span><span>Oms./år <b>${kr(Math.round(sYear))}</b> (${kr(Math.round(sYear * 1.25))} inkl. moms)</span><span>Tid/år <b>${D.hm(Math.round(sYearMin))}</b> t</span>${sYearMin ? `<span title="Omsætning pr. år / arbejdstid pr. år (uden kørsel)">Oms./time <b>${kr(Math.round(sYear / (sYearMin / 60)))}</b></span><span title="Provision pr. år / arbejdstid pr. år (uden kørsel). Ruter på ejeren (0 %) giver 0 kr.">Timeløn <b>${kr(Math.round(sYearProv / (sYearMin / 60)))}</b></span>` : ''}<span class="small mute">Pr. gang ${kr(Math.round(sRev))} · ${D.hm(sMin)} t</span><span class="sp"></span><button class="small" data-act="kSelClear">Ryd valg</button></div>
+  ${selAll.length ? `<div class="card selbar"><div class="row"><b>${selAll.length} valgt</b><span>${sAgs.length} aftaler</span><span>Oms./år <b>${kr(Math.round(sYear))}</b> (${kr(Math.round(sYear * 1.25))} inkl. moms)</span><span>Tid/år <b>${D.hm(Math.round(sYearMin))}</b> t</span>${sYearMin ? `<span title="Omsætning pr. år / arbejdstid pr. år (uden kørsel)">Oms./time <b>${kr(Math.round(sYear / (sYearMin / 60)))}</b></span><span title="Omsætning × medarbejdersats ÷ arbejdstid pr. år (uden kørsel). Ruter på ejeren regnes med standardsatsen.">Timeløn <b>${kr(Math.round(sYearProv / (sYearMin / 60)))}</b></span>` : ''}<span class="small mute">Pr. gang ${kr(Math.round(sRev))} · ${D.hm(sMin)} t</span><span class="sp"></span><button class="small" data-act="kSelClear">Ryd valg</button></div>
     <div class="row" style="margin-top:6px"><button data-act="kBulk" data-v="sms">📱 SMS</button><button data-act="kBulk" data-v="price">💰 Prisregulering</button><button data-act="kBulk" data-v="route">🗺 Flyt til rute</button><button data-act="kBulk" data-v="group">👥 Kundegruppe</button><button data-act="kBulk" data-v="interval">🧾 Fakturainterval</button><button data-act="kBulk" data-v="remember">📝 Husk næste gang</button><button data-act="kBulk" data-v="csv">⬇ Eksportér</button></div></div>` : ''}
   <div class="card"><div class="small mute" style="margin-bottom:6px">${rows.length} kunder · klik på en kolonne for at sortere</div><table class="clickable"><tr><th class="w1"><input type="checkbox" data-ksel="__all" ${allSel ? 'checked' : ''} title="Vælg alle viste"></th>${th('no', 'Kundenr.')}${th('name', 'Navn / firma')}${th('street', 'Adresse')}${th('zip', 'Postnr.', 'hide-m')}${th('interval', 'Interval', 'hide-m')}${th('route', 'Rute', 'hide-m')}${th('next', 'Næste besøg', 'hide-m')}${th('year', 'Oms./år', 'hide-m')}</tr>
   ${rows.slice(0, 1000).map((x) => { const c = x.c;
@@ -455,6 +455,9 @@ function alertsStrip() {
   return out.length ? `<div class="alerts">${out.join('')}</div>` : '';
 }
 /** Økonomi for en mængde besøg (som SkvizBiz' "Total for uge"). */
+/** Sats til "beregnet timeløn": rutens medarbejdersats, eller standardsatsen hvis ruten står på ejeren (0 %) – så tallet kan sammenlignes. */
+const wageRate = (routeId) => { const r = emp(route(routeId)?.employeeId)?.commissionRate; return r > 0 ? r : (db.settings.commissionRate ?? 0.35); };
+const WAGE_TIP = `Beregnet timeløn = omsætning × medarbejdersats ÷ (arbejde + kørsel). Ruter på ejeren regnes med standardsatsen (${Math.round((db.settings.commissionRate ?? 0.35) * 100)} %).`;
 function econ(vs, byRoute = false, useGoogle = true) {
   const live = vs.filter((v) => v.status !== 'aflyst' && v.status !== 'forgaeves');
   const sum = live.reduce((s2, v) => s2 + D.visitTotal(v), 0); const min = mins(live);
@@ -473,7 +476,8 @@ function econ(vs, byRoute = false, useGoogle = true) {
     }
   }
   const drive = gOk ? Math.round(gSec / 60) : Math.round(km / 50 * 60); const total = (min + drive) / 60; // timer i alt = arbejde + kørsel
-  return { n: live.length, sum, min, km: gOk ? Math.round(gM / 1000) : Math.round(km), drive, google: gOk, gWait, prov, perHour: total ? sum / total : 0, wage: total ? prov / total : 0 };
+  const wp = live.reduce((t2, v) => t2 + D.visitTotal(v) * wageRate(v.routeId), 0);
+  return { n: live.length, sum, min, km: gOk ? Math.round(gM / 1000) : Math.round(km), drive, google: gOk, gWait, prov, perHour: total ? sum / total : 0, wage: total ? wp / total : 0 };
 }
 function kalender() {
   const ws = ui.weekStart; const rf = ui.calRoute || '';
@@ -509,7 +513,7 @@ function kalender() {
       ${ui.calPick ? `<div class="sidemenu">${routeMenuButtons(pick[0], pick[1])}</div>` : ''}
       <dl><dt>Antal besøg</dt><dd>${e.n}</dd><dt>Planlagt omsætning</dt><dd>${kr(Math.round(e.sum))}</dd><dt>Inkl. moms</dt><dd>${kr(Math.round(e.sum * 1.25))}</dd>
       <dt>Tidsforbrug</dt><dd>${D.hm(e.min)} t</dd><dt>Forventet kørsel</dt><dd>${e.google ? '' : '≈ '}${D.hm(e.drive)} t (${e.km} km)</dd><dt>Provision</dt><dd>${kr(Math.round(e.prov))}</dd>
-      <dt title="Omsætning delt med arbejde + kørsel">Oms. pr. time</dt><dd>${kr(Math.round(e.perHour))}</dd><dt>Timeløn (provision)</dt><dd>${kr(Math.round(e.wage))}</dd></dl>
+      <dt title="Omsætning delt med arbejde + kørsel">Oms. pr. time</dt><dd>${kr(Math.round(e.perHour))}</dd><dt title="${WAGE_TIP}">Beregnet timeløn</dt><dd>${kr(Math.round(e.wage))}</dd></dl>
       <h3>Fakturering</h3><dl>${ecoReal() ? (() => { const od = open.filter((l) => l.dueDate && l.dueDate < t); return `<dt><a href="#" data-tab="faktura">Ikke betalt til tiden</a></dt><dd${od.length ? ' style="color:var(--bad)"' : ''}>${od.length} · ${kr(Math.round(od.reduce((s2, l) => s2 + (l.remainder ?? l.gross ?? 0), 0)))}</dd>`; })()
         : `<dt><a href="#" data-tab="faktura">Klar til fakturering</a></dt><dd>${q.length} · ${kr(Math.round(q.reduce((s2, v) => s2 + D.visitTotal(v), 0)))}</dd>`}
       <dt>Åbne fakturaer</dt><dd>${open.length} · ${kr(Math.round(open.reduce((s2, l) => s2 + (l.remainder ?? l.total * 1.25), 0)))}</dd></dl>
@@ -1000,7 +1004,7 @@ function ruteOversigt() {
     const gk = gKey('route:' + r.id + next, ids);
     const g0 = db.settings.googleKey && ids.length ? googleFor(gk, ids, { start: startPoint(), optimize: false }) : null; const g = g0 && !g0.error ? g0 : null;
     const nvs = next ? routeStops(r.id, next).filter((v) => v.status !== 'aflyst' && v.status !== 'forgaeves') : []; const nRev = nvs.reduce((t2, v) => t2 + D.visitTotal(v), 0);
-    const nRate = emp(r.employeeId)?.commissionRate ?? db.settings.commissionRate;
+    const nRate = wageRate(r.id);
     return { r, nRev, nRate, n: new Set(ags.map((a) => a.customerId)).size, year: ags.reduce((s, a) => s + D.annualRevenue(a), 0), min: ags.filter((a) => next && D.generateVisits(a, next, next).length).reduce((s, a) => s + (a.durationMin ?? 15), 0), next, gk, ids, gErr: g0?.error, drive: g ? DP.sumLegs(g.legs) : null }; });
   ui._ovKeys = rows.filter((x) => x.ids.length).map((x) => ({ k: x.gk, ids: x.ids }));
   const tot = rows.reduce((s, x) => s + x.year, 0);
@@ -1009,7 +1013,7 @@ function ruteOversigt() {
     ${['M', 'T', 'O', 'T', 'F'].map((dn, i) => `<tr><td class="hm">${dn}</td>${weeks.map((w) => { const d = D.addDays(w, i); const n = load.get(d) || 0; return `<td title="${fmt(d)}: ${n} besøg" style="background:${n ? `rgba(31,95,139,${0.15 + 0.85 * n / maxN})` : 'var(--chip)'}"></td>`; }).join('')}</tr>`).join('')}</table></div>
     <p class="small mute">Belastning pr. dag de næste 12 måneder (mørkere = flere besøg).</p></div>
   <div class="card">${db.settings.googleKey ? `<div class="row small" style="margin-bottom:6px"><span class="sp mute">Kørsel = Google Maps for næste gang ruten kører (fra startadressen og hjem). Gemmes på enheden.</span><button class="small" data-act="routesRegoogle">🔄 Genberegn alle køretider</button></div>` : '<p class="small mute">Sæt en Google-nøgle under Admin for at se rigtige køretider.</p>'}
-    <table class="clickable"><tr><th>Rutenavn</th><th>Medarbejder</th><th>Rytme</th><th>Størrelse</th><th>Næste</th><th style="text-align:right">Oms./år</th><th style="text-align:right">Inkl. moms</th><th>Arbejde</th><th>Kørsel</th><th>I alt</th><th style="text-align:right" title="Omsætning næste gang / (arbejde + kørsel)">Oms./time</th><th style="text-align:right" title="Provision næste gang / (arbejde + kørsel)">Timeløn</th></tr>
+    <table class="clickable"><tr><th>Rutenavn</th><th>Medarbejder</th><th>Rytme</th><th>Størrelse</th><th>Næste</th><th style="text-align:right">Oms./år</th><th style="text-align:right">Inkl. moms</th><th>Arbejde</th><th>Kørsel</th><th>I alt</th><th style="text-align:right" title="Omsætning næste gang / (arbejde + kørsel)">Oms./time</th><th style="text-align:right" title="${WAGE_TIP}">Timeløn</th></tr>
     ${rows.map((x) => `<tr data-route="${x.r.id}"><td><b>${esc(x.r.name)}</b></td><td>${esc(emp(x.r.employeeId)?.name)}</td><td>hver ${x.r.intervalWeeks}. uge</td><td>${x.n} kunder</td><td>${(() => { const op = openPastDay(x.r); return op ? `<span style="color:var(--bad)">${fmt(op)} ${op.slice(0, 4)} – åbne besøg</span><br>` : ''; })()}${x.r.anchorUnknown ? '<span style="color:var(--bad)">ukendt – sæt dato under Admin</span>' : x.next ? fmt(x.next) + ' ' + x.next.slice(0, 4) : '–'}</td><td style="text-align:right">${kr(Math.round(x.year))}</td><td style="text-align:right">${kr(Math.round(x.year * 1.25))}</td><td>${D.hm(x.min)}</td><td>${x.drive ? `${D.hm(Math.round(x.drive.sec / 60))} <span class="small mute">${Math.round(x.drive.m / 1000)} km</span>` : x.gErr ? '<span class="warn-t small">fejl</span>' : x.ids.length && db.settings.googleKey ? '<span class="mute small">henter …</span>' : '–'}</td><td><b>${x.drive ? D.hm(x.min + Math.round(x.drive.sec / 60)) : D.hm(x.min)}</b></td>${(() => { const h = (x.min + (x.drive ? x.drive.sec / 60 : 0)) / 60; return `<td style="text-align:right">${h && x.nRev ? kr(Math.round(x.nRev / h)) : '–'}</td><td style="text-align:right">${h && x.nRev ? kr(Math.round(x.nRev * x.nRate / h)) : '–'}</td>`; })()}</tr>`).join('')}
     <tr><td colspan="5"><b>Total</b></td><td style="text-align:right"><b>${kr(Math.round(tot))}</b></td><td style="text-align:right"><b>${kr(Math.round(tot * 1.25))}</b></td><td colspan="5"></td></tr></table>
     <p class="small mute">Oms./år er beregnet ud fra aftalernes pris, interval og sæson.</p></div>`;
@@ -1089,7 +1093,8 @@ function monthStats(vs) {
   const rev = done.reduce((t, v) => t + D.visitTotal(v), 0); const planRev = plan.reduce((t, v) => t + D.visitTotal(v), 0);
   const work = mins(done); const dr = driveOf(done); const h = (work + dr.min) / 60;
   const prov = done.reduce((t2, v) => t2 + D.visitTotal(v) * ((v.split?.length ? v.split : defaultSplit(v)).reduce((a2, x) => a2 + x.pct, 0) / 100), 0);
-  return { n: done.length, nPlan: plan.length, rev, planRev, work, drive: dr.min, km: dr.km, est: dr.est, prov, perHour: h ? rev / h : 0, wage: h ? prov / h : 0 };
+  const wp = done.reduce((t2, v) => t2 + D.visitTotal(v) * wageRate(v.routeId), 0);
+  return { n: done.length, nPlan: plan.length, rev, planRev, work, drive: dr.min, km: dr.km, est: dr.est, prov, perHour: h ? rev / h : 0, wage: h ? wp / h : 0 };
 }
 function okonomi() {
   const t = todayIso(); const thisM = t.slice(0, 7);
@@ -1105,12 +1110,12 @@ function okonomi() {
   const rRows = [...byR].map(([rid, vs]) => ({ r: route(rid), ...monthStats(vs) })).filter((x) => x.n || x.nPlan).sort((a, b) => b.rev + b.planRev - (a.rev + a.planRev));
   const y = (k) => rows.filter((r) => r.ym.slice(0, 4) === thisM.slice(0, 4)).reduce((s2, r) => s2 + r[k], 0);
   $view.innerHTML = `<div class="card"><div class="row"><h2 class="sp">Økonomi pr. måned</h2><span class="small mute">I år: <b>${kr(Math.round(y('rev')))}</b> udført · ${kr(Math.round(y('planRev')))} planlagt (ekskl. moms)</span></div>
-    <table class="eco"><tr><th>Måned</th><th></th><th style="text-align:right">Besøg</th><th style="text-align:right">Omsætning</th><th style="text-align:right" class="hide-m">Arbejde</th><th style="text-align:right" class="hide-m">Kørsel</th><th style="text-align:right">Oms./time</th><th style="text-align:right" title="Provision / (arbejde + kørsel)">Timeløn</th></tr>
+    <table class="eco"><tr><th>Måned</th><th></th><th style="text-align:right">Besøg</th><th style="text-align:right">Omsætning</th><th style="text-align:right" class="hide-m">Arbejde</th><th style="text-align:right" class="hide-m">Kørsel</th><th style="text-align:right">Oms./time</th><th style="text-align:right" title="${WAGE_TIP}">Timeløn</th></tr>
     ${rows.map((r) => `<tr class="${r.ym === sel ? 'on' : ''}" data-act="ecoM" data-m="${r.ym}" style="cursor:pointer"><td><b>${mLabel(r.ym)}</b>${r.ym === thisM ? ' <span class="pill">nu</span>' : ''}</td>
       <td class="barcell"><div class="bar"><span style="width:${(r.rev / max) * 100}%"></span><span class="plan" style="width:${(r.planRev / max) * 100}%"></span></div></td>
       <td style="text-align:right">${r.n}${r.nPlan ? `<span class="mute small"> +${r.nPlan}</span>` : ''}</td><td style="text-align:right"><b>${kr(Math.round(r.rev))}</b>${r.planRev ? `<div class="small mute">+${kr(Math.round(r.planRev))} planlagt</div>` : ''}</td>
       <td style="text-align:right" class="hide-m">${D.hm(r.work)}</td><td style="text-align:right" class="hide-m">${r.drive ? (r.est ? '≈ ' : '') + D.hm(r.drive) : '–'}</td><td style="text-align:right">${r.perHour ? kr(Math.round(r.perHour)) : '–'}</td><td style="text-align:right">${r.wage ? kr(Math.round(r.wage)) : '–'}</td></tr>`).join('')}</table>
-    <p class="small mute">Omsætning = udførte besøg (ekskl. moms). Lys bjælke = planlagt. Kørsel fra gemte Google-dagsplaner, ellers skøn (≈). Oms./time = omsætning / (arbejde + kørsel). Timeløn = provision / (arbejde + kørsel). Klik på en måned for detaljer.</p></div>
+    <p class="small mute">Omsætning = udførte besøg (ekskl. moms). Lys bjælke = planlagt. Kørsel fra gemte Google-dagsplaner, ellers skøn (≈). Oms./time = omsætning / (arbejde + kørsel). Timeløn = omsætning × medarbejdersats / (arbejde + kørsel) – ruter på ejeren regnes med standardsatsen. Klik på en måned for detaljer.</p></div>
   <div class="grid2"><div class="card"><h2>${mLabel(sel)} pr. rute</h2><table><tr><th>Rute</th><th style="text-align:right">Besøg</th><th style="text-align:right">Omsætning</th><th style="text-align:right">Oms./time</th><th style="text-align:right">Timeløn</th></tr>
     ${rRows.map((x) => `<tr><td>${esc(x.r?.name ?? 'Uden rute')}</td><td style="text-align:right">${x.n}${x.nPlan ? `<span class="mute small"> +${x.nPlan}</span>` : ''}</td><td style="text-align:right">${kr(Math.round(x.rev))}${x.planRev ? `<div class="small mute">+${kr(Math.round(x.planRev))}</div>` : ''}</td><td style="text-align:right">${x.perHour ? kr(Math.round(x.perHour)) : '–'}</td><td style="text-align:right">${x.wage ? kr(Math.round(x.wage)) : '–'}</td></tr>`).join('') || '<tr><td colspan="5" class="mute">Ingen besøg</td></tr>'}</table></div>
   <div class="card"><h2>${mLabel(sel)} pr. medarbejder</h2><table><tr><th>Medarbejder</th><th style="text-align:right">Besøg</th><th style="text-align:right">Grundlag</th><th style="text-align:right">Provision</th></tr>
