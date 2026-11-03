@@ -17,5 +17,8 @@ Leverandørsider kunne ikke hentes fra udviklingsmiljøet 1. nov. 2026. Tal er e
 **Gratis SMS?** Automatisk udsendelse fra privat "fri SMS" (Telmore) er ikke tilladt uden skriftlig accept. Gratis-alternativ i appen: "Send fra egen telefon" (manuelt, ét tryk pr. kunde, svar havner på telefonen – ikke i appen).
 
 ## Google Maps (dagsplan)
-- Routes API `computeRoutes` med optimering af rækkefølge. Ét kald pr. dagsplan pr. 24 stop; resultatet gemmes, så der kun betales når man trykker "Beregn med Google Maps".
-- Pris pr. kald og gratis månedskvote: **SKAL VERIFICERES** på Googles prisside. Ved fx 5 beregninger pr. arbejdsdag ≈ 110 kald/md.
+- Routes API `computeRoutes` (køretid, vejrute, optimering). Ét kald pr. 24 stop. Hentes **automatisk**, når en dag, rute eller uge vises, og huskes, mens appen er åben.
+- Forbrug: groft 10–30 kald pr. arbejdsdag ≈ 200–600/md. Google: 5.000 gratis "Compute Routes Pro" pr. md. (prisliste 2026). Om optimering tæller som dyrere type: **SKAL VERIFICERES**. Begræns evt. kvoten i Google Cloud (fx 200/dag).
+
+
+Se også **docs/DRIFT.md** for konti, fornyelser og backup (opdateret 3/11-2026).
