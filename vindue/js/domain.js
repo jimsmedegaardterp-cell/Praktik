@@ -257,4 +257,6 @@ export function manualVisit(agreement, dateIso, existing = []) {
     durationMin: agreement.durationMin ?? 15, completion: null, history: [], manual: true };
 }
 export const hm = (min) => `${Math.floor(min / 60)}:${String(Math.round(min % 60)).padStart(2, '0')}`;
+/** Antal besøg pr. år for en aftale (52 uger / interval × andel af året i sæson). */
+export const visitsPerYear = (ag) => (ag.active && ag.intervalWeeks ? (52 / ag.intervalWeeks) * (ag.seasonMonths?.length ? ag.seasonMonths.length / 12 : 1) : 0);
 export const annualRevenue = (ag) => (ag.active && ag.intervalWeeks ? (ag.price * 52) / ag.intervalWeeks * (ag.seasonMonths?.length ? ag.seasonMonths.length / 12 : 1) : 0);
