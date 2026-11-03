@@ -14,7 +14,7 @@ import { SUPABASE } from './config.js';
 import { showRouteMap } from './map.js';
 import * as KV from './store.js';
 
-export const VERSION = '2026-11-03 #54';
+export const VERSION = '2026-11-03 #55';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -229,7 +229,7 @@ function kundekort(c) {
       <label class="btn small">📷 Tilføj billede<input type="file" accept="image/*" multiple data-photo="${a.id}" hidden></label></div></div>`).join('')}<button data-act="addAddress" data-id="${c.id}">+ Adresse</button></div>
   </div>
   <div class="card"><h2>Serviceaftaler</h2><table><tr><th>Ydelse</th><th>Adresse</th><th>Interval</th><th>Sæson</th><th>Rute</th><th>Pris</th><th></th></tr>
-    ${ags.map((a) => `<tr><td>${esc(a.service)}${a.active ? '' : ' <span class="pill">inaktiv</span>'}</td><td>${esc(addr(a.addressId)?.street)}</td><td>${agrDesc(a)} · ${a.durationMin ?? 15} min</td><td class="small">${a.seasonMonths?.length ? `md. ${Math.min(...a.seasonMonths)}–${Math.max(...a.seasonMonths)}` : 'Hele året'}</td><td>${esc(route(a.routeId)?.name ?? '–')}</td><td>${kr(a.price)}</td><td><button data-act="editAgreement" data-id="${a.id}">Ret</button> <button data-act="bookVisit" data-id="${a.id}">Book besøg</button></td></tr>`).join('')}
+    ${ags.map((a) => `<tr class="rowlink" data-act="editAgreement" data-id="${a.id}" title="Klik for at rette aftalen"><td>${esc(a.service)}${a.active ? '' : ' <span class="pill">inaktiv</span>'}</td><td>${esc(addr(a.addressId)?.street)}</td><td>${agrDesc(a)} · ${D.hm(a.durationMin ?? 15)} t</td><td class="small">${a.seasonMonths?.length ? `md. ${Math.min(...a.seasonMonths)}–${Math.max(...a.seasonMonths)}` : 'Hele året'}</td><td>${esc(route(a.routeId)?.name ?? '–')}</td><td>${kr(a.price)}</td><td style="white-space:nowrap"><button data-act="bookVisit" data-id="${a.id}">Book besøg</button> <span class="mute">›</span></td></tr>`).join('')}
   </table><button data-act="addAgreement" data-id="${c.id}" style="margin-top:8px">+ Aftale</button></div>
   <div class="grid">
     <div class="card"><h2>SMS</h2><div class="msgs">${msgs.map(msgHtml).join('') || '<p class="mute">Ingen beskeder</p>'}</div>
@@ -394,10 +394,11 @@ function priceSmsDialog(rows, from) {
     ${ui._smsList.map((x, i) => `<div class="row" style="border-bottom:1px solid var(--line);padding:6px 0"><div class="sp"><b>${esc(x.c.name)}</b><div class="small mute">${esc(x.text)}</div></div><a class="btn pri" data-smsi="${i}" href="${smsLink(D.normalizePhone(x.c.phone), x.text)}">📱 Send</a></div>`).join('')}`, null, 'Luk');
 }
 function agreementFields(a) {
-  return `<label><span>Ydelse</span><input name="service" value="${esc(a.service ?? 'Vinduespudsning ude')}"></label>
+  const dm = a.durationMin ?? 15;
+  return `<label style="display:block"><span>Ydelse / opgave</span><input name="service" value="${esc(a.service ?? 'Vinduespudsning ude')}" style="width:100%;box-sizing:border-box"></label>
   <div class="row"><label><span>Pris ekskl. moms</span><input name="price" type="number" min="0" step="1" value="${a.price ?? 300}" style="width:110px"></label>
   <label><span>Interval</span><select name="intervalWeeks">${[0, 1, 2, 3, 4, 6, 8, 10, 12, 16, 26, 52].map((n) => `<option value="${n}" ${n === (a.intervalWeeks ?? 4) ? 'selected' : ''}>${n ? 'Hver ' + n + '. uge' : 'Ikke fast'}</option>`).join('')}</select></label>
-  <label><span>Tid (min)</span><input name="durationMin" type="number" min="1" value="${a.durationMin ?? 15}" style="width:80px"></label>
+  <label><span>Tid</span><span class="row" style="gap:4px;align-items:center"><input name="durH" type="number" min="0" max="99" value="${Math.floor(dm / 60)}" style="width:64px"> t <input name="durM" type="number" min="0" max="59" step="1" value="${dm % 60}" style="width:64px"> min</span></label>
   <label><span>Rute</span><select name="routeId"><option value="">Ingen</option>${db.routes.map((r) => `<option value="${r.id}" ${r.id === a.routeId ? 'selected' : ''}>${esc(r.name)} (hver ${r.intervalWeeks}. uge)</option>`).join('')}</select></label></div>
   <div class="row"><label><span>Første besøg (tom = næste gang ruten kører)</span><input name="anchorDate" type="date" value="${a.anchorDate ?? ''}"></label>
   <label><span>Sæson fra–til (måned)</span><input name="sFrom" type="number" min="1" max="12" value="${a.seasonMonths?.length ? Math.min(...a.seasonMonths) : 1}" style="width:60px"> – <input name="sTo" type="number" min="1" max="12" value="${a.seasonMonths?.length ? Math.max(...a.seasonMonths) : 12}" style="width:60px"></label></div>
@@ -407,7 +408,8 @@ function saveAgreement(a, customerId, addressId, f) {
   const price = Number(f.price); if (!(price >= 0)) return 'Ugyldig pris';
   const sf = +f.sFrom, st = +f.sTo; const months = []; for (let m = sf; ; m = (m % 12) + 1) { months.push(m); if (m === st || months.length > 12) break; }
   const anchorDate = f.anchorDate || D.nextRouteDate(route(f.routeId), todayIso()) || todayIso();
-  const vals = { service: f.service, price, intervalWeeks: +f.intervalWeeks, durationMin: Math.max(1, +f.durationMin || 15), routeId: f.routeId || null, anchorDate, seasonMonths: months.length >= 12 ? [] : months };
+  const dur = f.durH != null || f.durM != null ? (+f.durH || 0) * 60 + (+f.durM || 0) : +f.durationMin;
+  const vals = { service: f.service.trim(), price, intervalWeeks: +f.intervalWeeks, durationMin: Math.max(1, dur || 15), routeId: f.routeId || null, anchorDate, seasonMonths: months.length >= 12 ? [] : months };
   if (!a) { a = { id: S.uid('ag'), customerId, addressId, active: true, ...vals }; db.agreements.push(a); }
   else {
     const rhythmChanged = a.intervalWeeks !== vals.intervalWeeks || a.anchorDate !== vals.anchorDate || JSON.stringify(a.seasonMonths) !== JSON.stringify(vals.seasonMonths) || a.active !== !!f.active;
@@ -1454,7 +1456,9 @@ document.addEventListener('click', async (e) => {
       case 'editCustomer': return customerForm(cust(id));
       case 'addAddress': return openDlg(`<h2>Ny adresse</h2><label><span>Adresse</span><input name="street" required></label><label><span>Adgangsforhold</span><input name="access"></label>`, (f) => { db.addresses.push({ id: S.uid('adr'), customerId: id, street: f.street, access: f.access, lat: null, lng: null }); });
       case 'addAgreement': { const adrs = db.addresses.filter((a) => a.customerId === id); return openDlg(`<h2>Ny serviceaftale</h2><label><span>Adresse</span><select name="addressId">${adrs.map((a) => `<option value="${a.id}">${esc(a.street)}</option>`).join('')}</select></label>${agreementFields({})}`, (f) => saveAgreement(null, id, f.addressId, f)); }
-      case 'editAgreement': { const a = db.agreements.find((x) => x.id === id); return openDlg(`<h2>Ret aftale</h2><p class="small mute">Ændres interval/startdato/sæson, genplanlægges fremtidige planlagte besøg. Udførte besøg ændres aldrig.</p>${agreementFields(a)}`, (f) => saveAgreement(a, a.customerId, a.addressId, f)); }
+      case 'editAgreement': { const a = db.agreements.find((x) => x.id === id); return openDlg(`<h2>Ret aftale</h2><p class="small mute">Ændres interval/startdato/sæson, genplanlægges fremtidige planlagte besøg. Udførte besøg ændres aldrig.</p>${agreementFields(a)}<div class="row" style="margin-top:10px"><button type="button" class="bad" data-act="delAgreement" data-id="${a.id}">🗑 Slet aftale</button></div>`, (f) => saveAgreement(a, a.customerId, a.addressId, f)); }
+      case 'delAgreement': { const a = db.agreements.find((x) => x.id === id); if (!a || !confirm(`Slet aftalen "${a.service}"? Fremtidige planlagte besøg fjernes. Udførte besøg og fakturaer bevares.`)) return;
+        const r = S.deleteAgreement(db, ui.user, id, todayIso()); document.getElementById('dlg').close(); toast(`Aftalen er slettet · ${r.removedVisits} planlagte besøg fjernet`); break; }
       case 'exportCustomer': { download(`kunde-${id}.json`, S.exportCustomer(db, id)); return; }
       case 'deleteCustomer': if (!confirm('Slet kundens persondata? Fakturaer i e-conomic påvirkes ikke.')) return; S.deleteCustomer(db, ui.user, id); ui.customer = null; break;
       case 'sendSms': { const tx = document.getElementById('smsText'); if (!tx.value.trim()) return; b.disabled = true; const m = await S.sendSms(db, ui.user, { customerId: id, text: tx.value.trim(), clientRef: b.dataset.ref || (b.dataset.ref = S.uid('sms')) }, sms); toast(m.status === 'fejlet' ? 'Fejl: ' + m.error : 'Sendt (mock)'); setTimeout(() => S.markDelivered(db, m.providerId, 'leveret') || save(), 1500); break; }

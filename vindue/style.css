@@ -229,3 +229,6 @@ th.sortable:hover{color:var(--pri)}
 tr.ksel td{background:var(--pri-soft)}
 .selbar{position:sticky;top:52px;z-index:4;border:2px solid var(--pri)}
 @media (max-width:820px){.selbar{top:0}}
+
+tr.rowlink{cursor:pointer}
+tr.rowlink:hover td{background:var(--soft)}

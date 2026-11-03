@@ -248,3 +248,13 @@ test('flyt aftaler til anden rute: nye datoer på rutens dage, ingen id-kollisio
   assert.equal(db.visits.find((v) => v.id === done.id).status, 'udfoert', 'udført besøg bevaret');
   assert.equal(db.routes.find((x) => x.id === 'r2').order.slice(-1)[0], ag.addressId);
 });
+
+test('slet aftale: fremtidige besøg væk, udførte bevaret', async () => {
+  const { seedDb } = await import('../js/seed.js'); const S = await import('../js/services.js');
+  const db = seedDb('2026-11-02'); const admin = { id: 'u1', role: 'admin', employeeId: 'e1' };
+  const ag = db.agreements[0]; const v0 = db.visits.find((v) => v.agreementId === ag.id); S.registerVisit(db, admin, v0.id, { result: 'udfoert', opId: 'z' });
+  const r = S.deleteAgreement(db, admin, ag.id, '2026-11-01');
+  assert.ok(r.removedVisits > 0); assert.ok(!db.agreements.includes(ag));
+  assert.ok(db.visits.some((v) => v.id === v0.id && v.status === 'udfoert'), 'udført bevaret');
+  assert.ok(!db.visits.some((v) => v.agreementId === ag.id && v.status === 'planlagt'));
+});
