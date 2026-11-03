@@ -14,7 +14,7 @@ import { SUPABASE } from './config.js';
 import { showRouteMap } from './map.js';
 import * as KV from './store.js';
 
-export const VERSION = '2026-11-03 #50';
+export const VERSION = '2026-11-03 #51';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -184,14 +184,17 @@ function kunder() {
   const sel = rows.filter((x) => ui.kSel.has(x.c.id)); const allSel = rows.length && sel.length === rows.length;
   const selAll = [...ui.kSel].map((id) => cust(id)).filter((c) => c && !c.deleted);
   const sAgs = db.agreements.filter((a) => a.active && ui.kSel.has(a.customerId)); const sYear = sAgs.reduce((s2, a) => s2 + D.annualRevenue(a), 0); const sMin = sAgs.reduce((s2, a) => s2 + (a.durationMin ?? 15), 0);
-  const sRev = sAgs.reduce((s2, a) => s2 + a.price, 0); const sProv = sAgs.reduce((s2, a) => { const e = emp(route(a.routeId)?.employeeId); return s2 + a.price * (e?.commissionRate ?? db.settings.commissionRate); }, 0);
+  const sRev = sAgs.reduce((s2, a) => s2 + a.price, 0);
+  // pr. år: tid og provision vægtes med antal besøg pr. år (som SkvizBiz)
+  const sYearMin = sAgs.reduce((s2, a) => s2 + (a.durationMin ?? 15) * D.visitsPerYear(a), 0);
+  const sYearProv = sAgs.reduce((s2, a) => { const e = emp(route(a.routeId)?.employeeId); return s2 + D.annualRevenue(a) * (e?.commissionRate ?? db.settings.commissionRate); }, 0);
   const ints = [...new Set(db.agreements.filter((a) => a.active).map((a) => a.intervalWeeks))].sort((a, b) => a - b);
   $view.innerHTML = kTabs() + `<div class="card"><div class="row"><input id="q" placeholder="Søg navn, kundenr., telefon, adresse" value="${esc(ui.q)}" class="sp"><button data-act="fitCustomer">📍 Hvor passer en ny kunde ind?</button><button class="pri" data-act="newCustomer">+ Ny kunde</button></div>
     <div class="row small" style="margin-top:8px"><select data-kf="group"><option value="">Alle grupper</option>${GROUPS.map((g) => `<option ${ui.kF.group === g ? 'selected' : ''}>${esc(g)}</option>`).join('')}</select>
       <select data-kf="route"><option value="">Alle ruter</option><option value="-" ${ui.kF.route === '-' ? 'selected' : ''}>Uden rute</option>${db.routes.map((r) => `<option value="${r.id}" ${ui.kF.route === r.id ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</select>
       <select data-kf="int"><option value="">Alle intervaller</option>${ints.map((n) => `<option value="${n}" ${ui.kF.int === String(n) ? 'selected' : ''}>${n ? 'Hver ' + n + '. uge' : 'Ikke fast'}</option>`).join('')}</select>
       ${ui.kF.group || ui.kF.route || ui.kF.int ? '<button class="small" data-act="kFclear">Nulstil filtre</button>' : ''}</div></div>
-  ${selAll.length ? `<div class="card selbar"><div class="row"><b>${selAll.length} valgt</b><span>${sAgs.length} aftaler</span><span>Oms./år <b>${kr(Math.round(sYear))}</b> (${kr(Math.round(sYear * 1.25))} inkl. moms)</span><span>Pr. gang <b>${kr(Math.round(sRev))}</b> · ${D.hm(sMin)} t</span>${sMin ? `<span title="Oms. pr. gang / arbejdstid (uden kørsel)">Oms./time <b>${kr(Math.round(sRev / (sMin / 60)))}</b></span><span title="Provision pr. gang / arbejdstid (uden kørsel)">Timeløn <b>${kr(Math.round(sProv / (sMin / 60)))}</b></span>` : ''}<span class="sp"></span><button class="small" data-act="kSelClear">Ryd valg</button></div>
+  ${selAll.length ? `<div class="card selbar"><div class="row"><b>${selAll.length} valgt</b><span>${sAgs.length} aftaler</span><span>Oms./år <b>${kr(Math.round(sYear))}</b> (${kr(Math.round(sYear * 1.25))} inkl. moms)</span><span>Tid/år <b>${D.hm(Math.round(sYearMin))}</b> t</span>${sYearMin ? `<span title="Omsætning pr. år / arbejdstid pr. år (uden kørsel)">Oms./time <b>${kr(Math.round(sYear / (sYearMin / 60)))}</b></span><span title="Provision pr. år / arbejdstid pr. år (uden kørsel). Ruter på ejeren (0 %) giver 0 kr.">Timeløn <b>${kr(Math.round(sYearProv / (sYearMin / 60)))}</b></span>` : ''}<span class="small mute">Pr. gang ${kr(Math.round(sRev))} · ${D.hm(sMin)} t</span><span class="sp"></span><button class="small" data-act="kSelClear">Ryd valg</button></div>
     <div class="row" style="margin-top:6px"><button data-act="kBulk" data-v="sms">📱 SMS</button><button data-act="kBulk" data-v="price">💰 Prisregulering</button><button data-act="kBulk" data-v="route">🗺 Flyt til rute</button><button data-act="kBulk" data-v="group">👥 Kundegruppe</button><button data-act="kBulk" data-v="interval">🧾 Fakturainterval</button><button data-act="kBulk" data-v="remember">📝 Husk næste gang</button><button data-act="kBulk" data-v="csv">⬇ Eksportér</button></div></div>` : ''}
   <div class="card"><div class="small mute" style="margin-bottom:6px">${rows.length} kunder · klik på en kolonne for at sortere</div><table class="clickable"><tr><th class="w1"><input type="checkbox" data-ksel="__all" ${allSel ? 'checked' : ''} title="Vælg alle viste"></th>${th('no', 'Kundenr.')}${th('name', 'Navn / firma')}${th('street', 'Adresse')}${th('zip', 'Postnr.', 'hide-m')}${th('interval', 'Interval', 'hide-m')}${th('route', 'Rute', 'hide-m')}${th('next', 'Næste besøg', 'hide-m')}${th('year', 'Oms./år', 'hide-m')}</tr>
   ${rows.slice(0, 1000).map((x) => { const c = x.c;
