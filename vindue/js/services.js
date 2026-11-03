@@ -343,3 +343,16 @@ export function moveToRoute(db, user, agreementIds, routeId, todayIso, untilIso)
   audit(db, user.id, 'agreements.moveRoute', routeId, { n: moved, visits });
   return { moved, visits, anchor };
 }
+
+/** Slet en aftale: fremtidige planlagte besøg fjernes; udførte besøg (historik, provision, fakturaer) bevares. */
+export function deleteAgreement(db, user, agreementId, todayIso) {
+  require_(user, 'agreement.edit');
+  const a = db.agreements.find((x) => x.id === agreementId); if (!a) throw new Error('Aftalen findes ikke');
+  const before = db.visits.length;
+  db.visits = db.visits.filter((v) => !(v.agreementId === a.id && (v.status === 'planlagt' || v.status === 'udsat') && v.plannedDate >= todayIso));
+  db.agreements = db.agreements.filter((x) => x.id !== a.id);
+  const r = db.routes.find((x) => x.id === a.routeId);
+  if (r?.order && !db.agreements.some((x) => x.routeId === r.id && x.addressId === a.addressId)) r.order = r.order.filter((x) => x !== a.addressId);
+  audit(db, user.id, 'agreement.delete', a.id, { service: a.service, removedVisits: before - db.visits.length });
+  return { removedVisits: before - db.visits.length };
+}
