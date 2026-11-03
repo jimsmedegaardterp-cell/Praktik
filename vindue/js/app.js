@@ -14,7 +14,7 @@ import { SUPABASE } from './config.js';
 import { showRouteMap } from './map.js';
 import * as KV from './store.js';
 
-export const VERSION = '2026-11-03 #55';
+export const VERSION = '2026-11-03 #56';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -228,8 +228,8 @@ function kundekort(c) {
       <div class="thumbs">${(a.photos || []).map((ph) => `<span class="th"><img src="${ph.src}" data-act="photo" data-src="${ph.id}" data-a="${a.id}" alt=""><button type="button" class="x" data-act="photoDel" data-a="${a.id}" data-p="${ph.id}" title="Slet">✕</button></span>`).join('')}
       <label class="btn small">📷 Tilføj billede<input type="file" accept="image/*" multiple data-photo="${a.id}" hidden></label></div></div>`).join('')}<button data-act="addAddress" data-id="${c.id}">+ Adresse</button></div>
   </div>
-  <div class="card"><h2>Serviceaftaler</h2><table><tr><th>Ydelse</th><th>Adresse</th><th>Interval</th><th>Sæson</th><th>Rute</th><th>Pris</th><th></th></tr>
-    ${ags.map((a) => `<tr class="rowlink" data-act="editAgreement" data-id="${a.id}" title="Klik for at rette aftalen"><td>${esc(a.service)}${a.active ? '' : ' <span class="pill">inaktiv</span>'}</td><td>${esc(addr(a.addressId)?.street)}</td><td>${agrDesc(a)} · ${D.hm(a.durationMin ?? 15)} t</td><td class="small">${a.seasonMonths?.length ? `md. ${Math.min(...a.seasonMonths)}–${Math.max(...a.seasonMonths)}` : 'Hele året'}</td><td>${esc(route(a.routeId)?.name ?? '–')}</td><td>${kr(a.price)}</td><td style="white-space:nowrap"><button data-act="bookVisit" data-id="${a.id}">Book besøg</button> <span class="mute">›</span></td></tr>`).join('')}
+  <div class="card"><h2>Serviceaftaler</h2><table><tr><th>Ydelse</th><th>Adresse</th><th>Interval</th><th>Sæson</th><th>Rute</th><th>Pris</th><th>Næste gang</th></tr>
+    ${ags.map((a) => `<tr class="rowlink" data-act="editAgreement" data-id="${a.id}" title="Klik for at rette aftalen"><td>${esc(a.service)}${a.active ? '' : ' <span class="pill">inaktiv</span>'}</td><td>${esc(addr(a.addressId)?.street)}</td><td>${agrDesc(a)} · ${D.hm(a.durationMin ?? 15)} t</td><td class="small">${a.seasonMonths?.length ? `md. ${Math.min(...a.seasonMonths)}–${Math.max(...a.seasonMonths)}` : 'Hele året'}</td><td>${esc(route(a.routeId)?.name ?? '–')}</td><td>${kr(a.price)}</td><td class="small" style="white-space:nowrap">${(() => { const nv = nextOpen(a.id); return nv ? (nv.plannedDate < todayIso() ? `<span style="color:var(--bad)">${fmt(nv.plannedDate)} ikke færdigmeldt</span>` : 'næste ' + fmt(nv.plannedDate)) : '<span class="mute">ingen planlagt</span>'; })()} <span class="mute">›</span></td></tr>`).join('')}
   </table><button data-act="addAgreement" data-id="${c.id}" style="margin-top:8px">+ Aftale</button></div>
   <div class="grid">
     <div class="card"><h2>SMS</h2><div class="msgs">${msgs.map(msgHtml).join('') || '<p class="mute">Ingen beskeder</p>'}</div>
@@ -393,6 +393,8 @@ function priceSmsDialog(rows, from) {
   openDlg(`<h2>Giv kunderne besked (${ui._smsList.length})</h2><p class="small mute">Tryk på hver kunde – telefonens SMS-app åbner med teksten. Ret teksten i SMS-appen, hvis du vil.</p>
     ${ui._smsList.map((x, i) => `<div class="row" style="border-bottom:1px solid var(--line);padding:6px 0"><div class="sp"><b>${esc(x.c.name)}</b><div class="small mute">${esc(x.text)}</div></div><a class="btn pri" data-smsi="${i}" href="${smsLink(D.normalizePhone(x.c.phone), x.text)}">📱 Send</a></div>`).join('')}`, null, 'Luk');
 }
+/** Næste åbne (planlagte/udsatte) besøg for en aftale */
+const nextOpen = (agId) => db.visits.filter((v) => v.agreementId === agId && (v.status === 'planlagt' || v.status === 'udsat')).sort((x, y) => x.plannedDate.localeCompare(y.plannedDate))[0] || null;
 function agreementFields(a) {
   const dm = a.durationMin ?? 15;
   return `<label style="display:block"><span>Ydelse / opgave</span><input name="service" value="${esc(a.service ?? 'Vinduespudsning ude')}" style="width:100%;box-sizing:border-box"></label>
@@ -400,7 +402,7 @@ function agreementFields(a) {
   <label><span>Interval</span><select name="intervalWeeks">${[0, 1, 2, 3, 4, 6, 8, 10, 12, 16, 26, 52].map((n) => `<option value="${n}" ${n === (a.intervalWeeks ?? 4) ? 'selected' : ''}>${n ? 'Hver ' + n + '. uge' : 'Ikke fast'}</option>`).join('')}</select></label>
   <label><span>Tid</span><span class="row" style="gap:4px;align-items:center"><input name="durH" type="number" min="0" max="99" value="${Math.floor(dm / 60)}" style="width:64px"> t <input name="durM" type="number" min="0" max="59" step="1" value="${dm % 60}" style="width:64px"> min</span></label>
   <label><span>Rute</span><select name="routeId"><option value="">Ingen</option>${db.routes.map((r) => `<option value="${r.id}" ${r.id === a.routeId ? 'selected' : ''}>${esc(r.name)} (hver ${r.intervalWeeks}. uge)</option>`).join('')}</select></label></div>
-  <div class="row"><label><span>Første besøg (tom = næste gang ruten kører)</span><input name="anchorDate" type="date" value="${a.anchorDate ?? ''}"></label>
+  <div class="row">${a.id ? `<input type="hidden" name="anchorDate" value="${a.anchorDate ?? ''}">` : `<label><span>Første besøg (tom = næste gang ruten kører)</span><input name="anchorDate" type="date" value="${a.anchorDate ?? ''}"></label>`}
   <label><span>Sæson fra–til (måned)</span><input name="sFrom" type="number" min="1" max="12" value="${a.seasonMonths?.length ? Math.min(...a.seasonMonths) : 1}" style="width:60px"> – <input name="sTo" type="number" min="1" max="12" value="${a.seasonMonths?.length ? Math.max(...a.seasonMonths) : 12}" style="width:60px"></label></div>
   ${a.id ? `<label><input type="checkbox" name="active" ${a.active ? 'checked' : ''}> Aktiv</label>` : `<label><span>Adgangsforhold</span><input name="access" placeholder="Nøgle, kode, hund …"></label>`}`;
 }
@@ -1456,7 +1458,13 @@ document.addEventListener('click', async (e) => {
       case 'editCustomer': return customerForm(cust(id));
       case 'addAddress': return openDlg(`<h2>Ny adresse</h2><label><span>Adresse</span><input name="street" required></label><label><span>Adgangsforhold</span><input name="access"></label>`, (f) => { db.addresses.push({ id: S.uid('adr'), customerId: id, street: f.street, access: f.access, lat: null, lng: null }); });
       case 'addAgreement': { const adrs = db.addresses.filter((a) => a.customerId === id); return openDlg(`<h2>Ny serviceaftale</h2><label><span>Adresse</span><select name="addressId">${adrs.map((a) => `<option value="${a.id}">${esc(a.street)}</option>`).join('')}</select></label>${agreementFields({})}`, (f) => saveAgreement(null, id, f.addressId, f)); }
-      case 'editAgreement': { const a = db.agreements.find((x) => x.id === id); return openDlg(`<h2>Ret aftale</h2><p class="small mute">Ændres interval/startdato/sæson, genplanlægges fremtidige planlagte besøg. Udførte besøg ændres aldrig.</p>${agreementFields(a)}<div class="row" style="margin-top:10px"><button type="button" class="bad" data-act="delAgreement" data-id="${a.id}">🗑 Slet aftale</button></div>`, (f) => saveAgreement(a, a.customerId, a.addressId, f)); }
+      case 'editAgreement': { const a = db.agreements.find((x) => x.id === id); return openDlg(`<h2>Ret aftale</h2><p class="small mute">Ændres interval/startdato/sæson, genplanlægges fremtidige planlagte besøg. Udførte besøg ændres aldrig.</p>${agreementFields(a)}${(() => { const nv = nextOpen(a.id); return `<div class="row" style="margin-top:8px"><label><span>Næste gang</span><input type="date" name="nextDate" value="${nv?.plannedDate || ''}"></label>${nv && a.intervalWeeks ? `<label><span>Ændring gælder</span><select name="nextMode"><option value="shift">denne og de efterfølgende</option><option value="keep">kun denne gang</option></select></label>` : ''}${!nv ? '<span class="small mute">Ingen planlagt – vælg en dato for at booke et besøg.</span>' : ''}</div>`; })()}
+      <div class="row" style="margin-top:10px"><button type="button" class="bad" data-act="delAgreement" data-id="${a.id}">🗑 Slet aftale</button></div>`, (f) => {
+        const err = saveAgreement(a, a.customerId, a.addressId, f); if (err) return err;
+        if (f.nextDate) { const nv = nextOpen(a.id);
+          if (nv && nv.plannedDate !== f.nextDate) { S.moveVisit(db, ui.user, nv.id, f.nextDate, f.nextMode === 'keep' || !a.intervalWeeks ? 'keep' : 'shift'); toast('Næste besøg flyttet til ' + fmt(f.nextDate)); }
+          else if (!nv) { try { const v = D.manualVisit(a, f.nextDate, db.visits); v.routeId = a.routeId || null; db.visits.push(v); S.audit(db, ui.user.id, 'visit.book', v.id); toast('Besøg booket ' + fmt(f.nextDate)); } catch (e2) { return e2.message; } } }
+      }); }
       case 'delAgreement': { const a = db.agreements.find((x) => x.id === id); if (!a || !confirm(`Slet aftalen "${a.service}"? Fremtidige planlagte besøg fjernes. Udførte besøg og fakturaer bevares.`)) return;
         const r = S.deleteAgreement(db, ui.user, id, todayIso()); document.getElementById('dlg').close(); toast(`Aftalen er slettet · ${r.removedVisits} planlagte besøg fjernet`); break; }
       case 'exportCustomer': { download(`kunde-${id}.json`, S.exportCustomer(db, id)); return; }
