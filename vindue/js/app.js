@@ -14,7 +14,7 @@ import { SUPABASE } from './config.js';
 import { showRouteMap } from './map.js';
 import * as KV from './store.js';
 
-export const VERSION = '2026-11-03 #53';
+export const VERSION = '2026-11-03 #54';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -507,7 +507,7 @@ function kalender() {
           const gd = r ? (ui._google || {})[gKey('route:' + r.id + d, gv.filter((v) => v.status !== 'aflyst').map((v) => v.id))] : null; const drv = gd?.legs ? Math.round(DP.sumLegs(gd.legs).sec / 60) : 0;
           const bm = mins(gv.filter((v) => v.status !== 'aflyst')) + drv;
           return `<div style="--min:${Math.max(bm, 20)}" class="rblock ${allDone ? 'done' : ''} ${r && ui.calSel?.has(key) ? 'sel' : ''} ${ui.calPick === key ? 'picked' : ''}" ${r ? `data-rsel="${key}"` : ''}>${r ? `<div class="grip" data-act="routeMenu" data-r="${r.id}" data-d="${d}" draggable="true" data-dragroute="${key}" title="Klik: muligheder · Træk: flyt ruten · Ctrl+klik: vælg">⋮⋮</div>` : ''}<div class="rhead" ${r ? `data-dblroute="${r.id}" data-day="${d}" draggable="true" data-dragroute="${key}" title="Klik: vis rutens tal og muligheder · Dobbeltklik: færdigmeld · Træk: flyt hele ruten"` : ''}><b>${esc(r?.name ?? 'Uden rute')}</b><span class="badge">${gv.length}</span></div>
-          <div class="rmeta"><span>${D.hm(bm)} t${drv ? ' inkl. kørsel' : ''} · ${kr(gv.filter((v) => v.status !== 'aflyst').reduce((s2, v) => s2 + D.visitTotal(v), 0))}</span>${r ? `<button class="icon" data-act="printRoute" data-r="${r.id}" data-d="${d}" title="Udskriv ruteseddel">🖨</button>` : ''}</div>
+          <div class="rmeta"><span>${D.hm(bm)} t${drv ? ' inkl. kørsel' : ''} · ${kr(gv.filter((v) => v.status !== 'aflyst').reduce((s2, v) => s2 + D.visitTotal(v), 0))}${bm && drv ? ` · <span title="Omsætning / (arbejde + kørsel)">${kr(Math.round(gv.filter((v) => v.status !== 'aflyst').reduce((s2, v) => s2 + D.visitTotal(v), 0) / (bm / 60)))}/t</span>` : ''}</span>${r ? `<button class="icon" data-act="printRoute" data-r="${r.id}" data-d="${d}" title="Udskriv ruteseddel">🖨</button>` : ''}</div>
           ${gv.map((v) => `<div class="vline ${v.status} ${ui.visSel?.has(v.id) ? 'vsel' : ''}" draggable="${v.status === 'planlagt' || v.status === 'udsat'}" data-visit="${v.id}">${esc(cust(v.customerId)?.name)}</div>`).join('')}</div>`; }).join('')}</div>`; }).join('')}</div></div>
     <aside class="econ"><h3>${ui.calPick ? `${esc(route(pick[0]).name)} · ${fmt(pick[1])}` : ui.calDay ? `Total for ${fmt(ui.calDay)}` : `Total for uge ${D.isoWeek(ws)}`}</h3>${ui.calPick || ui.calDay ? `<p class="small"><a href="#" data-act="calWeek">← Vis hele ugen</a>${ui.calDay ? ` · <a href="#" data-act="dayPlan" data-d="${ui.calDay}">🗺 Dagsplan</a>` : ''}</p>` : ''}
       ${ui.calPick ? `<div class="sidemenu">${routeMenuButtons(pick[0], pick[1])}</div>` : ''}
@@ -838,7 +838,8 @@ function routeOrderView(r, head, master = false) {
       ${so.type === 'stop' ? `<label><span>Første kunde</span><select id="ordFirst">${ui._ord.map((id) => `<option value="${id}" ${id === so.id ? 'selected' : ''}>${esc(name(id))} – ${esc(A(id).street)}</option>`).join('')}</select></label>` : ''}
       ${so.type === 'custom' ? `<label><span>Startadresse</span><input id="ordCustom" value="${esc(so.street || '')}" placeholder="Vej 1, 9870 Sindal"></label>` : ''}
       <label><span>Slut</span><select id="ordEnd"><option value="back" ${ui._ordEnd === 'back' ? 'selected' : ''}>Tilbage til start</option><option value="last" ${ui._ordEnd === 'last' ? 'selected' : ''}>Ved sidste kunde</option></select></label></div>
-    <div class="row small"><span>${ui._ord.length} adresser</span><span>Arbejde <b>${D.hm(work)}</b></span><span>Kørsel <b>${D.hm(Math.round(sum.sec / 60))}</b> (${Math.round(sum.m / 1000)} km)</span><span>I alt <b>${D.hm(work + Math.round(sum.sec / 60))}</b></span>
+    <div class="row small"><span>${ui._ord.length} adresser</span><span>Arbejde <b>${D.hm(work)}</b></span><span>Kørsel <b>${D.hm(Math.round(sum.sec / 60))}</b> (${Math.round(sum.m / 1000)} km)</span><span>I alt <b>${D.hm(work + Math.round(sum.sec / 60))}</b></span>${(() => { const rev = db.agreements.filter((a) => a.routeId === r.id && a.active !== false).reduce((t2, a) => t2 + a.price, 0); const h = (work + sum.sec / 60) / 60;
+      return rev ? `<span>Oms. pr. gang <b>${kr(Math.round(rev))}</b></span>${h ? `<span title="Omsætning pr. gang / (arbejde + kørsel)">Oms./time <b>${kr(Math.round(rev / h))}</b></span><span title="${WAGE_TIP}">Timeløn <b>${kr(Math.round(rev * wageRate(r.id) / h))}</b></span>` : ''}` : ''; })()}
       <span class="pill ${g ? 'ok' : ''}">${g ? 'Google Maps' : useG ? (g0?.error ? 'Google fejlede – skøn' : 'Henter Google …') : 'Skøn (ingen Google-nøgle)'}</span></div>
     <div id="ordMap" class="map"></div>
     <div class="toolbar"><button data-act="ordOpt" ${useG ? '' : 'disabled title="Kræver Google-nøgle (Admin → Kørsel)"'}>✨ Optimér med Google</button><span class="small mute">Træk i ⋮⋮ for at flytte en kunde.</span><span class="sp"></span>
