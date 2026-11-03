@@ -219,3 +219,18 @@ test('ekstra opgaver: med på faktura og i provisionsgrundlag', async () => {
   assert.ok(Object.values(db.mock.economic.drafts)[0].lines.some((x) => /Ekstra: Kælderruder/.test(x.description)));
   assert.equal(D.commission([done]).e2.commission, Math.round((done.price + 150) * 0.35 * 100) / 100);
 });
+
+test('prisregulering: +3 % med afrunding, kun gruppe, planlagte besøg fra dato', async () => {
+  const { seedDb } = await import('../js/seed.js'); const S = await import('../js/services.js');
+  const db = seedDb('2026-11-02'); const admin = { id: 'u1', role: 'admin' };
+  const erh = db.agreements.filter((a) => db.customers.find((c) => c.id === a.customerId).group === 'Erhverv');
+  const pv = S.priceAdjust(db, admin, { mode: 'pct', value: 3, filter: { type: 'group', value: 'Erhverv' }, from: '2027-01-01', round: 5 });
+  assert.equal(pv.rows.length, erh.length); assert.equal(pv.rows[0].new % 5, 0); assert.ok(pv.sum.newYear > pv.sum.oldYear);
+  assert.equal(erh[0].price, pv.rows[0].old, 'forhåndsvisning ændrer intet');
+  const before = db.visits.filter((v) => v.agreementId === erh[0].id && v.plannedDate < '2027-01-01' && v.status === 'planlagt').map((v) => v.price);
+  const r = S.priceAdjust(db, admin, { mode: 'pct', value: 3, filter: { type: 'group', value: 'Erhverv' }, from: '2027-01-01', round: 5, apply: true });
+  assert.equal(erh[0].price, pv.rows[0].new); assert.equal(erh[0].priceHistory.length, 1);
+  assert.ok(db.visits.filter((v) => v.agreementId === erh[0].id && v.plannedDate >= '2027-01-01' && v.status === 'planlagt').every((v) => v.price === erh[0].price));
+  assert.deepEqual(db.visits.filter((v) => v.agreementId === erh[0].id && v.plannedDate < '2027-01-01' && v.status === 'planlagt').map((v) => v.price), before, 'besøg før datoen uændret');
+  assert.throws(() => S.priceAdjust(db, { id: 'u2', role: 'medarbejder' }, { value: 1, apply: true, from: '2027-01-01' }));
+});

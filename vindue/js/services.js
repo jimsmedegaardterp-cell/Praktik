@@ -289,3 +289,31 @@ export function deleteCustomer(db, user, customerId) {
   db.smsMessages = db.smsMessages.filter((m) => m.customerId !== customerId);
   audit(db, user.id, 'customer.delete', customerId);
 }
+
+/* --------- Prisregulering --------- */
+/**
+ * Beregn (og evt. gennemfør) en prisregulering af aktive aftaler.
+ *   mode 'pct' (fx 3 = +3 %) eller 'kr' (fx 10 = +10 kr), filter { type: 'all'|'group'|'route', value }, from (dato), round 1|5|0 (0 = ingen afrunding)
+ * Ved apply: aftalens pris ændres, historik gemmes, og planlagte besøg fra datoen får den nye pris.
+ */
+export function priceAdjust(db, user, { mode = 'pct', value = 0, filter = { type: 'all' }, from, round = 1, apply = false }) {
+  if (apply) require_(user, 'agreement.edit');
+  const custOf = (a) => db.customers.find((c) => c.id === a.customerId);
+  const hit = db.agreements.filter((a) => a.active !== false && custOf(a) && !custOf(a).deleted
+    && (filter.type === 'all' || (filter.type === 'group' && (custOf(a).group || 'Privat kunder') === filter.value) || (filter.type === 'route' && a.routeId === filter.value)));
+  const rnd = (x) => (round ? Math.round(x / round) * round : Math.round(x * 100) / 100);
+  const rows = hit.map((a) => { const nw = Math.max(0, rnd(mode === 'pct' ? a.price * (1 + value / 100) : a.price + value)); return { a, c: custOf(a), old: a.price, new: nw }; }).filter((r) => r.new !== r.old);
+  const yearly = (r, p) => D.annualRevenue({ ...r.a, price: p });
+  const sum = { n: rows.length, oldYear: rows.reduce((s, r) => s + yearly(r, r.old), 0), newYear: rows.reduce((s, r) => s + yearly(r, r.new), 0) };
+  if (apply) {
+    let visits = 0;
+    for (const r of rows) {
+      (r.a.priceHistory ||= []).push({ from, old: r.old, new: r.new, at: now(), by: user.id });
+      r.a.price = r.new;
+      for (const v of db.visits) if (v.agreementId === r.a.id && v.status === 'planlagt' && v.plannedDate >= from && v.price === r.old) { v.price = r.new; visits++; }
+    }
+    audit(db, user.id, 'price.adjust', '-', { mode, value, filter, from, n: rows.length, visits });
+    sum.visits = visits;
+  }
+  return { rows, sum };
+}

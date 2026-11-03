@@ -14,7 +14,7 @@ import { SUPABASE } from './config.js';
 import { showRouteMap } from './map.js';
 import * as KV from './store.js';
 
-export const VERSION = '2026-11-03 #46';
+export const VERSION = '2026-11-03 #47';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -91,9 +91,9 @@ const $view = document.getElementById('view');
 /* ---------------- Faner ---------------- */
 const TABS = [
   ['kalender', 'Kalender', true], ['kunder', 'Kunder', true], ['mobil', 'Dagsrute', false], ['faktura', 'Fakturering', true],
-  ['sms', 'Beskeder', true], ['import', 'Import', true], ['admin', 'Admin', true],
+  ['okonomi', 'Økonomi', true], ['sms', 'Beskeder', true], ['mig', 'Mig', false], ['import', 'Import', true], ['admin', 'Admin', true],
 ];
-const TABICON = { kalender: '📅', kunder: '👥', mobil: '🚐', faktura: '🧾', sms: '💬', import: '📥', admin: '⚙️' };
+const TABICON = { kalender: '📅', kunder: '👥', mobil: '🚐', faktura: '🧾', okonomi: '📊', sms: '💬', mig: '🙂', import: '📥', admin: '⚙️' };
 const TABSHORT = { faktura: 'Faktura', sms: 'Beskeder' };
 function renderTabs() {
   const tabs = TABS.filter(([, , adm]) => !adm || isAdmin());
@@ -111,7 +111,7 @@ function render() {
   renderUserSelect();
   renderTabs();
   const tag = document.querySelector('.tag'); if (tag) tag.textContent = (db.settings.realData ? 'PROTOTYPE' : 'PROTOTYPE · testdata') + ' · version ' + VERSION;
-  ({ overblik, kunder, kalender, ruter, dag: dagsplan, print: printView, mobil, faktura, sms: beskeder, import: importView, admin })[ui.tab]();
+  ({ overblik, kunder, kalender, ruter, dag: dagsplan, print: printView, mobil, faktura, okonomi, mig, sms: beskeder, import: importView, admin })[ui.tab]();
   const rm = document.getElementById('routeMap'); if (rm && ui._routeMapArgs) showRouteMap(rm, ui._routeMapArgs).catch(() => {});
   save();
 }
@@ -172,7 +172,7 @@ function kunder() {
   if (ui.kView === 'ruter') return ruteOversigt();
   const q = ui.q.toLowerCase();
   const list = db.customers.filter((c) => !c.deleted && (!q || c.name.toLowerCase().includes(q) || String(c.customerNo || c.skvizbizId || '').includes(q) || c.phone.replace(/\s/g, '').includes(q.replace(/\s/g, '')) || db.addresses.some((a) => a.customerId === c.id && a.street.toLowerCase().includes(q))));
-  $view.innerHTML = kTabs() + `<div class="card"><div class="row"><input id="q" placeholder="Søg navn, kundenr., telefon, adresse" value="${esc(ui.q)}" class="sp"><button class="pri" data-act="newCustomer">+ Ny kunde</button></div></div>
+  $view.innerHTML = kTabs() + `<div class="card"><div class="row"><input id="q" placeholder="Søg navn, kundenr., telefon, adresse" value="${esc(ui.q)}" class="sp"><button data-act="fitCustomer">📍 Hvor passer en ny kunde ind?</button><button class="pri" data-act="newCustomer">+ Ny kunde</button></div></div>
   <div class="card"><div class="small mute" style="margin-bottom:6px">${list.length} kunder</div><table class="clickable"><tr><th>Kundenr.</th><th>Navn / firma</th><th>Adresse</th><th class="hide-m">Interval</th><th class="hide-m">Rute</th><th class="hide-m">Næste besøg</th></tr>
   ${list.slice(0, 500).map((c) => { const ags = db.agreements.filter((a) => a.customerId === c.id && a.active); const a0 = db.addresses.find((a) => a.customerId === c.id);
     const next = db.visits.filter((v) => v.customerId === c.id && v.status === 'planlagt' && v.plannedDate >= todayIso()).sort((a, b) => a.plannedDate.localeCompare(b.plannedDate))[0];
@@ -235,13 +235,13 @@ const msgHtml = (m) => `<div class="msg ${m.dir}">${esc(m.text)}<div class="meta
 const GROUPS = ['Privat kunder', 'Erhverv', 'Offentlig', 'Boligforening'];
 const INVTYPE = { email: 'Email PDF (A4-faktura)', sms: 'Faktura på SMS', ean: 'EAN (offentlig)', print: 'Papir (A4-faktura udleveres)' };
 const yn = (name, val) => `<select name="${name}"><option value="0" ${!val ? 'selected' : ''}>Nej</option><option value="1" ${val ? 'selected' : ''}>Ja</option></select>`;
-function customerForm(c) {
+function customerForm(c, preset = null) {
   const isNew = !c; c ||= { name: '', phone: '', email: '', notes: '', paymentTerms: 'Netto 8 dage', paymentDays: 8, vatLiable: true, marketingConsent: false, group: 'Privat kunder', invoiceType: 'email', invoiceInterval: 'besoeg' };
   openDlg(`<h2>${isNew ? 'Ny kunde' : 'Rediger kunde'}</h2>
     <h3>Stamoplysninger</h3>
     <div class="row"><label><span>Kundenr.</span><input name="customerNo" value="${esc(c.customerNo || c.skvizbizId || '')}" style="width:120px"></label><label><span>Kundegruppe</span><select name="group">${GROUPS.map((g) => `<option ${g === (c.group || 'Privat kunder') ? 'selected' : ''}>${g}</option>`).join('')}</select></label></div>
     <label><span>Navn / firma *</span><input name="name" required value="${esc(c.name)}"></label>
-    ${isNew ? `<label><span>Adresse *</span><input name="street" required placeholder="Vej 1, 9870 Sindal"></label>` : ''}
+    ${isNew ? `<label><span>Adresse *</span><input name="street" required placeholder="Vej 1, 9870 Sindal" value="${esc(preset?.street || '')}"></label>` : ''}
     <div class="row"><label><span>Mobilnr. *</span><input name="phone" required value="${esc(c.phone)}" inputmode="tel"></label><label><span>Fastnet nr.</span><input name="landline" value="${esc(c.landline || '')}" inputmode="tel"></label></div>
     <label><span>E-mail</span><input name="email" type="email" value="${esc(c.email)}"></label>
     <div class="row"><label><span>CVR nr.</span><input name="cvr" value="${esc(c.cvr || '')}" style="width:120px"></label><label><span>Kontaktperson</span><input name="contact" value="${esc(c.contact || '')}"></label></div>
@@ -256,7 +256,7 @@ function customerForm(c) {
     ${isNew ? `<label><span>Husk hver gang (udskrives på ruteplan)</span><input name="access" placeholder="Alt på huset, nøgle under potte …"></label>` : '<p class="small mute">"Husk hver gang" står på hver adresse (ret under Adresser).</p>'}
     <label><span>Husk næste gang (udskrives på ruteplan én gang, slettes ved færdigmelding)</span><input name="rememberNext" value="${esc(c.rememberNext || '')}"></label>
     <label><span>Internt notat (udskrives ikke – undgå følsomme oplysninger)</span><textarea name="notes">${esc(c.notes)}</textarea></label>
-    ${isNew ? `<h3>Første aftale</h3>${agreementFields({})}` : ''}`,
+    ${isNew ? `<h3>Første aftale</h3>${preset?.routeId ? `<p class="small">📍 Lægges på <b>${esc(route(preset.routeId)?.name)}</b> ${preset.afterName ? `efter ${esc(preset.afterName)}` : 'først'} (rækkefølgen kan rettes under ruten → ↕ Rækkefølge).</p>` : ''}${agreementFields({ routeId: preset?.routeId, durationMin: preset?.durationMin })}` : ''}`,
   (f) => {
     if (!D.normalizePhone(f.phone)) return 'Ugyldigt mobilnummer';
     const dup = db.customers.find((x) => x !== c && !x.deleted && D.normalizePhone(x.phone) === D.normalizePhone(f.phone));
@@ -266,12 +266,87 @@ function customerForm(c) {
       callBefore: f.callBefore === '1', smsBefore: f.smsBefore === '1', smsAfter: f.smsAfter === '1', marketingConsent: !!f.marketingConsent, rememberNext: f.rememberNext.trim(), notes: f.notes });
     if (isNew) {
       c.id = S.uid('c'); db.customers.push(c);
-      const a = { id: S.uid('adr'), customerId: c.id, street: f.street.trim(), lat: null, lng: null, access: f.access || '' }; db.addresses.push(a);
+      const same = preset && f.street.trim() === preset.street;
+      const a = { id: S.uid('adr'), customerId: c.id, street: f.street.trim(), lat: same ? preset.lat : null, lng: same ? preset.lng : null, access: f.access || '' }; db.addresses.push(a);
       const err = saveAgreement(null, c.id, a.id, f); if (err) return err;
+      if (preset?.routeId && f.routeId === preset.routeId) { const r = route(preset.routeId); const o = (r.order || []).filter((x) => x !== a.id); const i = preset.afterAddressId ? o.indexOf(preset.afterAddressId) + 1 : 0; o.splice(i, 0, a.id); r.order = o; }
       ui.customer = c.id; ui.tab = 'kunder';
     }
     S.audit(db, ui.user.id, isNew ? 'customer.create' : 'customer.edit', c.id);
   });
+}
+/** "Hvor passer kunden ind?": billigste indsættelse i hver fast rute (luftlinje), de bedste regnes efter med Google. */
+function fitDialog() {
+  if (!db.settings.googleKey) return toast('Kræver Google-nøgle (Admin → Kørsel og Google Maps)');
+  openDlg(`<h2>📍 Hvor passer en ny kunde ind?</h2><label><span>Adresse</span><input name="street" required placeholder="Vej 1, 9870 Sindal" autofocus></label>
+    <label><span>Forventet tid hos kunden (min)</span><input name="dur" type="number" min="1" value="20" style="width:90px"></label><div id="fitOut"></div>`, async (f) => {
+    const out = document.getElementById('fitOut'); out.innerHTML = '<p class="mute">Finder adressen …</p>';
+    const [pt] = await DP.googleGeocode(db.settings.googleKey, [f.street.trim()]); if (!pt) return 'Google kunne ikke finde adressen – tjek stavning og postnr.';
+    const np = { ...pt, street: f.street.trim() }; const st = startPoint(); const km = (a, b) => (DP.km(a, b) ?? 50) * 1.3;
+    const cands = [];
+    for (const r of db.routes) {
+      const live = new Set(db.agreements.filter((a) => a.routeId === r.id && a.active !== false).map((a) => a.addressId));
+      const seq = [...(r.order || []).filter((id) => live.has(id)), ...[...live].filter((id) => !(r.order || []).includes(id))].map((id) => addr(id)).filter((a) => a?.lat != null);
+      if (!seq.length) continue;
+      const ends = st?.lat != null ? [st, ...seq, st] : seq; let best = null;
+      for (let i = 0; i <= ends.length - (st?.lat != null ? 2 : 0); i++) {
+        const prev = ends[i - 1], next = ends[i]; if (!prev && !next) continue;
+        const c = (prev ? km(prev, np) : 0) + (next ? km(np, next) : 0) - (prev && next ? km(prev, next) : 0);
+        if (!best || c < best.c) best = { c, pos: st?.lat != null ? i - 1 : i };
+      }
+      cands.push({ r, seq, ...best });
+    }
+    if (!cands.length) return 'Ingen ruter med koordinater – brug "Hent koordinater" under Admin først';
+    cands.sort((a, b) => a.c - b.c); const top = cands.slice(0, 4);
+    out.innerHTML = '<p class="mute">Beregner køretid med Google …</p>';
+    const res = [];
+    for (const x of top) {
+      const without = x.seq; const withNew = [...x.seq.slice(0, x.pos), np, ...x.seq.slice(x.pos)];
+      try { const [a, b] = await Promise.all([DP.googleDay(db.settings.googleKey, { start: st, stops: without, optimize: false }), DP.googleDay(db.settings.googleKey, { start: st, stops: withNew, optimize: false })]);
+        const sa = DP.sumLegs(a.legs), sb = DP.sumLegs(b.legs); res.push({ ...x, extraMin: Math.round((sb.sec - sa.sec) / 60), extraKm: (sb.m - sa.m) / 1000, driveMin: Math.round(sb.sec / 60) }); }
+      catch (e) { res.push({ ...x, error: e.message }); }
+    }
+    res.sort((a, b) => (a.extraMin ?? 999) - (b.extraMin ?? 999)); ui._fit = { np, dur: +f.dur || 20, res };
+    const work = (r) => db.agreements.filter((a) => a.routeId === r.id && a.active !== false).reduce((t, a) => t + (a.durationMin ?? 15), 0);
+    out.innerHTML = `<table><tr><th>Rute</th><th>Kører</th><th>Ekstra kørsel</th><th>Ny rutetid</th><th></th></tr>${res.map((x, i) => { const nd = D.nextRouteDate(x.r, todayIso());
+      const after = x.pos > 0 ? x.seq[x.pos - 1] : null;
+      return `<tr><td><b>${esc(x.r.name)}</b><div class="small mute">${after ? 'efter ' + esc(cust(after.customerId)?.name) : 'som første'}</div></td><td class="small">hver ${x.r.intervalWeeks}. uge${nd ? ' · næste ' + fmt(nd) : ''}<br>${esc(emp(x.r.employeeId)?.name || '')}</td>
+        <td>${x.error ? `<span class="warn-t small">${esc(x.error)}</span>` : `<b>+${x.extraMin} min</b><div class="small mute">+${x.extraKm.toFixed(1)} km</div>`}</td>
+        <td class="small">${x.error ? '' : D.hm(work(x.r) + (+f.dur || 20) + x.driveMin) + ' t'}</td><td><button type="button" class="${i === 0 ? 'pri' : ''}" data-act="fitPick" data-i="${i}">Opret kunde her</button></td></tr>`; }).join('')}</table>
+      <p class="small mute">Placeringen er der, hvor kunden giver mindst omvej i rutens faste rækkefølge. Ny rutetid = arbejde + kørsel (Google).</p>`;
+    return false;
+  }, 'Luk');
+  const ok = document.querySelector('#dlgBody button[value=ok]'); if (ok) ok.textContent = 'Find bedste rute';
+}
+/** Prisregulering med forhåndsvisning */
+function priceDialog() {
+  const d = new Date(); const next1 = new Date(d.getFullYear(), d.getMonth() + 1, 1); const iso = `${next1.getFullYear()}-${String(next1.getMonth() + 1).padStart(2, '0')}-01`;
+  openDlg(`<h2>💰 Prisregulering</h2>
+    <div class="row"><label><span>Ændring</span><input name="value" type="number" step="0.1" value="3" style="width:90px"></label><label><span>&nbsp;</span><select name="mode"><option value="pct">%</option><option value="kr">kr (ekskl. moms)</option></select></label>
+      <label><span>Afrunding</span><select name="round"><option value="1">hele kr</option><option value="5">nærmeste 5 kr</option><option value="0">ingen</option></select></label><label><span>Fra dato</span><input name="from" type="date" value="${iso}"></label></div>
+    <label><span>Gælder</span><select name="filter"><option value="all|">Alle aktive aftaler</option>${GROUPS.map((g) => `<option value="group|${esc(g)}">Kundegruppe: ${esc(g)}</option>`).join('')}${db.routes.map((r) => `<option value="route|${r.id}">Rute: ${esc(r.name)}</option>`).join('')}</select></label>
+    <div id="pvOut"></div>`, (f) => {
+    const opt = optsOf(f); const { rows } = S.priceAdjust(db, ui.user, opt); if (!rows.length) return 'Ingen aftaler ændres';
+    if (!confirm(`Ændr prisen på ${rows.length} aftaler fra ${fmt(opt.from)}? Planlagte besøg fra datoen får den nye pris.`)) return false;
+    const r = S.priceAdjust(db, ui.user, { ...opt, apply: true }); save();
+    toast(`${r.sum.n} aftaler og ${r.sum.visits} planlagte besøg opdateret`);
+    setTimeout(() => priceSmsDialog(r.rows, opt.from), 50);
+  });
+  const optsOf = (f) => { const [type, value] = String(f.filter).split('|'); return { mode: f.mode, value: Number(f.value) || 0, round: Number(f.round), from: f.from, filter: { type, value } }; };
+  const body = document.getElementById('dlgBody');
+  const pv = () => { const f = Object.fromEntries(new FormData(body)); const { rows, sum } = S.priceAdjust(db, ui.user, optsOf(f));
+    document.getElementById('pvOut').innerHTML = `<p><b>${sum.n}</b> aftaler · årlig omsætning <b>${kr(Math.round(sum.oldYear))}</b> → <b>${kr(Math.round(sum.newYear))}</b> (${sum.newYear >= sum.oldYear ? '+' : ''}${kr(Math.round(sum.newYear - sum.oldYear))})</p>
+      <div style="max-height:260px;overflow:auto"><table><tr><th>Kunde</th><th>Ydelse</th><th style="text-align:right">Før</th><th style="text-align:right">Efter</th></tr>${rows.slice(0, 200).map((r) => `<tr class="small"><td>${esc(r.c.name)}</td><td>${esc(r.a.service)}</td><td style="text-align:right">${kr(r.old)}</td><td style="text-align:right"><b>${kr(r.new)}</b></td></tr>`).join('')}</table></div>`; };
+  body.addEventListener('input', pv); pv();
+  const ok = body.querySelector('button[value=ok]'); if (ok) ok.textContent = 'Gennemfør';
+}
+function priceSmsDialog(rows, from) {
+  const byC = new Map(); for (const r of rows) if (D.normalizePhone(r.c.phone)) byC.set(r.c.id, [...(byC.get(r.c.id) || []), r]);
+  ui._smsList = [...byC.values()].map((rs) => { const c = rs[0].c; const pr = rs.map((r) => `${r.a.service}: ${kr(Math.round(r.new * 125) / 100)}`).join(', ');
+    return { c, text: `Hej ${c.name.split(' ')[0]}. Fra ${fmt(from)} ${from.slice(0, 4)} er prisen ${pr} inkl. moms. Har du spørgsmål, så ring endelig. Mvh. Sindal Vinduespolering` }; });
+  if (!ui._smsList.length) return;
+  openDlg(`<h2>Giv kunderne besked (${ui._smsList.length})</h2><p class="small mute">Tryk på hver kunde – telefonens SMS-app åbner med teksten. Ret teksten i SMS-appen, hvis du vil.</p>
+    ${ui._smsList.map((x, i) => `<div class="row" style="border-bottom:1px solid var(--line);padding:6px 0"><div class="sp"><b>${esc(x.c.name)}</b><div class="small mute">${esc(x.text)}</div></div><a class="btn pri" data-smsi="${i}" href="${smsLink(D.normalizePhone(x.c.phone), x.text)}">📱 Send</a></div>`).join('')}`, null, 'Luk');
 }
 function agreementFields(a) {
   return `<label><span>Ydelse</span><input name="service" value="${esc(a.service ?? 'Vinduespudsning ude')}"></label>
@@ -335,14 +410,14 @@ function alertsStrip() {
   return out.length ? `<div class="alerts">${out.join('')}</div>` : '';
 }
 /** Økonomi for en mængde besøg (som SkvizBiz' "Total for uge"). */
-function econ(vs, byRoute = false) {
+function econ(vs, byRoute = false, useGoogle = true) {
   const live = vs.filter((v) => v.status !== 'aflyst' && v.status !== 'forgaeves');
   const sum = live.reduce((s2, v) => s2 + D.visitTotal(v), 0); const min = mins(live);
   const groups = new Map(); for (const v of live) { const k = (v.routeId || '-') + '|' + v.plannedDate; groups.set(k, [...(groups.get(k) || []), v]); }
   let km = 0; for (const [, g] of groups) { const r = route(g[0].routeId); const o = r?.order || []; g.sort((a, b) => (o.indexOf(a.addressId) + 1 || 999) - (o.indexOf(b.addressId) + 1 || 999)); km += routeKm(g.map((v) => addr(v.addressId)).filter(Boolean)) * 1.3; }
   const prov = live.reduce((s2, v) => s2 + D.visitTotal(v) * ((v.split?.length ? v.split : defaultSplit(v)).reduce((t2, x) => t2 + x.pct, 0) / 100), 0);
   // Google-køretid pr. dag (samme som dagsplanen) eller pr. rute; skøn kun hvis Google mangler
-  let gSec = 0, gM = 0, gOk = !!db.settings.googleKey && live.length > 0, gWait = false;
+  let gSec = 0, gM = 0, gOk = useGoogle && !!db.settings.googleKey && live.length > 0, gWait = false;
   if (gOk) {
     const st = startPoint(); const parts = new Map();
     for (const v of live) { const k = byRoute ? v.routeId + '|' + v.plannedDate : v.plannedDate; parts.set(k, [...(parts.get(k) || []), v]); }
@@ -929,6 +1004,88 @@ function flushOutbox() {
   toast(conflicts.length ? `Synkroniseret ${n}, ${conflicts.length} konflikt(er): ${conflicts[0]}` : `Synkroniseret ${n} registrering(er)`);
 }
 
+/* ---------------- Økonomi: månedsoversigt ---------------- */
+const MDK = ['jan', 'feb', 'mar', 'apr', 'maj', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec'];
+const mLabel = (ym) => `${MDK[+ym.slice(5, 7) - 1]} ${ym.slice(0, 4)}`;
+const DONE = new Set(['udfoert', 'delvis']);
+/** Kørsel for en mængde besøg: gemt Google-dagsplan pr. dag hvor den findes, ellers skøn. */
+function driveOf(vs) {
+  const byDay = new Map(); for (const v of vs) byDay.set(v.plannedDate, [...(byDay.get(v.plannedDate) || []), v]);
+  let min = 0, km = 0, est = 0;
+  for (const [d, g] of byDay) { const p = db.dayPlans?.[d];
+    if (p?.legs && g.length === db.visits.filter((v) => v.plannedDate === d && v.status !== 'aflyst' && v.status !== 'forgaeves').length) { const t = DP.sumLegs(p.legs); min += t.sec / 60; km += t.m / 1000; }
+    else { const e = econ(g, false, false); min += e.drive; km += e.km; est++; } }
+  return { min: Math.round(min), km: Math.round(km), est };
+}
+function monthStats(vs) {
+  const live = vs.filter((v) => v.status !== 'aflyst' && v.status !== 'forgaeves'); const done = live.filter((v) => DONE.has(v.status));
+  const plan = live.filter((v) => v.status === 'planlagt' || v.status === 'udsat');
+  const rev = done.reduce((t, v) => t + D.visitTotal(v), 0); const planRev = plan.reduce((t, v) => t + D.visitTotal(v), 0);
+  const work = mins(done); const dr = driveOf(done);
+  return { n: done.length, nPlan: plan.length, rev, planRev, work, drive: dr.min, km: dr.km, est: dr.est, perHour: work + dr.min ? rev / ((work + dr.min) / 60) : 0 };
+}
+function okonomi() {
+  const t = todayIso(); const thisM = t.slice(0, 7);
+  const months = []; { const d = new Date(+thisM.slice(0, 4), +thisM.slice(5, 7) - 1, 1); for (let i = -11; i <= 2; i++) { const x = new Date(d.getFullYear(), d.getMonth() + i, 1); months.push(`${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}`); } }
+  ui.ecoMonth ||= thisM; const sel = ui.ecoMonth;
+  const inM = (ym) => db.visits.filter((v) => v.plannedDate.slice(0, 7) === ym);
+  const rows = months.map((ym) => ({ ym, ...monthStats(inM(ym)) }));
+  const max = Math.max(1, ...rows.map((r) => r.rev + r.planRev));
+  const rates = Object.fromEntries(db.employees.map((e) => [e.id, e.commissionRate ?? db.settings.commissionRate]));
+  const last = (ym) => { const [y, m] = ym.split('-').map(Number); return `${ym}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`; };
+  const com = D.commission(db.visits, { rates, from: sel + '-01', to: last(sel), inclVat: !!db.settings.commissionInclVat });
+  const sv = inM(sel); const byR = new Map(); for (const v of sv) byR.set(v.routeId || '', [...(byR.get(v.routeId || '') || []), v]);
+  const rRows = [...byR].map(([rid, vs]) => ({ r: route(rid), ...monthStats(vs) })).filter((x) => x.n || x.nPlan).sort((a, b) => b.rev + b.planRev - (a.rev + a.planRev));
+  const y = (k) => rows.filter((r) => r.ym.slice(0, 4) === thisM.slice(0, 4)).reduce((s2, r) => s2 + r[k], 0);
+  $view.innerHTML = `<div class="card"><div class="row"><h2 class="sp">Økonomi pr. måned</h2><span class="small mute">I år: <b>${kr(Math.round(y('rev')))}</b> udført · ${kr(Math.round(y('planRev')))} planlagt (ekskl. moms)</span></div>
+    <table class="eco"><tr><th>Måned</th><th></th><th style="text-align:right">Besøg</th><th style="text-align:right">Omsætning</th><th style="text-align:right" class="hide-m">Arbejde</th><th style="text-align:right" class="hide-m">Kørsel</th><th style="text-align:right">Oms./time</th></tr>
+    ${rows.map((r) => `<tr class="${r.ym === sel ? 'on' : ''}" data-act="ecoM" data-m="${r.ym}" style="cursor:pointer"><td><b>${mLabel(r.ym)}</b>${r.ym === thisM ? ' <span class="pill">nu</span>' : ''}</td>
+      <td class="barcell"><div class="bar"><span style="width:${(r.rev / max) * 100}%"></span><span class="plan" style="width:${(r.planRev / max) * 100}%"></span></div></td>
+      <td style="text-align:right">${r.n}${r.nPlan ? `<span class="mute small"> +${r.nPlan}</span>` : ''}</td><td style="text-align:right"><b>${kr(Math.round(r.rev))}</b>${r.planRev ? `<div class="small mute">+${kr(Math.round(r.planRev))} planlagt</div>` : ''}</td>
+      <td style="text-align:right" class="hide-m">${D.hm(r.work)}</td><td style="text-align:right" class="hide-m">${r.drive ? (r.est ? '≈ ' : '') + D.hm(r.drive) : '–'}</td><td style="text-align:right">${r.perHour ? kr(Math.round(r.perHour)) : '–'}</td></tr>`).join('')}</table>
+    <p class="small mute">Omsætning = udførte besøg (ekskl. moms). Lys bjælke = planlagt. Kørsel fra gemte Google-dagsplaner, ellers skøn (≈). Oms./time = omsætning / (arbejde + kørsel). Klik på en måned for detaljer.</p></div>
+  <div class="grid2"><div class="card"><h2>${mLabel(sel)} pr. rute</h2><table><tr><th>Rute</th><th style="text-align:right">Besøg</th><th style="text-align:right">Omsætning</th><th style="text-align:right">Oms./time</th></tr>
+    ${rRows.map((x) => `<tr><td>${esc(x.r?.name ?? 'Uden rute')}</td><td style="text-align:right">${x.n}${x.nPlan ? `<span class="mute small"> +${x.nPlan}</span>` : ''}</td><td style="text-align:right">${kr(Math.round(x.rev))}${x.planRev ? `<div class="small mute">+${kr(Math.round(x.planRev))}</div>` : ''}</td><td style="text-align:right">${x.perHour ? kr(Math.round(x.perHour)) : '–'}</td></tr>`).join('') || '<tr><td colspan="4" class="mute">Ingen besøg</td></tr>'}</table></div>
+  <div class="card"><h2>${mLabel(sel)} pr. medarbejder</h2><table><tr><th>Medarbejder</th><th style="text-align:right">Besøg</th><th style="text-align:right">Grundlag</th><th style="text-align:right">Provision</th></tr>
+    ${db.employees.filter((e) => com[e.id]).map((e) => `<tr><td>${esc(e.name)}</td><td style="text-align:right">${com[e.id].visits}</td><td style="text-align:right">${kr(Math.round(com[e.id].base))}</td><td style="text-align:right"><b>${kr(Math.round(com[e.id].commission))}</b></td></tr>`).join('') || '<tr><td colspan="4" class="mute">Ingen provision denne måned</td></tr>'}</table>
+    <p class="small mute">Provision efter satserne under Admin (udført arbejde${db.settings.commissionInclVat ? ' inkl.' : ' ekskl.'} moms).</p></div></div>`;
+}
+
+/* ---------------- Mig: medarbejderens egen side ---------------- */
+function mig() {
+  const me = ui.user.employeeId; const e = emp(me); const t = todayIso(); const ym = t.slice(0, 7);
+  const prevD = new Date(+ym.slice(0, 4), +ym.slice(5, 7) - 2, 1); const prev = `${prevD.getFullYear()}-${String(prevD.getMonth() + 1).padStart(2, '0')}`;
+  const rate = e?.commissionRate ?? db.settings.commissionRate; const rates = { [me]: rate };
+  const last = (m) => { const [y, mo] = m.split('-').map(Number); return `${m}-${String(new Date(y, mo, 0).getDate()).padStart(2, '0')}`; };
+  const mine = (v) => v.completion && (v.completion.by === me || (v.split || []).some((x) => x.employeeId === me));
+  const stat = (m) => { const vs = db.visits.filter((v) => DONE.has(v.status) && mine(v) && v.completion.at.slice(0, 7) === m);
+    const c = D.commission(vs, { rates, from: m + '-01', to: last(m), inclVat: !!db.settings.commissionInclVat })[me] || { visits: 0, base: 0, commission: 0 };
+    return { n: vs.length, min: mins(vs), base: c.base || vs.reduce((t2, v) => t2 + D.visitTotal(v) * (db.settings.commissionInclVat ? 1.25 : 1), 0), com: c.commission }; };
+  const a = stat(ym), b = stat(prev);
+  const myRoutes = db.routes.filter((r) => r.employeeId === me);
+  const up = []; for (let i = 0; i < 21 && up.length < 10; i++) { const d = D.addDays(t, i); for (const r of myRoutes) { const n = db.visits.filter((v) => v.routeId === r.id && v.plannedDate === d && (v.status === 'planlagt' || v.status === 'udsat')).length; if (n) up.push({ d, r, n }); } }
+  const card = (title, s2) => `<div class="card"><div class="mute">${title}</div><div class="kpi">${kr(Math.round(s2.com))}</div><div class="small">provision · ${s2.n} besøg · ${D.hm(s2.min)} t arbejde · grundlag ${kr(Math.round(s2.base))}</div></div>`;
+  $view.innerHTML = `<div class="card"><div class="row"><h2 class="sp">🙂 ${esc(e?.name || ui.user.name)}</h2><button data-act="chPw">Skift kodeord</button>${installBtn()}</div>
+      <p class="small mute">${ui.user.role === 'admin' ? 'Admin' : 'Medarbejder'}${rate ? ` · provision ${Math.round(rate * 1000) / 10} %` : ''}</p></div>
+    <div class="grid2">${card('Denne måned (' + mLabel(ym) + ')', a)}${card('Sidste måned (' + mLabel(prev) + ')', b)}</div>
+    <div class="card"><h2>Mine næste ruter</h2>${up.length ? `<table>${up.map((x) => `<tr><td>${fmt(x.d)}</td><td><b>${esc(x.r.name)}</b></td><td>${x.n} kunder</td></tr>`).join('')}</table>` : '<p class="mute">Ingen planlagte ruter de næste 3 uger.</p>'}</div>`;
+}
+
+/* ---------------- Installér som app ---------------- */
+let installEvt = null;
+if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvt = e; });
+window.addEventListener('appinstalled', () => { installEvt = null; toast('Appen er installeret'); });
+const isStandalone = () => window.matchMedia?.('(display-mode: standalone)').matches || navigator.standalone;
+const installBtn = () => (isStandalone() ? '' : '<button data-act="install">📲 Installér appen</button>');
+async function installApp() {
+  if (installEvt) { installEvt.prompt(); await installEvt.userChoice.catch(() => {}); installEvt = null; return; }
+  const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  openDlg(`<h2>📲 Installér appen</h2>${ios ? `<ol><li>Åbn siden i <b>Safari</b>.</li><li>Tryk på <b>Del</b>-knappen (firkant med pil op).</li><li>Vælg <b>"Føj til hjemmeskærm"</b> → <b>Tilføj</b>.</li></ol>`
+    : `<ol><li><b>Android/Chrome:</b> menuen ⋮ → <b>"Installér app"</b> eller <b>"Føj til startskærm"</b>.</li><li><b>Computer (Chrome/Edge/Brave):</b> ikonet ⊕ i adresselinjen eller menuen → <b>"Installér Sindal Vinduespolering"</b>.</li></ol>`}
+    <p class="small mute">Så åbner appen som en almindelig app uden adresselinje.</p>`, null, 'Luk');
+}
+
 /* ---------------- Fakturering ---------------- */
 function faktura() {
   const q = D.invoiceQueue(db.visits, db.invoiceLinks).sort((a, b) => a.completion.at.localeCompare(b.completion.at));
@@ -1112,6 +1269,8 @@ function admin() {
     <div class="grid"><label><span>Firmaets startadresse (her starter og slutter dagen)</span><input id="stAddr" value="${esc(db.settings.start?.address || '')}" placeholder="Vej 1, 9870 Sindal"></label>
       <label><span>Koordinater for startadresse (valgfrit, "57.47, 10.21" – højreklik i Google Maps)</span><input id="stLL" value="${db.settings.start?.lat != null ? db.settings.start.lat + ', ' + db.settings.start.lng : ''}"></label>
       <label><span>Google Maps API-nøgle (Routes API)</span><input id="gKey" type="password" value="${esc(db.settings.googleKey || '')}" placeholder="AIza…"></label></div>
+    ${(() => { const miss = db.addresses.filter((a) => a.lat == null && a.street && db.customers.some((c) => c.id === a.customerId && !c.deleted)).length + (db.settings.start?.address && db.settings.start.lat == null ? 1 : 0);
+      return `<div class="row" style="margin:6px 0"><span class="small">${miss ? `<b>${miss}</b> adresse${miss > 1 ? 'r' : ''} mangler koordinater (vises ikke på kort, skøn bliver forkert)` : '✓ Alle adresser har koordinater'}</span>${miss && db.settings.googleKey ? '<button data-act="geoMissing">📍 Hent koordinater fra Google</button>' : ''}</div>`; })()}
     <p class="small mute">Uden nøgle bruges et skøn (luftlinje × 1,3 ved 50 km/t). Med nøgle hentes rigtige køretider og optimal rækkefølge fra Google. Opret nøglen i Google Cloud, slå <b>Routes API</b> til, og begræns nøglen til <b>${esc(location.host || 'dit domæne')}</b>. Google tager betaling pr. beregning efter en gratis kvote – priser SKAL VERIFICERES. Nøglen gemmes kun i denne browser.</p></div>
   <div class="card"><h2>Medarbejdere</h2>
     <table><tr><th>Navn</th><th>Rolle</th><th>Provision %</th><th>Ruter</th><th></th></tr>${db.employees.filter((e) => !e.inactive).map((e) => `<tr><td><input data-ef="name" data-e="${e.id}" value="${esc(e.name)}"></td>
@@ -1120,6 +1279,7 @@ function admin() {
       <td class="small">${db.routes.filter((r) => r.employeeId === e.id).map((r) => esc(r.name)).join(', ') || '–'}</td><td><button class="bad" data-act="empDel" data-id="${e.id}">Fjern</button></td></tr>`).join('')}</table>
     <button data-act="empAdd" style="margin-top:8px">+ Medarbejder</button>
     <p class="small mute">Prototypen har ikke login endnu – brugeren vælges i topbjælken. Medarbejdere ser kun egne ruter og ingen økonomi.</p></div>
+  <div class="card"><div class="row"><h2 class="sp">Prisregulering</h2><button data-act="priceAdj">💰 Regulér priser …</button></div><p class="small mute">Hæv eller sænk prisen på alle aftaler, en kundegruppe eller en rute fra en bestemt dato – med forhåndsvisning og SMS til kunderne.</p></div>
   <div class="card"><h2>Ruter</h2>
     <table><tr><th>Navn</th><th>Medarbejder</th><th>Hver … uge</th><th>Næste dato</th></tr>${db.routes.map((r) => `<tr><td><input data-rf="name" data-r="${r.id}" value="${esc(r.name)}"></td><td><select data-rf="employeeId" data-r="${r.id}">${db.employees.filter((x) => !x.inactive).map((e) => `<option value="${e.id}" ${e.id === r.employeeId ? 'selected' : ''}>${esc(e.name)}</option>`).join('')}</select></td>
       <td><input type="number" min="1" max="52" data-rf="intervalWeeks" data-r="${r.id}" value="${r.intervalWeeks}" style="width:70px"></td><td><input type="date" data-rf="anchorDate" data-r="${r.id}" value="${D.nextRouteDate(r, todayIso())}"></td></tr>`).join('')}</table>
@@ -1186,6 +1346,12 @@ document.addEventListener('click', async (e) => {
     switch (act) {
       case 'back': ui.customer = null; break;
       case 'newCustomer': return customerForm();
+      case 'fitCustomer': return fitDialog();
+      case 'priceAdj': return priceDialog();
+      case 'ecoM': ui.ecoMonth = b.dataset.m; break;
+      case 'install': return installApp();
+      case 'fitPick': { const { np, dur, res } = ui._fit; const x = res[+b.dataset.i]; const after = x.pos > 0 ? x.seq[x.pos - 1] : null;
+        document.getElementById('dlg').close(); return customerForm(null, { street: np.street, lat: np.lat, lng: np.lng, routeId: x.r.id, afterAddressId: after?.id || null, afterName: after ? cust(after.customerId)?.name : null, durationMin: dur }); }
       case 'editCustomer': return customerForm(cust(id));
       case 'addAddress': return openDlg(`<h2>Ny adresse</h2><label><span>Adresse</span><input name="street" required></label><label><span>Adgangsforhold</span><input name="access"></label>`, (f) => { db.addresses.push({ id: S.uid('adr'), customerId: id, street: f.street, access: f.access, lat: null, lng: null }); });
       case 'addAgreement': { const adrs = db.addresses.filter((a) => a.customerId === id); return openDlg(`<h2>Ny serviceaftale</h2><label><span>Adresse</span><select name="addressId">${adrs.map((a) => `<option value="${a.id}">${esc(a.street)}</option>`).join('')}</select></label>${agreementFields({})}`, (f) => saveAgreement(null, id, f.addressId, f)); }
@@ -1317,6 +1483,14 @@ document.addEventListener('click', async (e) => {
         S.audit(db, ui.user.id, 'route.order', r.id, { n: ui._ord.length, start: so.type }); toast('Rutens faste rækkefølge er gemt'); break; }
       case 'rdFix': { const r = route(ui.route); const ids = routeStops(r.id, ui.day).map((v) => v.addressId); setOrder(ids); toast('Rutens faste rækkefølge opdateret'); break; }
       case 'rdReset': { const r = route(ui.route); setRouteDayOrder(ui.day, fixedRouteOrder(r, routeStops(r.id, ui.day)).map((v) => v.id)); toast('Dagen følger rutens faste rækkefølge'); break; }
+      case 'geoMissing': { const list = db.addresses.filter((a) => a.lat == null && a.street && db.customers.some((c) => c.id === a.customerId && !c.deleted));
+        const st = db.settings.start?.address && db.settings.start.lat == null ? db.settings.start : null;
+        const streets = [...(st ? [st.address] : []), ...list.map((a) => a.street)]; b.disabled = true;
+        try { const r = await DP.googleGeocode(db.settings.googleKey, streets, fetch, (n, t) => (b.textContent = `Henter … ${n}/${t}`));
+          let k = 0, ok = 0; if (st) { const p = r[k++]; if (p) { st.lat = p.lat; st.lng = p.lng; ok++; } }
+          for (const a of list) { const p = r[k++]; if (p) { a.lat = p.lat; a.lng = p.lng; ok++; } }
+          S.audit(db, ui.user.id, 'geo.fill', '-', { ok, of: streets.length }); toast(`${ok} af ${streets.length} adresser fik koordinater${ok < streets.length ? ' – resten kunne Google ikke finde (ret adressen)' : ''}`); }
+        catch (er) { toast(er.message); } break; }
       case 'calWeek': ui.calDay = null; ui.calPick = null; break;
       case 'toggleRouteMap': ui.hideRouteMap = !ui.hideRouteMap; break;
       case 'planGoogle': { const day = ui.planDay; const k = gKey(day + 'cur', ui._planOrder); if (ui._google) delete ui._google[k]; googleFor(k, [...ui._planOrder], { start: startPoint(), optimize: false }); break; }

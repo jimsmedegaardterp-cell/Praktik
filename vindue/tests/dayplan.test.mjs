@@ -46,3 +46,16 @@ test('Google: åben slut (slut ved sidste kunde) og vejrute returneres', async (
   assert.equal(calls[0].destination.location.latLng.latitude, some[4].lat, 'slutter ved sidste stop');
   assert.deepEqual(r.order, [0, 1, 2, 3, 4]); assert.equal(r.legs.length, 5, 'ingen hjemtur'); assert.deepEqual(r.polylines, ['abc']);
 });
+
+test('Koordinater: 26 adresser pr. kald; ukendt adresse slås op enkeltvis', async () => {
+  const streets = Array.from({ length: 30 }, (_, i) => 'Vej ' + i + ', 9870 Sindal'); streets[27] = 'UKENDT';
+  const calls = []; const pt = (s) => { const n = parseInt(s.address.split(' ')[1], 10); return { latLng: { latitude: 57 + n / 100, longitude: 10 } }; };
+  const fakeFetch = async (url, opt) => { const b = JSON.parse(opt.body); calls.push(b); const wps = [b.origin, ...b.intermediates, b.destination];
+    if (wps.some((w) => w.address?.startsWith('UKENDT'))) return { ok: false, status: 400, json: async () => ({ error: { message: 'Waypoint not found' } }) };
+    const legs = []; for (let i = 0; i < wps.length - 1; i++) legs.push({ startLocation: wps[i].address ? pt(wps[i]) : { latLng: { latitude: 0, longitude: 0 } }, endLocation: wps[i + 1].address ? pt(wps[i + 1]) : { latLng: { latitude: 1, longitude: 1 } } });
+    return { ok: true, json: async () => ({ routes: [{ legs }] }) }; };
+  const r = await DP.googleGeocode('K', streets, fakeFetch);
+  assert.equal(calls[0].intermediates.length, 24, 'første kald: 26 adresser');
+  assert.equal(r[0].lat, 57); assert.equal(r[25].lat, 57.25); assert.equal(r[26].lat, 57.26); assert.equal(r[29].lat, 57.29);
+  assert.equal(r[27], null, 'ukendt adresse mangler'); assert.equal(calls.length, 1 + 1 + 4, '1 bid OK, 1 bid fejlede → 4 enkeltopslag');
+});

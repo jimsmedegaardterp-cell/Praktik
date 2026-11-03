@@ -81,3 +81,31 @@ export async function googleDay(key, { start, end, stops, optimize: opt }, fetch
   }
   return { order, legs, polylines };
 }
+
+/* ---------------- Koordinater for adresser (via Routes API – samme nøgle) ----------------
+ * computeRoutes med adresser som stop returnerer start/slut-koordinat for hvert ben → op til 26 adresser pr. kald.
+ * Fejler en bid (fx en adresse Google ikke kender), slås adresserne op én ad gangen, så kun den ukendte mangler.
+ */
+const FALLBACK_DEST = { location: { latLng: { latitude: 57.4716, longitude: 10.2069 } } }; // Sindal – bruges ved enkeltopslag
+async function geoCall(key, waypoints, fetchFn) {
+  const [origin, ...rest] = waypoints; const single = !rest.length;
+  const destination = single ? FALLBACK_DEST : rest[rest.length - 1]; const intermediates = single ? [] : rest.slice(0, -1);
+  const res = await fetchFn('https://routes.googleapis.com/directions/v2:computeRoutes', { method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': key, 'X-Goog-FieldMask': 'routes.legs.startLocation,routes.legs.endLocation' },
+    body: JSON.stringify({ origin, destination, intermediates, travelMode: 'DRIVE', regionCode: 'dk', languageCode: 'da' }) });
+  const j = await res.json().catch(() => ({})); if (!res.ok) throw new Error('Google Maps: ' + (j.error?.message || res.status));
+  const legs = j.routes?.[0]?.legs || []; if (!legs.length) throw new Error('Google fandt ingen rute');
+  const ll = (p) => (p?.latLng ? { lat: p.latLng.latitude, lng: p.latLng.longitude } : null);
+  return single ? [ll(legs[0].startLocation)] : [...legs.map((l) => ll(l.startLocation)), ll(legs[legs.length - 1].endLocation)];
+}
+export async function googleGeocode(key, streets, fetchFn = fetch, onProgress) {
+  const out = streets.map(() => null); const wp = (s) => ({ address: s + ', Danmark' });
+  for (let i = 0; i < streets.length; i += 26) {
+    const idx = [...Array(Math.min(26, streets.length - i)).keys()].map((k) => i + k);
+    try { const r = await geoCall(key, idx.map((k) => wp(streets[k])), fetchFn); idx.forEach((k, n) => (out[k] = r[n])); }
+    catch (e) { if (/API key|PERMISSION|403/i.test(e.message)) throw e;
+      for (const k of idx) { try { out[k] = (await geoCall(key, [wp(streets[k])], fetchFn))[0]; } catch { out[k] = null; } } }
+    onProgress?.(Math.min(streets.length, i + 26), streets.length);
+  }
+  return out;
+}
