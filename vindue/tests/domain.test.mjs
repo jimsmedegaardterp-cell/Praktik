@@ -234,3 +234,17 @@ test('prisregulering: +3 % med afrunding, kun gruppe, planlagte besøg fra dato'
   assert.deepEqual(db.visits.filter((v) => v.agreementId === erh[0].id && v.plannedDate < '2027-01-01' && v.status === 'planlagt').map((v) => v.price), before, 'besøg før datoen uændret');
   assert.throws(() => S.priceAdjust(db, { id: 'u2', role: 'medarbejder' }, { value: 1, apply: true, from: '2027-01-01' }));
 });
+
+test('flyt aftaler til anden rute: nye datoer på rutens dage, ingen id-kollision, historik bevaret', async () => {
+  const { seedDb } = await import('../js/seed.js'); const S = await import('../js/services.js');
+  const db = seedDb('2026-11-02'); const admin = { id: 'u1', role: 'admin', employeeId: 'e1' };
+  const ag = db.agreements.find((a) => a.routeId === 'r1' && a.intervalWeeks === 4);
+  const done = db.visits.find((v) => v.agreementId === ag.id && v.status === 'planlagt'); S.registerVisit(db, admin, done.id, { result: 'udfoert', opId: 'x' });
+  const r = S.moveToRoute(db, admin, [ag.id], 'r2', '2026-11-03', '2027-03-01');
+  assert.equal(r.moved, 1); assert.equal(ag.routeId, 'r2');
+  const fut = db.visits.filter((v) => v.agreementId === ag.id && v.status === 'planlagt' && v.plannedDate >= '2026-11-03');
+  assert.ok(fut.length >= 3); assert.ok(fut.every((v) => v.routeId === 'r2' && D.routeRuns(db.routes.find((x) => x.id === 'r2'), v.rhythmDate)), 'på rutens dage');
+  assert.equal(new Set(db.visits.map((v) => v.id)).size, db.visits.length, 'unikke id');
+  assert.equal(db.visits.find((v) => v.id === done.id).status, 'udfoert', 'udført besøg bevaret');
+  assert.equal(db.routes.find((x) => x.id === 'r2').order.slice(-1)[0], ag.addressId);
+});

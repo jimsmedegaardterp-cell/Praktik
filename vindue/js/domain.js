@@ -65,7 +65,7 @@ export function generateVisits(agreement, fromIso, toIso_, existing = [], extraC
     const r = rhythmDate(agreement, k);
     if (r > toIso_) break;
     if (!inSeason(agreement, r)) continue;
-    const id = `${agreement.id}#${k}`;
+    const id = `${agreement.idPrefix || agreement.id}#${k}`; // idPrefix sættes når rytmen/startdatoen ændres, så nye besøg ikke får gamle besøgs id
     if (have.has(id)) continue;
     out.push({
       id, agreementId: agreement.id, customerId: agreement.customerId, addressId: agreement.addressId,
