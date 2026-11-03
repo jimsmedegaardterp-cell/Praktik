@@ -14,7 +14,7 @@ import { SUPABASE } from './config.js';
 import { showRouteMap } from './map.js';
 import * as KV from './store.js';
 
-export const VERSION = '2026-11-03 #52';
+export const VERSION = '2026-11-03 #53';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -813,7 +813,7 @@ function dagsplan() {
 }
 
 /* ---------------- Rutens faste rækkefølge: optimér, træk, kort ---------------- */
-function routeOrderView(r, head) {
+function routeOrderView(r, head, master = false) {
   const live = new Set(db.agreements.filter((a) => a.routeId === r.id && a.active !== false).map((a) => a.addressId));
   const base = [...(r.order || []).filter((id) => live.has(id)), ...[...live].filter((id) => !(r.order || []).includes(id))];
   if (ui._ordFor !== r.id) { ui._ordFor = r.id; ui._ord = base; ui._ordStart = r.optStart || (startPoint() ? { type: 'home' } : { type: 'stop', id: base[0] }); ui._ordEnd = r.optEnd || 'back'; }
@@ -831,7 +831,7 @@ function routeOrderView(r, head) {
   const sum = DP.sumLegs(legs); const work = db.agreements.filter((a) => a.routeId === r.id && a.active !== false).reduce((t, a) => t + (a.durationMin ?? 15), 0);
   const changed = JSON.stringify(ui._ord) !== JSON.stringify(base);
   const name = (id) => { const c = cust(A(id).customerId); return c?.name || '?'; };
-  $view.innerHTML = head + `<div class="card"><div class="row"><h2 class="sp">Rækkefølge – ${esc(r.name)}</h2>${changed ? '<span class="pill warn">Ikke gemt</span>' : '<span class="pill ok">Gemt</span>'}</div>
+  $view.innerHTML = head + `<div class="card"><div class="row"><h2 class="sp">${master ? `${esc(r.name)} <span class="mute small">· ${ui._ord.length} adresser · hver ${r.intervalWeeks}. uge · ${esc(emp(r.employeeId)?.name || '')}</span>` : 'Rækkefølge – ' + esc(r.name)}</h2>${changed ? '<span class="pill warn">Ikke gemt</span>' : '<span class="pill ok">Gemt</span>'}</div>
     <div class="grid" style="margin:8px 0">
       <label><span>Start</span><select id="ordStart"><option value="home" ${so.type === 'home' ? 'selected' : ''} ${startPoint() ? '' : 'disabled'}>Firmaets adresse${startPoint() ? ' – ' + esc(startPoint().street) : ' (ikke sat)'}</option>
         <option value="stop" ${so.type === 'stop' ? 'selected' : ''}>En bestemt kunde først …</option><option value="custom" ${so.type === 'custom' ? 'selected' : ''}>Anden adresse …</option></select></label>
@@ -843,8 +843,12 @@ function routeOrderView(r, head) {
     <div id="ordMap" class="map"></div>
     <div class="toolbar"><button data-act="ordOpt" ${useG ? '' : 'disabled title="Kræver Google-nøgle (Admin → Kørsel)"'}>✨ Optimér med Google</button><span class="small mute">Træk i ⋮⋮ for at flytte en kunde.</span><span class="sp"></span>
       ${changed ? '<button data-act="ordReset">Fortryd</button>' : ''}<button class="pri" data-act="ordSave" ${changed || JSON.stringify(so) !== JSON.stringify(r.optStart || null) || ui._ordEnd !== (r.optEnd || 'back') ? '' : 'disabled'}>Gem som fast rækkefølge</button></div>
+    ${master && ui.ordSel?.size ? `<div class="row selbar card" style="margin:6px 0"><b>${ui.ordSel.size} valgt</b><button data-act="ordMove">🗺 Flyt til anden rute …</button><button class="small" data-act="ordSelClear">Ryd valg</button></div>` : ''}
     <ol class="sortlist" id="ordList">${ui._ord.map((id, i) => { const a = A(id); const leg = fixedFirst && i === 0 ? null : legs[fixedFirst ? i - 1 : i];
-      return `<li data-id="${id}" class="${id === fixedFirst ? 'fixed' : ''}"><span class="handle" title="Træk">⋮⋮</span><span class="num">${i + 1}</span><div class="sp"><b>${esc(name(id))}</b><div class="small">${esc(a.street)}</div>${leg?.sec != null ? `<div class="small mute">🚗 ${Math.round(leg.sec / 60)} min · ${(leg.m / 1000).toFixed(1)} km hertil</div>` : ''}</div>${id === fixedFirst ? '<span class="pill">start</span>' : ''}</li>`; }).join('')}</ol>
+      const ags = master ? db.agreements.filter((g) => g.addressId === id && g.routeId === r.id && g.active !== false) : [];
+      const nv = master ? db.visits.filter((v) => v.addressId === id && v.routeId === r.id && v.status === 'planlagt' && v.plannedDate >= todayIso()).map((v) => v.plannedDate).sort()[0] : null;
+      return `<li data-id="${id}" class="${id === fixedFirst ? 'fixed' : ''} ${ui.ordSel?.has(id) ? 'ksel' : ''}"><span class="handle" title="Træk">⋮⋮</span>${master ? `<input type="checkbox" data-osel="${id}" ${ui.ordSel?.has(id) ? 'checked' : ''}>` : ''}<span class="num">${i + 1}</span><div class="sp"><b><a href="#" data-cust="${a.customerId}">${esc(name(id))}</a></b><div class="small">${esc(a.street)}</div>${leg?.sec != null ? `<div class="small mute">🚗 ${Math.round(leg.sec / 60)} min · ${(leg.m / 1000).toFixed(1)} km hertil</div>` : ''}</div>
+        ${master ? `<div class="small" style="text-align:right;min-width:180px">${ags.map((g) => `${esc(g.service)} · ${kr(g.price)} · ${D.hm(g.durationMin ?? 15)}<br><span class="mute">${g.intervalWeeks ? 'hver ' + g.intervalWeeks + '. uge' : 'ikke fast'}</span>`).join('<br>')}${nv ? `<br><span class="mute">næste ${fmt(nv)}</span>` : ''}</div>` : ''}${id === fixedFirst ? '<span class="pill">start</span>' : ''}</li>`; }).join('')}</ol>
     <p class="small mute">Gemmes som rutens faste rækkefølge (bruges på alle fremtidige dage). En enkelt dag ændres i stedet under dagsplanen (🗺 på dagen).</p></div>`;
   makeSortable(document.getElementById('ordList'), (order) => { ui._ord = order; if (fixedFirst && order[0] !== fixedFirst) ui._ordStart = { type: 'stop', id: order[0] }; render(); });
   const set = () => render();
@@ -920,6 +924,19 @@ const splitTxt = (sp) => sp.length ? sp.map((x) => `${esc(emp(x.employeeId)?.nam
 function ruter() {
   if (!ui.route || !route(ui.route)) return ruteOversigt();
   const r = route(ui.route);
+  if (ui.routeMaster) {
+    const nd = nextRouteDay(r, todayIso());
+    const mh = `<div class="card noprint"><div class="row"><button data-act="routesAll">← Alle ruter</button><select id="rselM">${db.routes.map((x) => `<option value="${x.id}" ${x.id === r.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select><span class="sp"></span>
+      ${nd ? `<button data-route="${r.id}" data-day="${nd}">📋 Næste gang (${fmt(nd)}): færdigmeld / ruteseddel</button>` : ''}</div>
+      <div class="row small" style="margin-top:8px"><label>Navn <input data-rf="name" data-r="${r.id}" value="${esc(r.name)}" style="width:160px"></label>
+        <label>Medarbejder <select data-rf="employeeId" data-r="${r.id}">${db.employees.filter((x) => !x.inactive).map((e) => `<option value="${e.id}" ${e.id === r.employeeId ? 'selected' : ''}>${esc(e.name)}</option>`).join('')}</select></label>
+        <label>Hver <input type="number" min="1" max="52" data-rf="intervalWeeks" data-r="${r.id}" value="${r.intervalWeeks}" style="width:60px"> uge</label>
+        <label>Næste dato <input type="date" data-rf="anchorDate" data-r="${r.id}" value="${D.nextRouteDate(r, todayIso()) || ''}"></label></div></div>`;
+    routeOrderView(r, mh, true);
+    document.getElementById('rselM').onchange = (e) => { ui.route = e.target.value; ui._ordFor = null; ui.ordSel = new Set(); render(); };
+    $view.querySelectorAll('[data-rf]').forEach((el) => (el.onchange = () => { const rr = route(el.dataset.r); const f = el.dataset.rf; rr[f] = f === 'intervalWeeks' ? Math.max(1, +el.value || 1) : el.value; if (f === 'anchorDate') delete rr.anchorUnknown; S.audit(db, ui.user.id, 'route.edit', rr.id, { [f]: rr[f] }); save(); render(); }));
+    return;
+  }
   if (!routeStops(r.id, ui.day).length && ui._routeDayFor !== r.id + ui.day) { ui.day = nextRouteDay(r) || ui.day; ui._routeDayFor = r.id + ui.day; };
   const day = ui.day; const key = r.id + '|' + day;
   const stops = routeStops(r.id, day); const pts = stops.map((v) => addr(v.addressId));
@@ -1014,7 +1031,7 @@ function ruteOversigt() {
     <p class="small mute">Belastning pr. dag de næste 12 måneder (mørkere = flere besøg).</p></div>
   <div class="card">${db.settings.googleKey ? `<div class="row small" style="margin-bottom:6px"><span class="sp mute">Kørsel = Google Maps for næste gang ruten kører (fra startadressen og hjem). Gemmes på enheden.</span><button class="small" data-act="routesRegoogle">🔄 Genberegn alle køretider</button></div>` : '<p class="small mute">Sæt en Google-nøgle under Admin for at se rigtige køretider.</p>'}
     <table class="clickable"><tr><th>Rutenavn</th><th>Medarbejder</th><th>Rytme</th><th>Størrelse</th><th>Næste</th><th style="text-align:right">Oms./år</th><th style="text-align:right">Inkl. moms</th><th>Arbejde</th><th>Kørsel</th><th>I alt</th><th style="text-align:right" title="Omsætning næste gang / (arbejde + kørsel)">Oms./time</th><th style="text-align:right" title="${WAGE_TIP}">Timeløn</th></tr>
-    ${rows.map((x) => `<tr data-route="${x.r.id}"><td><b>${esc(x.r.name)}</b></td><td>${esc(emp(x.r.employeeId)?.name)}</td><td>hver ${x.r.intervalWeeks}. uge</td><td>${x.n} kunder</td><td>${(() => { const op = openPastDay(x.r); return op ? `<span style="color:var(--bad)">${fmt(op)} ${op.slice(0, 4)} – åbne besøg</span><br>` : ''; })()}${x.r.anchorUnknown ? '<span style="color:var(--bad)">ukendt – sæt dato under Admin</span>' : x.next ? fmt(x.next) + ' ' + x.next.slice(0, 4) : '–'}</td><td style="text-align:right">${kr(Math.round(x.year))}</td><td style="text-align:right">${kr(Math.round(x.year * 1.25))}</td><td>${D.hm(x.min)}</td><td>${x.drive ? `${D.hm(Math.round(x.drive.sec / 60))} <span class="small mute">${Math.round(x.drive.m / 1000)} km</span>` : x.gErr ? '<span class="warn-t small">fejl</span>' : x.ids.length && db.settings.googleKey ? '<span class="mute small">henter …</span>' : '–'}</td><td><b>${x.drive ? D.hm(x.min + Math.round(x.drive.sec / 60)) : D.hm(x.min)}</b></td>${(() => { const h = (x.min + (x.drive ? x.drive.sec / 60 : 0)) / 60; return `<td style="text-align:right">${h && x.nRev ? kr(Math.round(x.nRev / h)) : '–'}</td><td style="text-align:right">${h && x.nRev ? kr(Math.round(x.nRev * x.nRate / h)) : '–'}</td>`; })()}</tr>`).join('')}
+    ${rows.map((x) => `<tr data-routemaster="${x.r.id}"><td><b>${esc(x.r.name)}</b></td><td>${esc(emp(x.r.employeeId)?.name)}</td><td>hver ${x.r.intervalWeeks}. uge</td><td>${x.n} kunder</td><td>${(() => { const op = openPastDay(x.r); return op ? `<span style="color:var(--bad)">${fmt(op)} ${op.slice(0, 4)} – åbne besøg</span><br>` : ''; })()}${x.r.anchorUnknown ? '<span style="color:var(--bad)">ukendt – sæt dato under Admin</span>' : x.next ? fmt(x.next) + ' ' + x.next.slice(0, 4) : '–'}</td><td style="text-align:right">${kr(Math.round(x.year))}</td><td style="text-align:right">${kr(Math.round(x.year * 1.25))}</td><td>${D.hm(x.min)}</td><td>${x.drive ? `${D.hm(Math.round(x.drive.sec / 60))} <span class="small mute">${Math.round(x.drive.m / 1000)} km</span>` : x.gErr ? '<span class="warn-t small">fejl</span>' : x.ids.length && db.settings.googleKey ? '<span class="mute small">henter …</span>' : '–'}</td><td><b>${x.drive ? D.hm(x.min + Math.round(x.drive.sec / 60)) : D.hm(x.min)}</b></td>${(() => { const h = (x.min + (x.drive ? x.drive.sec / 60 : 0)) / 60; return `<td style="text-align:right">${h && x.nRev ? kr(Math.round(x.nRev / h)) : '–'}</td><td style="text-align:right">${h && x.nRev ? kr(Math.round(x.nRev * x.nRate / h)) : '–'}</td>`; })()}</tr>`).join('')}
     <tr><td colspan="5"><b>Total</b></td><td style="text-align:right"><b>${kr(Math.round(tot))}</b></td><td style="text-align:right"><b>${kr(Math.round(tot * 1.25))}</b></td><td colspan="5"></td></tr></table>
     <p class="small mute">Oms./år er beregnet ud fra aftalernes pris, interval og sæson.</p></div>`;
 }
@@ -1394,6 +1411,7 @@ function openDlg(html, onSubmit, closeLabel = 'Annuller') {
 /* ---------------- Hændelser ---------------- */
 document.addEventListener('click', async (e) => {
   const tab = e.target.closest('[data-tab]'); if (tab) { ui.tab = tab.dataset.tab; ui.customer = null; return render(); }
+  const os = e.target.closest('[data-osel]'); if (os) { ui.ordSel ||= new Set(); const id = os.dataset.osel; ui.ordSel.has(id) ? ui.ordSel.delete(id) : ui.ordSel.add(id); return render(); }
   const ks = e.target.closest('[data-ksel]'); if (ks) { ui.kSel ||= new Set(); const id = ks.dataset.ksel;
     if (id === '__all') { const all = (ui._kRows || []).every((x) => ui.kSel.has(x)); for (const x of ui._kRows || []) all ? ui.kSel.delete(x) : ui.kSel.add(x); }
     else ui.kSel.has(id) ? ui.kSel.delete(id) : ui.kSel.add(id); return render(); }
@@ -1412,7 +1430,8 @@ document.addEventListener('click', async (e) => {
     vdraft()[id] = { ...d, result: d.result === val ? 'aaben' : val }; save(); return render(); }
   const sl = e.target.closest('[data-smsi]'); if (sl) { const x = ui._smsList[+sl.dataset.smsi]; logManualSms(x.c, x.text, x.v && x.text.includes('i morgen') ? 'varsel:' + x.v.id : undefined); sl.textContent = '✓ Sendt'; sl.classList.remove('pri'); return; }
   const vs_ = e.target.closest('[data-varsel]'); if (vs_) { const v = db.visits.find((x) => x.id === vs_.dataset.varsel); const c = cust(v.customerId); logManualSms(c, vs_.dataset.text, 'varsel:' + v.id); setTimeout(render, 300); return; }
-  const rt = e.target.closest('[data-route]'); if (rt) { document.getElementById('dlg').open && document.getElementById('dlg').close(); ui.tab = 'ruter'; ui.routeMode = 'fm'; if (rt.dataset.showmap) ui.hideRouteMap = false; ui.sel = new Set(); ui.route = rt.dataset.route; ui.day = rt.dataset.day || nextRouteDay(route(ui.route)) || todayIso(); return render(); }
+  const rmx = e.target.closest('[data-routemaster]'); if (rmx) { ui.tab = 'ruter'; ui.route = rmx.dataset.routemaster; ui.routeMaster = true; ui._ordFor = null; ui.ordSel = new Set(); return render(); }
+  const rt = e.target.closest('[data-route]'); if (rt) { ui.routeMaster = false; document.getElementById('dlg').open && document.getElementById('dlg').close(); ui.tab = 'ruter'; ui.routeMode = 'fm'; if (rt.dataset.showmap) ui.hideRouteMap = false; ui.sel = new Set(); ui.route = rt.dataset.route; ui.day = rt.dataset.day || nextRouteDay(route(ui.route)) || todayIso(); return render(); }
   const ch = e.target.closest('.vline[data-visit]'); if (ch) return visitDialog(ch.dataset.visit);
   const b = e.target.closest('[data-act]'); if (!b) return;
   const id = b.dataset.id; const act = b.dataset.act;
@@ -1569,6 +1588,12 @@ document.addEventListener('click', async (e) => {
           S.audit(db, ui.user.id, 'geo.fill', '-', { ok, of: streets.length }); toast(`${ok} af ${streets.length} adresser fik koordinater${ok < streets.length ? ' – resten kunne Google ikke finde (ret adressen)' : ''}`); }
         catch (er) { toast(er.message); } break; }
       case 'routesRegoogle': { const c = ui._google || {}; for (const { k } of ui._ovKeys || []) delete c[k]; toast('Henter køretider fra Google …'); break; }
+      case 'ordSelClear': ui.ordSel = new Set(); break;
+      case 'ordMove': { const r = route(ui.route); const ags = db.agreements.filter((a) => a.routeId === r.id && a.active !== false && ui.ordSel?.has(a.addressId));
+        return openDlg(`<h2>Flyt ${ui.ordSel.size} adresser fra ${esc(r.name)}</h2><label><span>Til rute</span><select name="to">${db.routes.filter((x) => x.id !== r.id).map((x) => `<option value="${x.id}">${esc(x.name)} (hver ${x.intervalWeeks}. uge · næste ${fmt(D.nextRouteDate(x, todayIso()) || todayIso())})</option>`).join('')}</select></label>
+          <p class="small">${ags.length} aftaler. Fremtidige besøg planlægges om på den nye rutes dage; udførte besøg røres ikke.</p>`, (f) => {
+          const res = S.moveToRoute(db, ui.user, ags.map((a) => a.id), f.to, todayIso(), D.addDays(todayIso(), 120)); r.order = (r.order || []).filter((x) => !ui.ordSel.has(x)); ui.ordSel = new Set(); ui._ordFor = null;
+          toast(`${res.moved} aftaler flyttet til ${route(f.to).name} · ${res.visits} besøg fra ${fmt(res.anchor)}`); }); }
       case 'calWeek': ui.calDay = null; ui.calPick = null; break;
       case 'toggleRouteMap': ui.hideRouteMap = !ui.hideRouteMap; break;
       case 'planGoogle': { const day = ui.planDay; const k = gKey(day + 'cur', ui._planOrder); if (ui._google) delete ui._google[k]; googleFor(k, [...ui._planOrder], { start: startPoint(), optimize: false }); break; }
@@ -1617,7 +1642,7 @@ document.addEventListener('click', async (e) => {
       case 'addRoute': db.routes.push({ id: S.uid('r'), name: `Ny rute ${db.routes.length + 1}`, employeeId: db.employees[0].id, intervalWeeks: 4, anchorDate: D.nextWorkday(todayIso()) }); break;
       case 'bookVisit': { const a = db.agreements.find((x) => x.id === id); return openDlg(`<h2>Book besøg – ${esc(cust(a.customerId).name)}</h2><p class="small">${esc(a.service)} · ${esc(addr(a.addressId)?.street)}</p><label><span>Dato</span><input type="date" name="date" required value="${D.nextWorkday(D.addDays(todayIso(), 1), db.closedDays)}"></label><label><span>Rute (valgfri)</span><select name="routeId"><option value="">Ingen</option>${db.routes.map((r) => `<option value="${r.id}" ${r.id === a.routeId ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</select></label>`, (f) => { const v = D.manualVisit(a, f.date, db.visits); v.routeId = f.routeId || null; db.visits.push(v); S.audit(db, ui.user.id, 'visit.book', v.id); toast('Besøg booket'); }); }
       case 'print': window.print(); return;
-      case 'routesAll': ui.route = null; ui.sel = new Set(); ui.tab = 'kunder'; ui.kView = 'ruter'; break;
+      case 'routesAll': ui.routeMaster = false; ui.route = null; ui.sel = new Set(); ui.tab = 'kunder'; ui.kView = 'ruter'; break;
       case 'backup': db.settings.lastBackupAt = new Date().toISOString(); download(`sindal-vinduespolering-backup-${todayIso()}.json`, db); S.audit(db, ui.user.id, 'backup.export', '-'); toast('Backup downloadet – gem filen et sikkert sted (den indeholder kundedata)'); break;
       case 'driftOk': (db.settings.driftDone ||= {})[b.dataset.id] = new Date().toISOString(); break;
       case 'planMore': toast(`${S.planAhead(db, D.addDays(todayIso(), 183))} nye besøg planlagt`); break;
