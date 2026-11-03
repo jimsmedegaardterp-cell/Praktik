@@ -14,7 +14,7 @@ import { SUPABASE } from './config.js';
 import { showRouteMap } from './map.js';
 import * as KV from './store.js';
 
-export const VERSION = '2026-11-03 #48';
+export const VERSION = '2026-11-03 #49';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -857,6 +857,14 @@ function skipOptions(v, d) {
   return o.map(([k, t]) => `<option value="${k}" ${k === (d.skip || 'skip') ? 'selected' : ''}>${esc(t)}</option>`).join('');
 }
 const PAYICON = { bank: '✉', mobilepay: '📱', betalingsservice: 'BS', kontant: '💰' };
+/** Ekstra opgave på et besøg (kommer med på fakturaen) */
+function extraDialog(id) {
+  return openDlg(`<h2>Ekstra opgave – ${esc(cust(db.visits.find((v) => v.id === id).customerId).name)}</h2>
+          <label><span>Opgave</span><input name="text" required placeholder="Fx kælderruder, ovenlys, tagrende …"></label><label><span>Pris ekskl. moms</span><input name="price" type="number" min="0" step="1" required></label><p class="small mute">Kommer med på fakturaen, når besøget færdigmeldes.</p>`,
+        (f) => { const d = vdraft()[id] || {}; vdraft()[id] = { ...d, extras: [...(d.extras || []), { text: f.text.trim(), price: Number(f.price) || 0 }] }; });
+}
+/** Opgaver kunden har aftaler på (samme adresse først) + besøgets egen. */
+const custServices = (v) => [...new Set([v.service, ...db.agreements.filter((a) => a.customerId === v.customerId && a.active !== false).sort((a, b) => (b.addressId === v.addressId) - (a.addressId === v.addressId)).map((a) => a.service)].filter(Boolean))];
 const services = () => [...new Set(db.agreements.map((a) => a.service).concat(['Vinduesvask', 'Vinduesvask + rammer', 'Tagrender', 'Solceller', 'Ekstra opgave']))];
 function defaultSplit(v) { const r = route(v.routeId); const e = emp(r?.employeeId); const pct = Math.round((e?.commissionRate ?? db.settings.commissionRate) * 1000) / 10; return e && pct ? [{ employeeId: e.id, pct }] : []; }
 const splitTxt = (sp) => sp.length ? sp.map((x) => `${esc(emp(x.employeeId)?.name.split(' ')[0])} ${x.pct}%`).join(', ') : 'Firma 100%';
@@ -902,7 +910,7 @@ function ruter() {
         <td>${done ? `<span class="pill ${v.status === 'udfoert' || v.status === 'delvis' ? 'ok' : 'warn'}">${esc(doneLabel(v))}</span>` : statusSeg(v, res)}
           ${!done && res === 'kontant' ? `<div class="sub"><input type="number" min="0" step="1" class="cash" data-cash="${v.id}" value="${d.cashAmount ?? ''}" placeholder="${kr(Math.round(D.visitTotal({ ...v, extras: d.extras }) * 1.25))}"> <span class="small mute">kontant</span></div>` : ''}
           ${!done && res === 'spring' ? `<div class="sub"><select data-skip="${v.id}">${skipOptions(v, d)}</select>${d.skip === 'move' || d.skip === 'shift' ? `<input type="date" data-mdate="${v.id}" value="${d.moveDate || ''}">` : ''}</div>` : ''}</td>
-        <td class="hide-m">${done ? `<span class="small">${esc(v.service)} · ${kr(D.visitTotal(v))}</span>` : `<select data-svc="${v.id}">${[...new Set([d.service || v.service, ...services()])].map((x) => `<option value="${esc(x)}" ${x === (d.service || v.service) ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select><div class="small mute">${kr(v.price)} · ${D.hm(v.durationMin ?? 15)}</div>`}</td>
+        <td class="hide-m">${done ? `<span class="small">${esc(v.service)} · ${kr(D.visitTotal(v))}</span>` : `<select data-svc="${v.id}">${[...new Set([d.service || v.service, ...custServices(v)])].map((x) => `<option value="${esc(x)}" ${x === (d.service || v.service) ? 'selected' : ''}>${esc(x)}</option>`).join('')}<option value="__extra">+ Opret ekstra opgave …</option></select><div class="small mute">${kr(v.price)} · ${D.hm(v.durationMin ?? 15)}</div>`}</td>
         <td class="hide-m small"><a href="#" data-act="fmSplitOne" data-id="${v.id}">${splitTxt(sp)}</a></td></tr>`; }).join('')}</tbody></table>${dayDiff}
     <div class="toolbar" style="margin-top:12px"><div class="cashbox">💰 Kontant i alt <b>${kr(stops.reduce((s, v) => { const d = dr[v.id] || {}; return s + (v.completion?.cashAmount || (d.result === 'kontant' ? (d.cashAmount ?? Math.round(D.visitTotal({ ...v, extras: d.extras }) * 125) / 100) : 0)); }, 0))}</b></div><span class="sp"></span>
       <button data-act="fmSave">Gem til senere</button><button class="pri" data-act="fmCommit">✓ Gem og færdigmeld</button></div>
@@ -921,7 +929,7 @@ function ruter() {
   $view.querySelectorAll('[data-cash]').forEach((x) => (x.onchange = () => { upd(x.dataset.cash, { cashAmount: x.value === '' ? null : +x.value, ...(x.value ? { result: 'kontant' } : {}) }); render(); }));
   $view.querySelectorAll('[data-skip]').forEach((x) => (x.onchange = () => { upd(x.dataset.skip, { skip: x.value }); render(); }));
   $view.querySelectorAll('[data-mdate]').forEach((x) => (x.onchange = () => { upd(x.dataset.mdate, { moveDate: x.value }); save(); }));
-  $view.querySelectorAll('[data-svc]').forEach((x) => (x.onchange = () => { upd(x.dataset.svc, { service: x.value }); save(); }));
+  $view.querySelectorAll('[data-svc]').forEach((x) => { const prev = x.value; x.onchange = () => { if (x.value === '__extra') { x.value = prev; return extraDialog(x.dataset.svc); } upd(x.dataset.svc, { service: x.value }); save(); }; });
   ui._stops = stops; ui._sug = sug.order; ui._draftKey = key;
   makeSortable(document.getElementById('rdList'), (ids) => { setRouteDayOrder(day, ids); render(); });
 }
@@ -1427,9 +1435,7 @@ document.addEventListener('click', async (e) => {
         if (!d) { d = D.addDays(ui.day, dir); for (let i = 0; i < 400 && !D.routeRuns(r, d); i++) d = D.addDays(d, dir); }
         ui.day = d; ui._routeDayFor = r.id + d; break; }
       case 'rmode': ui.routeMode = b.dataset.m; break;
-      case 'extraAdd': return openDlg(`<h2>Ekstra opgave – ${esc(cust(db.visits.find((v) => v.id === id).customerId).name)}</h2>
-          <label><span>Opgave</span><input name="text" required placeholder="Fx kælderruder, ovenlys, tagrende …"></label><label><span>Pris ekskl. moms</span><input name="price" type="number" min="0" step="1" required></label><p class="small mute">Kommer med på fakturaen, når besøget færdigmeldes.</p>`,
-        (f) => { const d = vdraft()[id] || {}; vdraft()[id] = { ...d, extras: [...(d.extras || []), { text: f.text.trim(), price: Number(f.price) || 0 }] }; });
+      case 'extraAdd': return extraDialog(id);
       case 'extraDel': { const d = vdraft()[id]; d.extras.splice(+b.dataset.i, 1); break; }
       case 'photo': { const a = addr(b.dataset.a); const ph = a?.photos?.find((x) => x.id === b.dataset.src); if (!ph) return;
         return openDlg(`<img src="${ph.src}" style="width:100%;border-radius:10px" alt="">${ph.caption ? `<p>${esc(ph.caption)}</p>` : ''}`, null, 'Luk'); }
