@@ -14,16 +14,17 @@ import { SUPABASE } from './config.js';
 import { showRouteMap } from './map.js';
 import * as KV from './store.js';
 
-export const VERSION = '2026-11-06 #57';
+export const VERSION = '2026-11-06 #58';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
+db.customerNotes ||= [];
 let eco = new MockEconomic(db.mock.economic);
 let sms = new MockSms(db.mock.sms);
 /** Rigtig e-conomic når den er slået til og man er admin i den fælles database; ellers øve-udgaven (mock). */
 const ecoReal = () => !!(db.settings.economic?.enabled && cloud?.economic && member?.role === 'admin');
 const ecoApi = () => (ecoReal() ? new EconomicApi((op, p) => cloud.economic(op, p), db.settings.economic) : eco);
-function setDb(nd) { db = nd; db.mock ||= { economic: {}, sms: {} }; eco = new MockEconomic(db.mock.economic); sms = new MockSms(db.mock.sms); }
+function setDb(nd) { db = nd; db.customerNotes ||= []; db.mock ||= { economic: {}, sms: {} }; eco = new MockEconomic(db.mock.economic); sms = new MockSms(db.mock.sms); }
 /* ---------- Fælles database (login + synkronisering) ---------- */
 let cloud = null;      // forbindelse (SupabaseCloud / MemoryCloud) – null = kun lokalt
 let member = null;     // { userId, email, orgId, orgName, role, employeeId }
@@ -90,13 +91,13 @@ const $view = document.getElementById('view');
 
 /* ---------------- Faner ---------------- */
 const TABS = [
-  ['kalender', 'Kalender', true], ['kunder', 'Kunder', true], ['mobil', 'Dagsrute', false], ['faktura', 'Fakturering', true],
+  ['kalender', 'Kalender', false], ['kunder', 'Kunder', true], ['mobil', 'Dagsrute', false], ['faktura', 'Fakturering', true],
   ['okonomi', 'Økonomi', true], ['sms', 'Beskeder', true], ['mig', 'Mig', false], ['import', 'Import', true], ['admin', 'Admin', true],
 ];
 const TABICON = { kalender: '📅', kunder: '👥', mobil: '🚐', faktura: '🧾', okonomi: '📊', sms: '💬', mig: '🙂', import: '📥', admin: '⚙️' };
 const TABSHORT = { faktura: 'Faktura', sms: 'Beskeder' };
 const isPhone = () => window.matchMedia?.('(max-width: 820px)').matches;
-const PHONE_TABS = { admin: ['kalender', 'kunder', 'okonomi', 'mig'], emp: ['mobil', 'mig'] };
+const PHONE_TABS = { admin: ['kalender', 'kunder', 'okonomi', 'mig'], emp: ['mobil', 'kalender', 'mig'] };
 let wasPhone = isPhone(); window.addEventListener('resize', () => { if (isPhone() !== wasPhone) { wasPhone = isPhone(); render(); } });
 function renderTabs() {
   const tabs = TABS.filter(([, , adm]) => !adm || isAdmin());
@@ -104,7 +105,7 @@ function renderTabs() {
   if (!tabs.some(([k]) => k === ui.tab) && !((ui.tab === 'ruter' || ui.tab === 'dag' || ui.tab === 'print') && isAdmin())) ui.tab = tabs[0][0];
   let active = ui.tab === 'ruter' ? 'kunder' : (ui.tab === 'dag' || ui.tab === 'print') ? 'kalender' : ui.tab;
   let navTabs = tabs;
-  if (isPhone()) { const keep = PHONE_TABS[isAdmin() ? 'admin' : 'emp']; navTabs = tabs.filter(([k]) => keep.includes(k));
+  if (isPhone()) { const keep = PHONE_TABS[isAdmin() ? 'admin' : 'emp']; navTabs = keep.map((k) => tabs.find(([t]) => t === k)).filter(Boolean);
     active = { faktura: 'okonomi', sms: 'mig', admin: 'mig', import: 'mig', mobil: isAdmin() ? 'kalender' : 'mobil' }[active] || active; }
   const unread = db.smsMessages.filter((m) => m.dir === 'ind' && !m.read).length;
   document.getElementById('tabs').innerHTML = navTabs.map(([k, n]) => `<button data-tab="${k}" class="${active === k ? 'on' : ''}"><span class="ti">${TABICON[k] || ''}</span><span class="tl">${n}</span><span class="ts">${TABSHORT[k] || n}</span>${k === 'sms' && unread ? ` <span class="pill bad">${unread}</span>` : ''}</button>`).join('');
@@ -444,14 +445,16 @@ const DRIFT = [
 function alertsStrip() {
   const t = todayIso(); const out = [];
   const overdue = db.visits.filter((v) => (v.status === 'planlagt' || v.status === 'udsat') && v.plannedDate < t);
-  if (overdue.length) out.push(`<span class="alert">⏰ ${overdue.length} besøg i fortiden er ikke færdigmeldt <button data-act="showOverdue">Vis</button></span>`);
+  if (overdue.length && isAdmin()) out.push(`<span class="alert">⏰ ${overdue.length} besøg i fortiden er ikke færdigmeldt <button data-act="showOverdue">Vis</button></span>`);
   const nd = D.nextWorkday(D.addDays(t, 1), db.closedDays); const tm = db.visits.filter((v) => v.plannedDate === nd && v.status === 'planlagt');
   const sent = new Set(db.smsMessages.filter((m) => m.clientRef?.startsWith('varsel:')).map((m) => m.clientRef.slice(7)));
   const left = tm.filter((v) => !sent.has(v.id) && D.normalizePhone(cust(v.customerId)?.phone)).length;
   if (left) out.push(`<span class="alert">📱 SMS til ${fmt(nd)}: ${left} mangler <button data-act="smsTomorrow">Send</button></span>`);
   const dbl = D.findDoubleBookings(db.visits.filter((v) => v.plannedDate >= t));
-  if (dbl.length) out.push(`<span class="alert">⚠️ ${dbl.length} mulige dobbeltbookinger <button data-act="showDbl">Vis</button></span>`);
+  if (dbl.length && isAdmin()) out.push(`<span class="alert">⚠️ ${dbl.length} mulige dobbeltbookinger <button data-act="showDbl">Vis</button></span>`);
   if (isAdmin()) {
+    const fl = db.visits.filter(isFlagged);
+    if (fl.length) out.unshift(`<span class="alert" style="border-color:var(--bad)">🔔 ${fl.length} kunde${fl.length > 1 ? 'r' : ''} meldt udsat <button data-act="showFlags">Tag stilling</button></span>`);
     // ugentlig backup
     const lb = db.settings.lastBackupAt; const age = lb ? Math.floor((Date.now() - Date.parse(lb)) / 864e5) : null;
     if (db.settings.realData && (age == null || age >= 7)) out.push(`<span class="alert">💾 ${age == null ? 'Der er ikke taget backup endnu' : `Sidste backup er ${age} dage gammel`} <button data-act="backup">Download backup</button></span>`);
@@ -463,7 +466,7 @@ function alertsStrip() {
     if (bad.length) out.push(`<span class="alert">⚠️ ${bad.length} faktura${bad.length > 1 ? 'er' : ''} kunne ikke laves i e-conomic <button data-tab="faktura">Vis</button></span>`);
   }
   const chk = dataCheck().slice(0, 2).reduce((s2, [, it]) => s2 + it.length, 0);
-  if (chk) out.push(`<span class="alert">📋 ${chk} ting at tjekke i data <button data-act="showCheck">Vis</button></span>`);
+  if (chk && isAdmin()) out.push(`<span class="alert">📋 ${chk} ting at tjekke i data <button data-act="showCheck">Vis</button></span>`);
   return out.length ? `<div class="alerts">${out.join('')}</div>` : '';
 }
 /** Økonomi for en mængde besøg (som SkvizBiz' "Total for uge"). */
@@ -532,6 +535,12 @@ function kalender() {
       <p class="small mute">${e.google ? 'Kørsel fra Google Maps (fra og til startadressen).' : e.gWait ? 'Henter køretider fra Google …' : 'Kørsel ≈ luftlinje × 1,3 ved 50 km/t (Google-nøgle mangler).'} Træk et navn til en anden dag for at flytte.</p></aside>
   </div>`;
   document.getElementById('calRoute').onchange = (ev) => { ui.calRoute = ev.target.value; render(); };
+  if (!isAdmin()) { // medarbejder: kun se – ingen menuer, træk eller flytning
+    $view.querySelectorAll('[data-act=dayOpts]').forEach((el) => el.replaceWith(Object.assign(document.createElement('b'), { textContent: el.textContent })));
+    $view.querySelectorAll('[data-act=dayPlan],[data-act=dayMenu],.grip,[data-act=selWeek],[data-act=printRoute],.econ .sidemenu').forEach((el) => el.remove());
+    $view.querySelectorAll('[draggable]').forEach((el) => el.setAttribute('draggable', 'false'));
+    $view.querySelectorAll('.rhead[data-dblroute]').forEach((el) => { el.title = 'Åbn dagsruten'; });
+    return; }
   $view.querySelectorAll('.vline[draggable=true]').forEach((ch) => ch.addEventListener('dragstart', (ev) => ev.dataTransfer.setData('text/plain', ui.visSel?.has(ch.dataset.visit) && ui.visSel.size > 1 ? 'many:' + [...ui.visSel].join(',') : ch.dataset.visit)));
   $view.querySelectorAll('[data-dragroute]').forEach((g) => g.addEventListener('dragstart', (ev) => { ev.stopPropagation(); ev.dataTransfer.setData('text/plain', 'route:' + g.dataset.dragroute); }));
   $view.querySelectorAll('.day').forEach((d) => {
@@ -551,7 +560,7 @@ function visitDialog(id) {
   openDlg(`<h2>${esc(c.name)} – ${fmt(v.plannedDate)}</h2><p>${esc(v.service)} · ${esc(addr(v.addressId)?.street)} · ${kr(v.price)} · ${pill(v.status)}</p>
     <p class="small mute">Grundrytme: ${fmt(v.rhythmDate)} · serie #${v.seriesIndex}</p>
     ${obsBox(addr(v.addressId), c)}
-    <div class="row"><button type="button" data-act="obsEdit" data-a="${v.addressId}" data-c="${c.id}">⚠ OBS …</button><button type="button" data-act="moveFromDlg" data-id="${id}">Flyt…</button><button type="button" data-act="cancelVisit" data-id="${id}" class="bad">Aflys</button><button type="button" data-cust="${c.id}">Kundekort</button></div>
+    ${isAdmin() ? `<div class="row"><button type="button" data-act="obsEdit" data-a="${v.addressId}" data-c="${c.id}">⚠ OBS …</button><button type="button" data-act="moveFromDlg" data-id="${id}">Flyt…</button><button type="button" data-act="cancelVisit" data-id="${id}" class="bad">Aflys</button><button type="button" data-cust="${c.id}">Kundekort</button></div>` : ''}${isFlagged(v) ? `<p class="warn-t small">🔔 Meldt udsat af ${esc(v.flag.byName || '')}${v.flag.note ? ': ' + esc(v.flag.note) : ''}</p>` : ''}
     <h3>Historik</h3>${v.history.map((h) => `<div class="small">${esc(h.at?.slice?.(0, 16) ?? '')} · ${esc(h.action)} ${h.from ? esc(h.from) + ' → ' + esc(h.to) : ''} ${esc(h.note ?? '')}</div>`).join('') || '<div class="small mute">Ingen</div>'}`, null, 'Luk');
 }
 function moveDialog(id, newDate) {
@@ -899,8 +908,38 @@ const vdraft = () => (db.vdraft ||= {});
 /** Dagsrute: Udført på sin egen store linje, Kontant og Udsæt under */
 const statusBig = (v) => `<div class="stbig"><button type="button" class="udf" data-st="${v.id}" data-v="udfoert">✓ Udført</button><div class="stsub"><button type="button" data-st="${v.id}" data-v="kontant">💵 Kontant</button><button type="button" data-st="${v.id}" data-v="spring">⏭ Udsæt</button></div></div>`;
 /** OBS: ting medarbejderen skal være opmærksom på (aldrig på fakturaen) */
-const obsBox = (a, c) => { const xs = [a?.access && esc(a.access), c?.rememberNext && `<b>Kun denne gang:</b> ${esc(c.rememberNext)}`, c?.callBefore && '📞 Ring før besøg'].filter(Boolean);
+const notesFor = (c, a) => (db.customerNotes || []).filter((n) => n.customerId === c?.id && (!n.addressId || !a || n.addressId === a.id));
+const obsBox = (a, c) => { const xs = [a?.access && esc(a.access), c?.rememberNext && `<b>Kun denne gang:</b> ${esc(c.rememberNext)}`, c?.callBefore && '📞 Ring før besøg',
+    ...notesFor(c, a).map((n) => `📝 ${esc(n.text)} <span class="small" style="opacity:.75">– ${esc(n.byName || '')} ${esc(String(n.at || '').slice(0, 10))}</span>${isAdmin() ? ` <a href="#" data-act="noteDel" data-id="${n.id}" title="Slet note">✕</a>` : ''}`)].filter(Boolean);
   return xs.length ? `<div class="obs"><span class="obs-i">⚠</span><div>${xs.join('<br>')}</div></div>` : ''; };
+function flagsDialog() {
+  const fl = db.visits.filter(isFlagged).sort((a, b) => a.plannedDate.localeCompare(b.plannedDate)); if (!fl.length) return toast('Ingen meldinger');
+  openDlg(`<h2>🔔 Meldt udsat (${fl.length})</h2><p class="small mute">Der er ikke ændret noget endnu. Vælg hvad der skal ske.</p>
+    ${fl.map((v) => { const c = cust(v.customerId); const ph = D.normalizePhone(c?.phone);
+      return `<div style="border-bottom:1px solid var(--line);padding:10px 0"><b>${esc(c?.name)}</b> <span class="small mute">· ${fmt(v.plannedDate)} · ${esc(route(v.routeId)?.name || 'uden rute')}</span>
+        <div class="small">Meldt af ${esc(v.flag.byName || '')} ${esc(String(v.flag.at || '').slice(0, 16).replace('T', ' '))}${v.flag.note ? ` – “${esc(v.flag.note)}”` : ''}</div>
+        <div class="row" style="margin-top:6px">${ph ? `<a class="btn small" href="tel:${ph}">📞 Ring</a><a class="btn small" href="${smsLink(ph, '')}">📱 SMS</a>` : ''}<button type="button" class="small pri" data-act="flagMove" data-id="${v.id}">⏭ Udsæt / flyt …</button><button type="button" class="small" data-act="flagKeep" data-id="${v.id}">Behold på ruten</button></div></div>`; }).join('')}`, null, 'Luk');
+}
+/** Ny melding fra en medarbejder → besked på forsiden og (hvis tilladt) en notifikation. */
+function notifyFlags() {
+  if (!isAdmin()) return; let seen; try { seen = new Set(JSON.parse(localStorage.getItem('vindue-flagseen') || '[]')); } catch { seen = new Set(); }
+  const fresh = db.visits.filter(isFlagged).filter((v) => !seen.has(v.id + v.flag.at)); if (!fresh.length) return;
+  for (const v of fresh) seen.add(v.id + v.flag.at); try { localStorage.setItem('vindue-flagseen', JSON.stringify([...seen].slice(-300))); } catch {}
+  const c = cust(fresh[0].customerId); const title = fresh.length > 1 ? `${fresh.length} kunder meldt udsat` : `${c?.name} meldt udsat`;
+  const body = fresh.length > 1 ? fresh.map((v) => cust(v.customerId)?.name).join(', ') : `${fresh[0].flag.byName || 'Medarbejder'}${fresh[0].flag.note ? ': ' + fresh[0].flag.note : ''}`;
+  toast('🔔 ' + title);
+  if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+    const opt = { body, icon: '../icon-192.png', tag: 'udsat' };
+    (navigator.serviceWorker?.controller ? navigator.serviceWorker.ready.then((r) => r.showNotification(title, opt)) : Promise.reject()).catch(() => { try { new Notification(title, opt); } catch {} });
+  }
+}
+function noteDialog(addressId, customerId) {
+  const c = cust(customerId);
+  openDlg(`<h2>📝 Note til ${esc(c.name)}</h2><p class="small mute">Gemmes på kunden og vises i OBS hver gang. Kommer ikke på fakturaen.</p><textarea name="text" required rows="4" style="width:100%;box-sizing:border-box" placeholder="Fx ny kode til lågen, hunden er væk, vasker bagside fremover …"></textarea>`, (f) => {
+    const t = f.text.trim(); if (!t) return 'Skriv en note';
+    (db.customerNotes ||= []).push({ id: S.uid('n'), customerId, addressId: addressId || null, text: t, by: ui.user.id, byName: emp(ui.user.employeeId)?.name || ui.user.name, at: new Date().toISOString() });
+    S.audit(db, ui.user.id, 'customer.note', customerId); save(); toast('Note gemt'); });
+}
 function obsDialog(addressId, customerId) {
   const a = addr(addressId), c = cust(customerId);
   openDlg(`<h2>⚠ OBS – ${esc(c.name)}</h2><p class="small mute">${esc(a?.street || '')} · Vises på dagsruten og rutesedlen. Kommer aldrig på fakturaen.</p>
@@ -924,7 +963,7 @@ function applyDecisions(pairs) {
     else if (d.skip === 'forgaeves') ent.push({ visitId: v.id, result: 'forgaeves', note: 'Forgæves besøg' });
     else { S.moveVisit(db, ui.user, v.id, d.skip === 'reinsert' ? D.nextWorkday(D.addDays(v.plannedDate, 1), db.closedDays) : d.moveDate, d.skip === 'shift' ? 'shift' : 'keep'); moved++; }
   }
-  const r = S.finishRoute(db, ui.user, ent); for (const { v } of pairs) delete vdraft()[v.id];
+  const r = S.finishRoute(db, ui.user, ent); for (const { v } of pairs) { delete vdraft()[v.id]; if (isAdmin()) { const nv = db.visits.find((x) => x.id === v.id); if (nv?.flag) delete nv.flag; } }
   return { ...r, moved };
 }
 const doneRes = (v) => (v.status === 'udfoert' || v.status === 'delvis' ? (v.completion?.cashPaid ? 'kontant' : 'udfoert') : 'spring');
@@ -1072,19 +1111,25 @@ function mobil() {
   const day = ui.day; const stops = dayStops(day); const plan = db.dayPlans?.[day];
   if (plan?.order) stops.sort((a, b) => (plan.order.indexOf(a.id) + 1 || 9999) - (plan.order.indexOf(b.id) + 1 || 9999));
   const pending = new Set(ui.outbox.map((o) => o.visitId)); const dr = vdraft();
-  const left = stops.filter((v) => (v.status === 'planlagt' || v.status === 'udsat') && !pending.has(v.id));
+  const left = stops.filter((v) => (v.status === 'planlagt' || v.status === 'udsat') && !pending.has(v.id) && !isFlagged(v));
   $view.innerHTML = `<div class="mob-head"><button data-act="dd" data-d="-1" aria-label="Forrige dag">‹</button><div class="sp"><b>${fmt(day)} ${day.slice(0, 4)}</b><div class="small mute">${stops.length - left.length}/${stops.length} færdige · ${D.hm(mins(stops))} t</div></div><button data-act="dd" data-d="1" aria-label="Næste dag">›</button></div>
   <div class="toolbar"><button data-act="smsTomorrow">📱 SMS til morgendagens rute</button>${ui.offline || ui.outbox.length ? `<span class="pill warn">${ui.offline ? 'Offline' : ''} ${ui.outbox.length ? ui.outbox.length + ' venter på net' : ''}</span>` : ''}</div>
   ${left.length ? '' : stops.length ? '<div class="card center"><b>🎉 Alle dagens kunder er færdige</b></div>' : ''}
-  ${stops.map((v, i) => { const c = cust(v.customerId), a = addr(v.addressId); const done = (v.status !== 'planlagt' && v.status !== 'udsat') || pending.has(v.id); const d = dr[v.id] || {}; const isNext = left[0]?.id === v.id;
-    return `<div class="stop ${done ? 'done' : ''} ${isNext ? 'next' : ''}" ${isNext ? 'id="nextStop"' : ''}>${isNext ? `<div class="nextbar"><span>Næste kunde</span><a class="btn pri" target="_blank" rel="noopener" href="${mapsDirections(a.street)}">🚗 Navigér hertil</a></div>` : ''}<div class="stop-h"><span class="num">${i + 1}</span><div class="sp"><h3>${esc(c.name)}</h3><a class="small" target="_blank" rel="noopener" href="${mapsDirections(a.street)}">${esc(a.street)}</a></div>${done ? `<span class="pill ok">${pending.has(v.id) ? 'Venter på net' : esc(doneLabel(v))}</span>` : ''}</div>
-      <div class="task">🧽 ${esc(d.service || v.service)}</div>${obsBox(a, c)}${isAdmin() && !done ? `<button type="button" class="link small" data-act="obsEdit" data-a="${a.id}" data-c="${c.id}">✏ ${a.access || c.rememberNext || c.callBefore ? 'Ret' : 'Tilføj'} OBS</button>` : ''}
+  ${stops.map((v, i) => { const c = cust(v.customerId), a = addr(v.addressId); const done = (v.status !== 'planlagt' && v.status !== 'udsat') || pending.has(v.id) || isFlagged(v); const d = dr[v.id] || {}; const isNext = left[0]?.id === v.id;
+    return `<div class="stop ${done ? 'done' : ''} ${isNext ? 'next' : ''}" ${isNext ? 'id="nextStop"' : ''}>${isNext ? `<div class="nextbar"><span>Næste kunde</span><a class="btn pri" target="_blank" rel="noopener" href="${mapsDirections(a.street)}">🚗 Navigér hertil</a></div>` : ''}<div class="stop-h"><span class="num">${i + 1}</span><div class="sp"><h3>${esc(c.name)}</h3><a class="small" target="_blank" rel="noopener" href="${mapsDirections(a.street)}">${esc(a.street)}</a></div>${done ? (isFlagged(v) ? `<span class="pill warn">Meldt udsat${isAdmin() ? '' : ' – afventer'}</span>` : `<span class="pill ok">${pending.has(v.id) ? 'Venter på net' : esc(doneLabel(v))}</span>`) : ''}</div>${isFlagged(v) && v.flag.note ? `<div class="small mute">“${esc(v.flag.note)}”</div>` : ''}
+      <div class="task">🧽 ${esc(d.service || v.service)}</div>${obsBox(a, c)}${!done ? `<div class="row" style="gap:12px">${isAdmin() ? `<button type="button" class="link small" data-act="obsEdit" data-a="${a.id}" data-c="${c.id}">✏ ${a.access || c.rememberNext || c.callBefore ? 'Ret' : 'Tilføj'} OBS</button>` : ''}<button type="button" class="link small" data-act="noteAdd" data-a="${a.id}" data-c="${c.id}">📝 Note til kunden</button></div>` : ''}
       ${(a.photos || []).length ? `<div class="thumbs big">${a.photos.map((ph) => `<img src="${ph.src}" data-act="photo" data-src="${ph.id}" data-a="${a.id}" alt="">`).join('')}</div>` : ''}
       ${done ? ((v.extras || []).length ? `<div>${extrasHtml(v, d, true)}</div>` : '') : `<div class="extras">${extrasHtml(v, d, false)}</div>${statusBig(v)}`}</div>`; }).join('') || '<p class="mute center">Ingen besøg denne dag.</p>'}`;
 }
 /** Dagsrute: Udført/Betalt registreres med det samme; Udsæt åbner valg. */
-function mobileStatus(id, val) {
+const isFlagged = (v) => !!(v?.flag && (v.status === 'planlagt' || v.status === 'udsat'));
+function mobileStatus(id, val, asAdmin = false) {
   const v = db.visits.find((x) => x.id === id); const d = { ...(vdraft()[id] || {}), result: val };
+  if (val === 'spring' && !isAdmin()) return openDlg(`<h2>⏭ Meld ${esc(cust(v.customerId).name)} udsat</h2><p class="small">Der ændres ikke noget i kalenderen eller på kunden – ${esc(db.employees.find((e) => e.role === 'admin')?.name || 'kontoret')} får besked og tager stilling.</p>
+    <label style="display:block"><span>Hvorfor? (valgfrit)</span><textarea name="note" rows="3" style="width:100%;box-sizing:border-box" placeholder="Fx ikke hjemme, låst port, kunden bad om senere …"></textarea></label>`, (f) => {
+    v.flag = { kind: 'udsat', note: (f.note || '').trim(), by: ui.user.id, byName: emp(ui.user.employeeId)?.name || ui.user.name, at: new Date().toISOString() };
+    S.audit(db, ui.user.id, 'visit.flagUdsat', id); save(); toast('Meldt udsat – der er sendt besked');
+    setTimeout(() => document.getElementById('nextStop')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50); });
   const go = (dd) => { if (ui.offline) { const ent = { visitId: id, result: dd.result === 'kontant' ? 'udfoert' : dd.result, opId: 'm:' + id, extras: dd.extras, cashAmount: dd.cashAmount, payMethod: dd.payMethod, split: defaultSplit(v) };
       if (dd.result === 'spring') return toast('Udsæt kræver net'); ui.outbox.push(ent); delete vdraft()[id]; toast('Gemt – sendes når der er net'); return render(); }
     const r = applyDecisions([{ v, d: dd }]); toast(r.conflicts.length ? 'Konflikt: ' + r.conflicts[0] : `${cust(v.customerId).name}: ${STLABEL[dd.result]}`); save(); render();
@@ -1182,7 +1227,7 @@ function mig() {
   const myRoutes = db.routes.filter((r) => r.employeeId === me);
   const up = []; for (let i = 0; i < 21 && up.length < 10; i++) { const d = D.addDays(t, i); for (const r of myRoutes) { const n = db.visits.filter((v) => v.routeId === r.id && v.plannedDate === d && (v.status === 'planlagt' || v.status === 'udsat')).length; if (n) up.push({ d, r, n }); } }
   const card = (title, s2) => `<div class="card"><div class="mute">${title}</div><div class="kpi">${kr(Math.round(s2.com))}</div><div class="small">provision · ${s2.n} besøg · ${D.hm(s2.min)} t arbejde · grundlag ${kr(Math.round(s2.base))}</div></div>`;
-  $view.innerHTML = `<div class="card"><div class="row"><h2 class="sp">🙂 ${esc(e?.name || ui.user.name)}</h2><button data-act="chPw">Skift kodeord</button>${installBtn()}</div>
+  $view.innerHTML = `<div class="card"><div class="row"><h2 class="sp">🙂 ${esc(e?.name || ui.user.name)}</h2><button data-act="chPw">Skift kodeord</button>${installBtn()}${isAdmin() && typeof Notification !== 'undefined' && Notification.permission !== 'granted' ? '<button data-act="notifyOn">🔔 Slå notifikationer til</button>' : ''}</div>
       <p class="small mute">${ui.user.role === 'admin' ? 'Admin' : 'Medarbejder'}${rate ? ` · provision ${Math.round(rate * 1000) / 10} %` : ''}</p></div>
     ${isAdmin() ? `<div class="card"><div class="menu-grid"><button data-tab="admin">⚙️ Admin</button><button data-tab="faktura">🧾 Fakturering</button><button data-tab="sms">💬 Beskeder${db.smsMessages.filter((m) => m.dir === 'ind' && !m.read).length ? ' <span class="pill bad">' + db.smsMessages.filter((m) => m.dir === 'ind' && !m.read).length + '</span>' : ''}</button><button data-tab="import">📥 Import</button></div></div>` : ''}
     <div class="grid2">${card('Denne måned (' + mLabel(ym) + ')', a)}${card('Sidste måned (' + mLabel(prev) + ')', b)}</div>
@@ -1450,6 +1495,7 @@ document.addEventListener('click', async (e) => {
   const rs = (e.ctrlKey || e.metaKey) && e.target.closest('.rblock[data-rsel]');
   if (rs) { e.preventDefault(); ui.calSel ||= new Set(); const k = rs.dataset.rsel; ui.calSel.has(k) ? ui.calSel.delete(k) : ui.calSel.add(k); return render(); }
   const blk = e.target.closest('.rblock[data-rsel]');
+  if (blk && !isAdmin() && ui.tab === 'kalender') { const [, d] = blk.dataset.rsel.split('|'); ui.tab = 'mobil'; ui.day = d; ui._mobDayFor = ui.user.id; return render(); }
   if (blk && !e.target.closest('button, .vline, .grip') && (e.target === blk || e.target.closest('.rhead, .rmeta'))) { const [rid, d] = blk.dataset.rsel.split('|');
     if (window.innerWidth <= 820) return routeMenu(rid, d);
     ui.calPick = ui.calPick === blk.dataset.rsel ? null : blk.dataset.rsel; ui._rm = { rid, day: d }; ui.calDay = null; return render(); }
@@ -1632,6 +1678,12 @@ document.addEventListener('click', async (e) => {
           const res = S.moveToRoute(db, ui.user, ags.map((a) => a.id), f.to, todayIso(), D.addDays(todayIso(), 120)); r.order = (r.order || []).filter((x) => !ui.ordSel.has(x)); ui.ordSel = new Set(); ui._ordFor = null;
           toast(`${res.moved} aftaler flyttet til ${route(f.to).name} · ${res.visits} besøg fra ${fmt(res.anchor)}`); }); }
       case 'obsEdit': return obsDialog(b.dataset.a, b.dataset.c);
+      case 'noteAdd': return noteDialog(b.dataset.a, b.dataset.c);
+      case 'noteDel': { if (!isAdmin() || !confirm('Slet noten?')) return; db.customerNotes = db.customerNotes.filter((n) => n.id !== id); S.audit(db, ui.user.id, 'customer.noteDelete', id); document.getElementById('dlg').open && document.getElementById('dlg').close(); break; }
+      case 'showFlags': return flagsDialog();
+      case 'flagKeep': { const v = db.visits.find((x) => x.id === id); if (v) { delete v.flag; S.audit(db, ui.user.id, 'visit.flagKeep', id); } document.getElementById('dlg').close(); toast('Kunden bliver på ruten'); break; }
+      case 'flagMove': { document.getElementById('dlg').close(); return mobileStatus(id, 'spring', true); }
+      case 'notifyOn': { try { const r = await Notification.requestPermission(); toast(r === 'granted' ? 'Notifikationer er slået til' : 'Notifikationer blev ikke tilladt'); } catch { toast('Browseren understøtter ikke notifikationer'); } break; }
       case 'calWeek': ui.calDay = null; ui.calPick = null; break;
       case 'toggleRouteMap': ui.hideRouteMap = !ui.hideRouteMap; break;
       case 'planGoogle': { const day = ui.planDay; const k = gKey(day + 'cur', ui._planOrder); if (ui._google) delete ui._google[k]; googleFor(k, [...ui._planOrder], { start: startPoint(), optimize: false }); break; }
@@ -1802,7 +1854,7 @@ async function doSync(force) {
   try { stampAudit(); const r = await syncer.sync(db); syncInfo.status = 'ok'; syncInfo.at = Date.now(); syncInfo.error = null;
     await persist(); await KV.set(syncer._key, syncer.s);
     if (r.pulled) { S.planAhead(db, D.addDays(todayIso(), 120)); softRender(); } else renderNet();
-    autoEconomic();
+    autoEconomic(); notifyFlags();
   } catch (e) { syncInfo.status = 'error'; syncInfo.error = e.message; renderNet(); if (force) toast('Synkronisering fejlede: ' + e.message); }
 }
 /** Automatik (kun admin, kun når e-conomic er slået til): fakturér færdigmeldte besøg og hent betalingsstatus. */

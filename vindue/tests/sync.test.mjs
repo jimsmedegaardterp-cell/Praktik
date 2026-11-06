@@ -126,3 +126,16 @@ test('rolig tilstand: gentagne synk skubber og henter intet (jsonb ændrer nøgl
   a.customers[0].notes = 'ny'; const r1 = await aS.sync(a); assert.equal(r1.pushed, 1);
   await aS.sync(a); assert.deepEqual(await aS.sync(a), { pushed: 0, pulled: 0 });
 });
+
+test('medarbejder: note til kunde og "meldt udsat" synkroniseres til admin (uden at ændre besøget)', async () => {
+  const server = new SY.MemoryBackend(); const org = 'o';
+  const a = seedDb('2026-11-02'); const aS = new SY.SyncEngine({ backend: server.as('admin'), state: { orgId: org }, role: 'admin' }); await aS.sync(a);
+  const m = freshDb(); const mS = new SY.SyncEngine({ backend: server.as('medarbejder', 'e2'), state: { orgId: org }, role: 'medarbejder' }); await mS.sync(m);
+  const v = m.visits.find((x) => x.status === 'planlagt'); const c = m.customers.find((x) => x.id === v.customerId);
+  (m.customerNotes ||= []).push({ id: 'n1', customerId: c.id, addressId: v.addressId, text: 'Ny kode 1234', by: 'u2', byName: 'Mads', at: '2026-11-06T10:00:00Z' });
+  v.flag = { kind: 'udsat', note: 'Ikke hjemme', by: 'u2', at: '2026-11-06T10:01:00Z' };
+  const r = await mS.sync(m); assert.ok(r.pushed >= 2);
+  await aS.sync(a);
+  assert.equal(a.customerNotes.find((n) => n.id === 'n1').text, 'Ny kode 1234');
+  const av = a.visits.find((x) => x.id === v.id); assert.equal(av.flag.note, 'Ikke hjemme'); assert.equal(av.status, 'planlagt'); assert.equal(av.plannedDate, v.plannedDate);
+});

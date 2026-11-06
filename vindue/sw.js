@@ -9,3 +9,7 @@ self.addEventListener('fetch', (e) => {
   e.respondWith(fetch(req).then((res) => { if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)); } return res; })
     .catch(() => caches.match(req).then((hit) => hit || caches.match('./'))));
 });
+
+// Klik på en notifikation åbner/fokuserer appen
+self.addEventListener('notificationclick', (e) => { e.notification.close();
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((cs) => (cs[0] ? cs[0].focus() : self.clients.openWindow('./')))); });

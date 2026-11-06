@@ -6,7 +6,7 @@ export const uid = (p = 'id') => p + '_' + Math.random().toString(36).slice(2, 1
 const now = () => new Date().toISOString();
 
 export function emptyDb() {
-  return { customers: [], addresses: [], agreements: [], routes: [], employees: [], visits: [], invoiceLinks: [],
+  return { customers: [], addresses: [], agreements: [], routes: [], employees: [], visits: [], invoiceLinks: [], customerNotes: [],
     smsMessages: [], audit: [], closedDays: [], templates: {}, mock: { economic: {}, sms: {} }, settings: { commissionRate: 0.35, perCustomerInvoice: false } };
 }
 
