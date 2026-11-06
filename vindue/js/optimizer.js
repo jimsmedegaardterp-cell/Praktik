@@ -7,12 +7,14 @@
 //  - Kundens interval skal være et multiplum af rutens (8-ugers kunde kan ligge på en 4-ugers rute).
 //  - Ruter i `excludeRouteIds` flyttes ikke, men deres tid tæller med på dagen.
 //  - Ruter i `ignoreRouteIds` (Tagrenderens – udføres af en anden) flyttes ikke og tæller ikke med.
+//  - Hele ruter kan også flyttes (fase 1: alle rutens kunder samme antal dage, inden for samme vindue);
+//    derefter flyttes enkeltkunder (fase 2) oven på ruteflytningerne.
 //  - Én person, man–fre. Dagens tid = arbejde + kørsel (start → stop → start).
 //  - Kørsel skønnes med luftlinje × 1,3 ved 50 km/t × kalibreringsfaktor (målt mod Google).
 import * as D from './domain.js';
 import { km, optimize } from './dayplan.js';
 
-export const DEFAULTS = { horizonDays: 84, windowBack: 4, windowFwd: 10, minDay: 420, maxDay: 480, factor: 1, moveCost: 10, timeMs: 4000 };
+export const DEFAULTS = { horizonDays: 84, windowBack: 4, windowFwd: 10, minDay: 420, maxDay: 480, factor: 1, moveCost: 10, routeMoveCost: 30, timeMs: 4000 };
 const legMin = (a, b, f) => { const k = km(a, b); return k == null ? 0 : (k * 1.3) / 50 * 60 * f; };
 /** Strafpoint for en dags samlede minutter (0 = fridag, ingen straf). */
 export function dayPenalty(T, o = DEFAULTS) {
@@ -42,6 +44,8 @@ export function buildProblem(db, opts = {}) {
   // Rutens dage = de dage ruten faktisk har planlagte besøg i kalenderen (rutens egen dato/rytme kun hvis den ingen besøg har)
   const visDays = new Map(); const hi = D.addDays(end, o.windowFwd);
   for (const v of db.visits) if (v.routeId && (v.status === 'planlagt' || v.status === 'udsat') && v.plannedDate >= D.addDays(start, -o.windowBack) && v.plannedDate <= hi) { if (!visDays.has(v.routeId)) visDays.set(v.routeId, new Set()); visDays.get(v.routeId).add(v.plannedDate); }
+  const shifts = o.routeShifts || {};
+  for (const [rid, sh] of Object.entries(shifts)) if (visDays.has(rid) && sh) visDays.set(rid, new Set([...visDays.get(rid)].map((d) => D.addDays(d, sh))));
   const routes = db.routes.filter((r) => r.intervalWeeks && (visDays.has(r.id) || (r.anchorDate && !r.anchorUnknown)));
   const runsOn = (r, d) => (visDays.has(r.id) ? visDays.get(r.id).has(d) : D.routeRuns(r, d));
   const nextRun = (r, from) => (visDays.has(r.id) ? [...visDays.get(r.id)].filter((d) => d >= from).sort()[0] || null : D.nextRouteDate(r, from));
@@ -51,7 +55,7 @@ export function buildProblem(db, opts = {}) {
   const groups = new Map(); const skipped = [];
   for (const a of db.agreements) {
     const why = !a.active ? 'aftalen er ikke aktiv' : !a.intervalWeeks ? 'ikke fast interval' : !a.routeId ? 'ikke på en fast rute' : ign.has(a.routeId) ? 'ruten udføres af en anden og tæller ikke med' : excl.has(a.routeId) ? 'ruten er sat til "flyttes ikke"'
-      : !routeById.has(a.routeId) ? 'ruten mangler dato/interval' : ptOf(a.addressId) < 0 ? 'adressen mangler koordinater (Admin → Manglende koordinater)' : null;
+      : !routeById.has(a.routeId) ? 'ruten mangler dato/interval' : null;
     if (why) { skipped.push({ agreementId: a.id, addressId: a.addressId, customerId: a.customerId, routeId: a.routeId, why }); continue; }
     // samme adresse + rute + samme næste dato flyttes samlet; aftaler med forskellige datoer flyttes hver for sig
     const k = a.addressId + '|' + a.routeId + '|' + (firstPlanned(a)?.plannedDate || nextRhythm(a, start)); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(a);
@@ -62,29 +66,49 @@ export function buildProblem(db, opts = {}) {
   const fixed = db.visits.filter((v) => live(v) && !isMovableVisit(v) && !ign.has(v.routeId)).map((v) => ({ date: v.plannedDate, pt: ptOf(v.addressId), min: v.durationMin ?? 15, visitId: v.id }));
   const items = [];
   for (const [key, ags] of groups) {
-    const pt = ptOf(ags[0].addressId); const from = routeById.get(ags[0].routeId);
-    const cur = db.visits.filter((v) => live(v) && isMovableVisit(v) && ags.some((a) => a.id === v.agreementId)).map((v) => ({ date: v.plannedDate, min: v.durationMin ?? 15 }));
+    const pt = ptOf(ags[0].addressId); const from = routeById.get(ags[0].routeId); const addressId = ags[0].addressId; const sh = shifts[from.id] || 0;
+    const mk = (date, a) => ({ date, min: a.durationMin ?? 15, pt, addressId });
     // reference = kundens næste planlagte besøg (ellers næste rytmedato)
     const d0 = new Map(ags.map((a) => { const v = firstPlanned(a);
       return [a.id, v ? v.plannedDate : nextRhythm(a, start)]; }));
     const ref = [...d0.values()].sort()[0];
+    // nuværende besøg (flyttes ruten i fase 1, følger kunden med)
+    const cur = sh ? ags.flatMap((a) => occDates(a, D.addDays(d0.get(a.id), sh), start, end, closed).map((d) => mk(d, a)))
+      : db.visits.filter((v) => live(v) && isMovableVisit(v) && ags.some((a) => a.id === v.agreementId)).map((v) => mk(v.plannedDate, ags.find((a) => a.id === v.agreementId)));
     const cands = []; const why = [];
+    if (pt < 0) { items.push({ key, agreementIds: ags.map((a) => a.id), addressId, customerId: ags[0].customerId, routeId: from.id, pt, ref, d0, curShift: sh, cur, cands, why, whyAll: 'adressen mangler koordinater (Admin → Manglende koordinater)' }); continue; }
     for (const r of routes) {
       if (r.id === from.id) continue;
       if (excl.has(r.id)) { why.push({ routeId: r.id, why: ign.has(r.id) ? 'udføres af en anden' : 'sat til "flyttes ikke"' }); continue; }
       const bad = ags.find((a) => a.intervalWeeks % r.intervalWeeks); if (bad) { why.push({ routeId: r.id, why: `kundens interval (${bad.intervalWeeks} uger) passer ikke med rutens (${r.intervalWeeks} uger)` }); continue; }
       const n0 = cands.length;
       for (let s = -o.windowBack; s <= o.windowFwd; s++) {
-        if (s === 0) continue; // samme dato giver ingen gevinst
+        if (s === sh) continue; // samme dato giver ingen gevinst
         const anchors = new Map(ags.map((a) => [a.id, D.addDays(d0.get(a.id), s)]));
         if ([...anchors.values()].some((d) => d < start || !runsOn(r, d) || D.isClosedDay(d, closed))) continue;
-        const occ = ags.flatMap((a) => occDates(a, anchors.get(a.id), start, end, closed).map((date) => ({ date, min: a.durationMin ?? 15 })));
+        const occ = ags.flatMap((a) => occDates(a, anchors.get(a.id), start, end, closed).map((date) => mk(date, a)));
         cands.push({ routeId: r.id, shift: s, anchors, occ });
       }
-      if (cands.length === n0 && runsOn(r, ref)) why.push({ routeId: r.id, why: `kører samme dag (${ref}) – ingen gevinst ved kun at skifte rute` });
+      if (cands.length === n0 && runsOn(r, D.addDays(ref, sh))) why.push({ routeId: r.id, why: `kører samme dag (${ref}) – ingen gevinst ved kun at skifte rute` });
       else if (cands.length === n0) { const nx = nextRun(r, D.addDays(ref, -o.windowBack)); why.push({ routeId: r.id, why: `kører ikke inden for ${o.windowBack} dage før / ${o.windowFwd} dage efter ${ref}${nx ? ` (næste: ${nx})` : ''}` }); }
     }
-    items.push({ key, agreementIds: ags.map((a) => a.id), addressId: ags[0].addressId, customerId: ags[0].customerId, routeId: from.id, pt, ref, cur, cands, why });
+    items.push({ key, agreementIds: ags.map((a) => a.id), addressId, customerId: ags[0].customerId, routeId: from.id, pt, ref, d0, curShift: sh, cur, cands, why });
+  }
+  // Fase 1: hele ruter som enheder – alle rutens kunder flyttes samme antal dage
+  if (o.mode === 'routes') {
+    const custItems = items.splice(0);
+    for (const r of routes) {
+      if (excl.has(r.id)) continue; const mine = custItems.filter((it) => it.routeId === r.id); if (!mine.length) continue;
+      const ags = mine.flatMap((it) => it.agreementIds.map((id) => ({ it, a: db.agreements.find((x) => x.id === id) })));
+      const cands = [];
+      for (let s = -o.windowBack; s <= o.windowFwd; s++) {
+        if (!s) continue; const anchors = ags.map(({ it, a }) => D.addDays(it.d0.get(a.id), s));
+        if (anchors.some((d) => d < start || D.isClosedDay(d, closed))) continue;
+        cands.push({ routeId: r.id, shift: s, occ: ags.flatMap(({ it, a }, i) => occDates(a, anchors[i], start, end, closed).map((date) => ({ date, min: a.durationMin ?? 15, pt: it.pt, addressId: it.addressId }))) });
+      }
+      const first = mine.map((it) => it.ref).sort()[0];
+      items.push({ key: 'route:' + r.id, isRoute: true, routeId: r.id, pt: -1, ref: first, cur: mine.flatMap((it) => it.cur), cands, why: [], agreementIds: [], n: mine.length });
+    }
   }
   const dates = []; for (let d = start; d <= end; d = D.addDays(d, 1)) if (!D.isClosedDay(d, closed)) dates.push(d);
   return { pts, dates, items, fixed, routes, skipped, opts: o, start, end };
@@ -125,7 +149,7 @@ export function runOptimizer(P, { seed = 1, now = () => Date.now() } = {}) {
   const o = P.opts; const S = makeState(P);
   for (const x of P.fixed) { const dy = S.day(x.date); dy.tour.push({ pt: x.pt, min: x.min, item: null }); dy.work += x.min; }
   const choice = new Map(); // item.key → kandidat (null = bliver)
-  for (const it of P.items) for (const c of it.cur) { const dy = S.day(c.date); dy.tour.push({ pt: it.pt, min: c.min, item: it.key }); dy.work += c.min; }
+  for (const it of P.items) for (const c of it.cur) { const dy = S.day(c.date); dy.tour.push({ pt: c.pt, min: c.min, item: it.key }); dy.work += c.min; }
   for (const dy of S.days.values()) reorder(S, dy);
   const before = summary(S, o);
   let rnd = seed >>> 0 || 1; const rand = () => ((rnd = (rnd * 1664525 + 1013904223) >>> 0) / 4294967296);
@@ -142,23 +166,26 @@ export function runOptimizer(P, { seed = 1, now = () => Date.now() } = {}) {
         dy.drive -= g; dy.work -= x.min; removed.push({ d, i, x, g }); delta0 += dy.drive + dayPenalty(total(dy), o) - before_;
       }
       const stay = -delta0; // tilbage som før = ophæver fjernelsen
-      const costOf = (occ) => { // indsæt midlertidigt pr. dato (flere besøg samme dag samles)
-        const byDate = new Map(); for (const c of occ) byDate.set(c.date, (byDate.get(c.date) || 0) + c.min);
-        let s = 0; for (const [d, min] of byDate) { const dy = S.day(d); const ic = insertCost(S, dy.tour, it.pt).cost; const T0 = total(dy);
+      const costOf = (occ) => { // indsæt midlertidigt pr. dato (billigste indsættelse, ét stop ad gangen) og fjern igen
+        const byDate = new Map(); for (const c of occ) byDate.set(c.date, [...(byDate.get(c.date) || []), c]);
+        let s = 0; for (const [d, cs] of byDate) { const dy = S.day(d); const T0 = total(dy); let ic = 0, min = 0; const added = [];
+          for (const c of cs) { const x = insertCost(S, dy.tour, c.pt); const e = { pt: c.pt, min: c.min, item: '~' }; dy.tour.splice(x.at, 0, e); added.push(e); ic += x.cost; min += c.min; }
+          dy.tour = dy.tour.filter((e) => !added.includes(e));
           s += ic + dayPenalty(T0 + ic + min, o) - dayPenalty(T0, o); }
         return s;
       };
+      const mc = it.isRoute ? o.routeMoveCost : o.moveCost;
       const curChoice = choice.get(it.key) || null;
       let best = { c: curChoice, cost: stay };
       // nuværende plads (oprindelig) som kandidat, hvis kunden allerede er flyttet
-      if (curChoice) { const back = costOf(it.cur) - o.moveCost; if (back < best.cost - 1e-6) best = { c: null, cost: back }; }
-      for (const c of it.cands) { if (c === curChoice) continue; const cost = costOf(c.occ) + (curChoice ? 0 : o.moveCost); if (cost < best.cost - 1e-6) best = { c, cost }; }
+      if (curChoice) { const back = costOf(it.cur) - mc; if (back < best.cost - 1e-6) best = { c: null, cost: back }; }
+      for (const c of it.cands) { if (c === curChoice) continue; const cost = costOf(c.occ) + (curChoice ? 0 : mc); if (cost < best.cost - 1e-6) best = { c, cost }; }
       if (best.c === curChoice) { // genindsæt præcis som før
         for (const r of removed.reverse()) { const dy = S.days.get(r.d); dy.tour.splice(r.i, 0, r.x); dy.drive += r.g; dy.work += r.x.min; }
         continue;
       }
       const occ = best.c ? best.c.occ : it.cur;
-      for (const c of occ) { const dy = S.day(c.date); const { cost, at } = insertCost(S, dy.tour, it.pt); dy.tour.splice(at, 0, { pt: it.pt, min: c.min, item: it.key }); dy.drive += cost; dy.work += c.min; }
+      for (const c of occ) { const dy = S.day(c.date); const { cost, at } = insertCost(S, dy.tour, c.pt); dy.tour.splice(at, 0, { pt: c.pt, min: c.min, item: it.key }); dy.drive += cost; dy.work += c.min; }
       if (best.c) choice.set(it.key, best.c); else choice.delete(it.key);
       improved = true;
     }
@@ -166,8 +193,8 @@ export function runOptimizer(P, { seed = 1, now = () => Date.now() } = {}) {
   }
   const after = summary(S, o);
   const moves = P.items.filter((it) => choice.has(it.key)).map((it) => { const c = choice.get(it.key);
-    return { key: it.key, agreementIds: it.agreementIds, addressId: it.addressId, customerId: it.customerId, fromRoute: it.routeId, toRoute: c.routeId, shift: c.shift,
-      anchors: Object.fromEntries(c.anchors), fromDate: it.ref, toDate: D.addDays(it.ref, c.shift), fromDates: it.cur.map((x) => x.date), toDates: c.occ.map((x) => x.date) }; });
+    return { key: it.key, isRoute: !!it.isRoute, n: it.n, agreementIds: it.agreementIds, addressId: it.addressId, customerId: it.customerId, fromRoute: it.routeId, toRoute: c.routeId, shift: c.shift,
+      anchors: c.anchors ? Object.fromEntries(c.anchors) : null, fromDate: it.ref, toDate: D.addDays(it.ref, c.shift), fromDates: it.cur.map((x) => x.date), toDates: c.occ.map((x) => x.date) }; });
   return { moves, before, after, passes: pass };
 }
 function summary(S, o) {
@@ -183,7 +210,7 @@ export function evaluate(P, moves) {
   const o = P.opts; const S = makeState(P); const chosen = new Map(moves.map((m) => [m.key, m]));
   for (const x of P.fixed) { const dy = S.day(x.date); dy.tour.push({ pt: x.pt, min: x.min, item: null }); dy.work += x.min; }
   for (const it of P.items) { const m = chosen.get(it.key); const c = m && it.cands.find((k) => k.routeId === m.toRoute && k.shift === m.shift);
-    for (const x of c ? c.occ : it.cur) { const dy = S.day(x.date); dy.tour.push({ pt: it.pt, min: x.min, item: it.key }); dy.work += x.min; } }
+    for (const x of c ? c.occ : it.cur) { const dy = S.day(x.date); dy.tour.push({ pt: x.pt, min: x.min, item: it.key }); dy.work += x.min; } }
   for (const dy of S.days.values()) reorder(S, dy);
   return summary(S, o);
 }
@@ -193,7 +220,7 @@ export function dayStops(P, moves, date) {
   const chosen = new Map(moves.map((m) => [m.key, m])); const out = [];
   for (const x of P.fixed) if (x.date === date) out.push({ visitId: x.visitId, min: x.min });
   for (const it of P.items) { const m = chosen.get(it.key); const c = m && it.cands.find((k) => k.routeId === m.toRoute && k.shift === m.shift);
-    for (const x of c ? c.occ : it.cur) if (x.date === date) out.push({ addressId: it.addressId, min: x.min }); }
+    for (const x of c ? c.occ : it.cur) if (x.date === date) out.push({ addressId: x.addressId, min: x.min }); }
   return out;
 }
 
@@ -205,6 +232,7 @@ export function explain(P, moves, customerId) {
   const base = evaluate(P, moves); const T = (x) => (x ? x.work + x.drive : 0); const out = [];
   for (const s of P.skipped.filter((x) => x.customerId === customerId)) out.push({ addressId: s.addressId, routeId: s.routeId, why: s.why });
   for (const it of P.items.filter((x) => x.customerId === customerId)) {
+    if (it.whyAll) { out.push({ addressId: it.addressId, routeId: it.routeId, why: it.whyAll }); continue; }
     const others = moves.filter((m) => m.key !== it.key); const mine = moves.find((m) => m.key === it.key);
     const stay = mine ? evaluate(P, others) : base;
     const opts = it.cands.map((c) => { const ev = mine && mine.toRoute === c.routeId && mine.shift === c.shift ? base : evaluate(P, [...others, { key: it.key, toRoute: c.routeId, shift: c.shift }]);
@@ -214,4 +242,34 @@ export function explain(P, moves, customerId) {
     out.push({ addressId: it.addressId, routeId: it.routeId, ref: it.ref, moved: !!mine, opts, why: it.why });
   }
   return out;
+}
+
+/** Fase 1 (hele ruter) + fase 2 (enkeltkunder). routeShifts givet = spring fase 1 over (bruges når ruteflytninger fravælges). */
+export function optimizeAll(db, opts, { routeShifts, now } = {}) {
+  let routeMoves = [], before0;
+  if (!routeShifts) {
+    const P1 = buildProblem(db, { ...opts, mode: 'routes' }); const r1 = runOptimizer(P1, { now });
+    routeMoves = r1.moves.map((m) => ({ key: m.key, routeId: m.toRoute, shift: m.shift, fromDate: m.fromDate, toDate: m.toDate, n: m.n })); before0 = r1.before;
+    routeShifts = Object.fromEntries(routeMoves.map((m) => [m.routeId, m.shift]));
+  }
+  const P = buildProblem(db, { ...opts, routeShifts }); const r2 = runOptimizer(P, { now });
+  if (!before0) before0 = evaluate(buildProblem(db, opts), []);
+  return { P, routeShifts, routeMoves, moves: r2.moves, before: before0, after: r2.after };
+}
+/**
+ * Alle flytninger der skal gennemføres: de valgte kundeflytninger + kunder der følger med deres rute.
+ * routeAnchors: ny dato for de flyttede ruter (rutens egen dato/rytme rettes, så nye kunder lander rigtigt).
+ */
+export function finalMoves(P, customerMoves) {
+  const sel = new Map(customerMoves.map((m) => [m.key, m])); const out = []; const routeAnchors = {};
+  for (const it of P.items) {
+    const old = it.cur.map((x) => D.addDays(x.date, -(it.curShift || 0)));
+    if (sel.has(it.key)) { out.push({ ...sel.get(it.key), fromDates: old }); continue; }
+    if (!it.curShift) continue;
+    const anchors = Object.fromEntries([...it.d0].map(([id, d]) => [id, D.addDays(d, it.curShift)]));
+    out.push({ key: it.key, agreementIds: it.agreementIds, addressId: it.addressId, customerId: it.customerId, fromRoute: it.routeId, toRoute: it.routeId, shift: it.curShift, anchors,
+      fromDate: it.ref, toDate: D.addDays(it.ref, it.curShift), fromDates: old, toDates: it.cur.map((x) => x.date) });
+    const a0 = Object.values(anchors).sort()[0]; if (!routeAnchors[it.routeId] || a0 < routeAnchors[it.routeId]) routeAnchors[it.routeId] = a0;
+  }
+  return { moves: out, routeAnchors };
 }

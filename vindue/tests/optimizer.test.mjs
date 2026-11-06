@@ -104,3 +104,30 @@ test('optimering: rute udført af en anden tæller ikke med og kan ikke modtage 
   assert.ok(P.items.every((it) => it.cands.every((c) => c.routeId !== 'T')));
   assert.match(O.explain(P, [], 'c25')[0].why, /en anden/);
 });
+
+test('optimering: hel rute flyttes til en dag hvor den passer bedre (Horne ons → fre efter Hjørring)', () => {
+  const db = S.emptyDb();
+  db.routes = [
+    { id: 'F', name: 'Frederikshavn', intervalWeeks: 4, anchorDate: '2027-03-03', order: [] },
+    { id: 'H', name: 'Horne', intervalWeeks: 4, anchorDate: '2027-03-03', order: [] },
+    { id: 'J', name: 'Hjørring 2', intervalWeeks: 4, anchorDate: '2027-03-05', order: [] },
+  ];
+  let i = 0; const add = (rid, lat, lng, dur) => { const r = db.routes.find((x) => x.id === rid); i++;
+    db.addresses.push({ id: 'ad' + i, customerId: 'c' + i, street: 'V' + i, lat, lng });
+    db.agreements.push({ id: 'ag' + i, customerId: 'c' + i, addressId: 'ad' + i, routeId: rid, service: 'V', price: 200, intervalWeeks: 4, durationMin: dur, anchorDate: r.anchorDate, seasonMonths: [], active: true }); r.order.push('ad' + i); };
+  for (let k = 0; k < 18; k++) add('F', 57.44 + k * 0.002, 10.53, 20);
+  for (let k = 0; k < 8; k++) add('H', 57.55 + k * 0.002, 9.95, 15);
+  for (let k = 0; k < 10; k++) add('J', 57.46 + k * 0.002, 9.98, 20);
+  S.planAhead(db, '2027-12-31', '2027-01-01');
+  const r = O.optimizeAll(db, { start: START, startPoint: { lat: 57.47, lng: 10.2 }, timeMs: 2000 });
+  const tot = (s, d) => (s.perDate[d] ? s.perDate[d].work + s.perDate[d].drive : 0);
+  assert.ok(tot(r.after, '2027-03-03') < tot(r.before, '2027-03-03') - 60, 'onsdag kortere');
+  assert.ok(r.after.drive < r.before.drive, 'mindre kørsel');
+  assert.ok(r.routeMoves.some((m) => m.routeId === 'H' && m.shift === 2) || r.moves.filter((m) => m.toRoute === 'J').length >= 6, JSON.stringify(r.routeMoves));
+  // gennemfør og tjek at Horne nu ligger fredag og rutens dato er rettet
+  const fm = O.finalMoves(r.P, r.moves); S.applyRouteMoves(db, { id: 'u1', role: 'admin' }, fm.moves, START, '2027-12-31', fm.routeAnchors);
+  const hv = db.visits.filter((v) => v.plannedDate >= START && v.plannedDate < '2027-03-08' && ['F', 'H', 'J'].includes(v.routeId));
+  assert.ok(!hv.some((v) => v.plannedDate === '2027-03-03' && v.addressId <= 'ad26' && Number(v.addressId.slice(2)) > 18), 'ingen Horne-kunder onsdag');
+  assert.equal(new Set(db.visits.map((v) => v.id)).size, db.visits.length);
+  if (r.routeMoves.length) assert.equal(db.routes.find((x) => x.id === 'H').anchorDate, '2027-03-05');
+});
