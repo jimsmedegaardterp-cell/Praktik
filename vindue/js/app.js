@@ -15,7 +15,7 @@ import { showRouteMap } from './map.js';
 import * as KV from './store.js';
 import * as O from './optimizer.js';
 
-export const VERSION = '2026-11-07 #65';
+export const VERSION = '2026-11-07 #66';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -636,6 +636,18 @@ function dataCheck() {
     ['ℹ️ Faste aftaler uden rute (planlægges på deres egen dato – kun til orientering)', live.flatMap((c) => agOf(c).filter((g) => g.intervalWeeks && !g.routeId).map((g) => ({ c, txt: `${g.service} · hver ${g.intervalWeeks}. uge · ${kr(g.price)}` })))],
   ];
 }
+/** Find og fjern en tekst (fx "opkøb Bjergby") i beskrivelser, noter og opgaver – resten af teksten bliver. */
+function phraseDialog(q = ui._phrase ?? 'opkøb Bjergby') {
+  const dl = document.getElementById('dlg'); if (dl.open) dl.close();
+  ui._phrase = q; const hits = q.trim().length >= 3 ? S.findPhrase(db, q) : [];
+  openDlg(`<h2>Find og fjern tekst</h2><p class="small mute">Søger i beskrivelser, særlig opmærksomhed, kundenoter, opgaver og fakturatekster. Endelser tæller med ("opkøb" finder også "opkøbt fra"). Kun det fundne fjernes – resten af teksten bliver.</p>
+    <div class="row"><input id="phQ" value="${esc(q)}" class="sp"><button type="button" data-act="phraseFind2">Søg</button></div>
+    <p><b>${hits.length} steder</b>${hits.length ? ' – fjern fluebenet ved dem, der skal blive' : ''}</p>
+    <div style="max-height:50vh;overflow:auto"><table>${hits.map((h) => `<tr class="small"><td><input type="checkbox" name="${esc(h.col + '/' + h.id + '/' + h.field)}" checked></td><td>${esc(cust(h.customerId)?.name || '')}<br><span class="mute">${esc(h.label)}</span></td><td><s class="mute">${esc(h.before)}</s><br>${esc(h.after) || '<i class="mute">(tom)</i>'}</td></tr>`).join('')}</table></div>`,
+    hits.length ? (f) => { const ids = new Set(Object.entries(f).filter(([k, v]) => v === true && k.includes('/')).map(([k]) => k)); if (!ids.size) return 'Intet valgt';
+      const n = S.removePhrase(db, ui.user, q, ids); toast(`Tekst fjernet ${n} steder`); } : null, hits.length ? 'Annuller' : 'Luk');
+  const qi = document.getElementById('phQ'); qi.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); phraseDialog(qi.value); } };
+}
 function checkDialog() {
   const sec = dataCheck();
   openDlg(`<h2>Datakontrol</h2><p class="small mute">Klik på en kunde for at rette. Listen opdateres, når du åbner den igen.</p>
@@ -1124,7 +1136,7 @@ const optOpts = () => { const o = optState(); return { start: o.start, startPoin
 function optProblem() { return O.buildProblem(db, optOpts()); }
 /** Kør (fase 2 igen hvis ruteflytninger er fravalgt). */
 function optCompute(o, keepRoutes) {
-  const shifts = keepRoutes ? Object.fromEntries(o.routeMoves.filter((m) => !o.routeOff.has(m.key)).map((m) => [m.routeId, m.shift])) : undefined;
+  const shifts = keepRoutes ? Object.fromEntries(o.routeMoves.filter((m) => !o.routeOff.has(m.key)).map((m) => [m.key, m.shift])) : undefined;
   const all = O.optimizeAll(db, optOpts(), shifts ? { routeShifts: shifts } : {});
   o.P = all.P; o.res = { moves: all.moves, before: keepRoutes ? o.res.before : all.before, after: all.after };
   if (!keepRoutes) { o.routeMoves = all.routeMoves; o.routeOff = new Set(); }
@@ -1562,7 +1574,7 @@ function admin() {
   <div class="card"><h2>Ruter</h2>
     <table><tr><th>Navn</th><th>Medarbejder</th><th>Hver … uge</th><th>Næste dato</th></tr>${db.routes.map((r) => `<tr><td><input data-rf="name" data-r="${r.id}" value="${esc(r.name)}"></td><td><select data-rf="employeeId" data-r="${r.id}">${db.employees.filter((x) => !x.inactive).map((e) => `<option value="${e.id}" ${e.id === r.employeeId ? 'selected' : ''}>${esc(e.name)}</option>`).join('')}</select></td>
       <td><input type="number" min="1" max="52" data-rf="intervalWeeks" data-r="${r.id}" value="${r.intervalWeeks}" style="width:70px"></td><td><input type="date" data-rf="anchorDate" data-r="${r.id}" value="${D.nextRouteDate(r, todayIso())}"></td></tr>`).join('')}</table>
-    <div class="row" style="margin-top:8px"><button data-act="showCheck">Datakontrol</button><button data-act="addRoute">+ Rute</button><button data-act="delEmptyRoutes">Slet ruter uden kunder</button><button data-act="recalcRoutes">Genberegn rytme og dato ud fra kunderne</button></div>
+    <div class="row" style="margin-top:8px"><button data-act="showCheck">Datakontrol</button><button data-act="phraseFind">Find og fjern tekst …</button><button data-act="addRoute">+ Rute</button><button data-act="delEmptyRoutes">Slet ruter uden kunder</button><button data-act="recalcRoutes">Genberegn rytme og dato ud fra kunderne</button></div>
     <p class="small mute">Ændring af rutens dato/rytme flytter ikke eksisterende besøg automatisk – brug Kalender (flyt/forskyd) eller ret aftalerne.</p></div>
   <div class="card"><h2>SMS-skabeloner</h2>${Object.entries(db.templates).map(([k, v]) => `<label><span>${esc(k)} – felter: {navn} {dato} {tid} {nydato}</span><textarea data-tpl="${k}">${esc(v)}</textarea></label>`).join('')}</div>
   <div class="card"><h2>Lukkedage (ferie mv.)</h2><p class="small mute">Helligdage beregnes automatisk. Besøg på lukkedage flyttes til næste arbejdsdag ved planlægning.</p><div class="row"><input type="date" id="cd"><button data-act="addClosed">Tilføj</button></div><div class="small">${db.closedDays.map((d) => `<span class="pill">${d} <a href="#" data-act="rmClosed" data-d="${d}">×</a></span>`).join(' ')}</div></div>
@@ -1870,6 +1882,8 @@ document.addEventListener('click', async (e) => {
         if (!confirm(`Slet ${empty.length} ruter uden kunder?`)) return; db.routes = db.routes.filter((r) => !empty.includes(r)); S.audit(db, ui.user.id, 'route.deleteEmpty', '-', { n: empty.length }); toast(`${empty.length} ruter slettet`); break; }
       case 'showDbl': return dblDialog();
       case 'showCheck': return checkDialog();
+      case 'phraseFind': return phraseDialog();
+      case 'phraseFind2': return phraseDialog(document.getElementById('phQ').value);
       case 'dblCancel': { const v = db.visits.find((x) => x.id === id); if (!confirm(`Aflys ${v.service} ${fmt(v.plannedDate)}?`)) return; S.registerVisit(db, ui.user, id, { result: 'aflyst', opId: 'dbl:' + id, note: 'Dobbeltbooking' }); save(); document.getElementById('dlg').close(); render(); return dblDialog(); }
       case 'showIssues': return issuesDialog(id);
       case 'issueDone': { const [bid, k] = b.dataset.k.split(':'); const it = db.imports.find((x) => x.batchId === bid).issues[+k]; it.done = !it.done; save(); b.textContent = it.done ? '✓ Løst' : 'Markér løst'; b.closest('tr').style.opacity = it.done ? .45 : 1; return; }

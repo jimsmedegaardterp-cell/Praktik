@@ -398,3 +398,30 @@ export function invoiceTextFor(db, v) {
   const other = db.agreements.find((a) => a.customerId === v.customerId && a.service === v.service);
   return other?.invoiceText || v.service || ag?.invoiceText || '';
 }
+
+/* --------- Find og fjern en tekst i beskrivelser (fx "opkøb Bjergby") --------- */
+const reEsc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** Regex for en frase: ordene i rækkefølge, endelser tilladt (opkøb → opkøbt), op til 15 tegn imellem (fx "opkøbt fra"). */
+export function phraseRegex(phrase) {
+  const ws = String(phrase || '').trim().split(/\s+/).filter(Boolean).map(reEsc); if (!ws.length) return null;
+  return new RegExp(`[\\s,;:/–-]*\\(?\\s*${ws.join('[\\p{L}\\d]*[^\\n]{0,15}?')}[\\p{L}\\d]*\\s*\\)?`, 'giu');
+}
+export function stripPhrase(text, re) {
+  if (!text || !re) return text; re.lastIndex = 0; if (!re.test(text)) return text; re.lastIndex = 0;
+  return text.replace(re, ' ').replace(/[ \t]{2,}/g, ' ').replace(/ +([,.;:])/g, '$1').replace(/^[\s,.;:–-]+|[\s,;:–-]+$/g, '').replace(/^[ \t,.;:–-]+|[ \t,;:–-]+$/gm, '');
+}
+const PHRASE_FIELDS = [['addresses', 'access', 'Beskrivelse'], ['addresses', 'obs', 'Særlig opmærksomhed'], ['customers', 'notes', 'Kundenote'], ['customers', 'rememberNext', 'Kun denne gang'],
+  ['agreements', 'service', 'Opgave'], ['agreements', 'invoiceText', 'Fakturatekst'], ['customerNotes', 'text', 'Note']];
+/** Alle steder frasen findes: [{col, id, field, label, customerId, before, after}] – ændrer intet. */
+export function findPhrase(db, phrase) {
+  const re = phraseRegex(phrase); if (!re) return []; const out = [];
+  for (const [col, field, label] of PHRASE_FIELDS) for (const x of db[col] || []) { const t = x[field]; if (typeof t !== 'string' || !t) continue;
+    const after = stripPhrase(t, re); if (after !== t) out.push({ col, id: x.id, field, label, customerId: col === 'customers' ? x.id : x.customerId, before: t, after }); }
+  return out;
+}
+export function removePhrase(db, user, phrase, onlyIds) {
+  require_(user, 'customer.edit'); const hits = findPhrase(db, phrase).filter((h) => !onlyIds || onlyIds.has(h.col + '/' + h.id + '/' + h.field));
+  for (const h of hits) { const x = db[h.col].find((y) => y.id === h.id); if (x) x[h.field] = h.after; }
+  audit(db, user.id, 'text.removePhrase', '-', { phrase, n: hits.length });
+  return hits.length;
+}

@@ -258,3 +258,18 @@ test('slet aftale: fremtidige besøg væk, udførte bevaret', async () => {
   assert.ok(db.visits.some((v) => v.id === v0.id && v.status === 'udfoert'), 'udført bevaret');
   assert.ok(!db.visits.some((v) => v.agreementId === ag.id && v.status === 'planlagt'));
 });
+
+test('fjern frase fra beskrivelser – resten bliver', () => {
+  const db = S.emptyDb();
+  db.customers = [{ id: 'c1', name: 'A', notes: 'Opkøb Bjergby. Ring før' }];
+  db.addresses = [{ id: 'a1', customerId: 'c1', street: 'V 1', access: 'Alt på huset - opkøbt fra Bjergby' }, { id: 'a2', customerId: 'c1', street: 'V 2', access: '(Opkøb Bjergby) Kun forside' }, { id: 'a3', customerId: 'c1', street: 'V 3', access: 'Bjergby kirke, nøgle i skur' }];
+  db.agreements = [{ id: 'g1', customerId: 'c1', service: 'Vinduesvask opkøb bjergby' }];
+  const hits = S.findPhrase(db, 'opkøb Bjergby');
+  assert.equal(hits.length, 4);
+  assert.equal(hits.find((h) => h.id === 'a1').after, 'Alt på huset');
+  assert.equal(hits.find((h) => h.id === 'a2').after, 'Kun forside');
+  assert.equal(hits.find((h) => h.id === 'c1').after, 'Ring før');
+  assert.equal(S.removePhrase(db, admin, 'opkøb Bjergby'), 4);
+  assert.equal(db.addresses[2].access, 'Bjergby kirke, nøgle i skur', 'uden "opkøb" røres ikke');
+  assert.equal(db.agreements[0].service, 'Vinduesvask');
+});

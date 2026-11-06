@@ -131,3 +131,22 @@ test('optimering: hel rute flyttes til en dag hvor den passer bedre (Horne ons �
   assert.equal(new Set(db.visits.map((v) => v.id)).size, db.visits.length);
   if (r.routeMoves.length) assert.equal(db.routes.find((x) => x.id === 'H').anchorDate, '2027-03-05');
 });
+
+test('optimering: samme rute på to dage – nabokunder samles på én dag', () => {
+  const db = S.emptyDb();
+  db.routes = [{ id: 'M', name: 'Mygdal', intervalWeeks: 4, anchorDate: '2027-03-02', order: [] }, { id: 'X', name: 'Andet', intervalWeeks: 4, anchorDate: '2027-03-04', order: [] }];
+  let i = 0; const add = (rid, anchor, lat, lng, dur) => { i++; db.addresses.push({ id: 'ad' + i, customerId: 'c' + i, street: 'V' + i, lat, lng });
+    db.agreements.push({ id: 'ag' + i, customerId: 'c' + i, addressId: 'ad' + i, routeId: rid, service: 'V', price: 200, intervalWeeks: 4, durationMin: dur, anchorDate: anchor, seasonMonths: [], active: true }); };
+  for (let k = 0; k < 10; k++) add('M', '2027-03-02', 57.52 + k * 0.001, 10.05, 20); // tirsdag
+  for (let k = 0; k < 4; k++) add('M', '2027-03-04', 57.521 + k * 0.001, 10.051, 20); // torsdag – naboer
+  for (let k = 0; k < 14; k++) add('X', '2027-03-04', 57.45 + k * 0.001, 10.3, 25); // torsdag – andet sted, fylder dagen
+  S.planAhead(db, '2027-12-31', '2027-01-01');
+  const r = O.optimizeAll(db, { start: START, startPoint: { lat: 57.47, lng: 10.2 }, timeMs: 2000 });
+  const fm = O.finalMoves(r.P, r.moves);
+  const moved = fm.moves.filter((m) => Number(m.addressId.slice(2)) >= 11 && Number(m.addressId.slice(2)) <= 14 && m.toDate === '2027-03-02');
+  assert.equal(moved.length, 4, 'alle fire torsdagskunder til tirsdag: ' + JSON.stringify(r.routeMoves) + JSON.stringify(r.moves.map((m) => [m.addressId, m.toDate])));
+  assert.ok(r.after.drive < r.before.drive);
+  // uden ruteflytninger: naboerne flyttes samlet som enkeltkunder
+  const r2 = O.optimizeAll(db, { start: START, startPoint: { lat: 57.47, lng: 10.2 }, timeMs: 2000 }, { routeShifts: {} });
+  assert.equal(r2.moves.filter((m) => m.toDate === '2027-03-02' && Number(m.addressId.slice(2)) >= 11).length, 4);
+});
