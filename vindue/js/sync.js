@@ -4,11 +4,11 @@
 
 // Samlinger der er lister med id
 const LISTS = { customers: 'customer', addresses: 'address', agreements: 'agreement', routes: 'route', employees: 'employee', visits: 'visit',
-  invoiceLinks: 'invoice', smsMessages: 'sms', audit: 'audit' };
+  invoiceLinks: 'invoice', smsMessages: 'sms', audit: 'audit', customerNotes: 'note' };
 // Samlinger der er objekter (nøgle → værdi)
 const MAPS = { dayPlans: 'dayplan', vdraft: 'vdraft' };
 // Det medarbejdere må skrive (skal matche employee_may_write i schema.sql)
-export const EMPLOYEE_KINDS = new Set(['visit', 'vdraft', 'sms', 'audit']);
+export const EMPLOYEE_KINDS = new Set(['visit', 'vdraft', 'sms', 'audit', 'note']);
 const IMPORT_KIND = 'import';
 
 /**
@@ -34,7 +34,7 @@ export function scoper(db, todayIso = new Date().toISOString().slice(0, 10)) {
       case 'agreement': return arr(new Set(routeEmp.get(data.routeId) ? [routeEmp.get(data.routeId)] : []));
       case 'visit': return arr(visits.get(data.id) || visitEmps(data));
       case 'vdraft': return arr(visits.get(id));
-      case 'invoice': case 'sms': return cust(data.customerId || addrCust.get(data.addressId));
+      case 'invoice': case 'sms': case 'note': return cust(data.customerId || addrCust.get(data.addressId));
       case 'employee': return [String(data.id)];
       case 'route': case 'dayplan': case 'settings': return null;
       case 'audit': return data.byEmp ? [String(data.byEmp)] : []; // medarbejder ser egne logposter

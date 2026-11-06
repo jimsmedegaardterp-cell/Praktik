@@ -67,3 +67,9 @@ insert into records(org_id, kind, id, data) select org_id, 'customer', 'cx', '{}
 select 'jim med kode skriver' as t, count(*) from records where id = 'cx';
 select 'mads uden MFA påvirkes ikke' as t; select pg_temp.as_user('00000000-0000-0000-0000-00000000000b'); select set_config('request.jwt.claims', '{"aal":"aal1"}', false);
 select 'mads ser stadig egne' as t, count(*) from records;
+
+-- Medarbejdernoter (kind = note)
+reset role; set role authenticated; select pg_temp.as_user('00000000-0000-0000-0000-00000000000b'); select set_config('request.jwt.claims', '{"aal":"aal1"}', false);
+select 'mads skriver note til egen kunde' as t; insert into records(org_id, kind, id, data, emps) select org_id, 'note', 'n1', '{"text":"Hund"}', '{e2}' from members where user_id = auth.uid();
+select 'mads note til anden rute (skal fejle)' as t; insert into records(org_id, kind, id, data, emps) select org_id, 'note', 'n2', '{}', '{e3}' from members where user_id = auth.uid();
+reset role; select 'noter i db' as t, string_agg(id, ',') from records where kind = 'note';

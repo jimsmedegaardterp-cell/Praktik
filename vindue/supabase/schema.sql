@@ -81,9 +81,9 @@ $$;
 create or replace function public.my_employee(o uuid) returns text language sql stable security definer set search_path = public as $$
   select employee_id from public.members where org_id = o and user_id = auth.uid()
 $$;
--- Hvilke typer data en medarbejder må skrive
+-- Hvilke typer data en medarbejder må skrive (note = medarbejderens noter til en kunde)
 create or replace function public.employee_may_write(k text) returns boolean language sql immutable as $$
-  select k in ('visit', 'vdraft', 'sms', 'audit')
+  select k in ('visit', 'vdraft', 'sms', 'audit', 'note')
 $$;
 
 alter table public.orgs enable row level security;
