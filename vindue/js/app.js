@@ -15,7 +15,7 @@ import { showRouteMap } from './map.js';
 import * as KV from './store.js';
 import * as O from './optimizer.js';
 
-export const VERSION = '2026-11-06 #60';
+export const VERSION = '2026-11-06 #61';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -1161,15 +1161,31 @@ function optimView() {
     <div style="overflow-x:auto"><table><tr><th></th><th>Kunde</th><th>Adresse</th><th>Fra</th><th>Til</th><th style="text-align:right">Dage</th></tr>
     ${res.moves.map((m) => `<tr><td><input type="checkbox" data-optmove="${esc(m.key)}" ${o.off?.has(m.key) ? '' : 'checked'}></td><td>${esc(cust(m.customerId)?.name)}</td><td class="small">${esc(addr(m.addressId)?.street)}</td><td>${esc(route(m.fromRoute)?.name)} ${fmt(m.fromDate)}</td><td><b>${esc(route(m.toRoute)?.name)} ${fmt(m.toDate)}</b></td><td style="text-align:right">${m.shift > 0 ? '+' : ''}${m.shift}</td></tr>`).join('')}
     </table></div>
-    <div class="row" style="margin-top:10px"><span class="sp small mute">${o.backupOk ? 'Gennemfør flytter de markerede kunder permanent. Kan fortrydes her bagefter, og backup-filen kan altid gendannes.' : 'Kontrollér backup-filen (trin 1) før du kan gennemføre.'}</span><button class="pri" data-act="optApply" ${!o.backupOk || !sel.length || o.busy ? 'disabled' : ''}>✅ Gennemfør ${sel.length} flytninger</button></div></div>` : ''}`;
+    <div class="row" style="margin-top:10px"><span class="sp small mute">${o.backupOk ? 'Gennemfør flytter de markerede kunder permanent. Kan fortrydes her bagefter, og backup-filen kan altid gendannes.' : 'Kontrollér backup-filen (trin 1) før du kan gennemføre.'}</span><button class="pri" data-act="optApply" ${!o.backupOk || !sel.length || o.busy ? 'disabled' : ''}>✅ Gennemfør ${sel.length} flytninger</button></div></div>` : ''}
+  ${optWhyCard(o, sel)}`;
   const bk = document.getElementById('optBk'); if (bk) bk.onchange = async (e) => { const f = e.target.files[0]; if (!f) return;
     try { const d = JSON.parse(await f.text()); o.backupOk = JSON.stringify(d.customers) === JSON.stringify(db.customers) && JSON.stringify(d.agreements) === JSON.stringify(db.agreements) && JSON.stringify(d.routes) === JSON.stringify(db.routes) && JSON.stringify(d.visits) === JSON.stringify(db.visits) && JSON.stringify(d.addresses) === JSON.stringify(db.addresses);
       toast(o.backupOk ? 'Backup kontrolleret ✓' : 'Filen svarer ikke til data nu – download en ny backup'); } catch { o.backupOk = false; toast('Kunne ikke læse filen'); } render(); };
-  const ch = (id, fn) => { const el = document.getElementById(id); if (el) el.onchange = () => { fn(el.value); o.res = null; render(); }; };
+  const wq = document.getElementById('optWhyQ'); if (wq) wq.oninput = () => { o.whyQ = wq.value; render(); const n = document.getElementById('optWhyQ'); n.focus(); n.setSelectionRange(n.value.length, n.value.length); };
+  const ch = (id, fn) => { const el = document.getElementById(id); if (el) el.onchange = () => { fn(el.value); o.res = null; o._wP = null; render(); }; };
   ch('optStart', (v) => { if (v) o.start = v; });
   ch('optMin', (v) => (o.minH = Number(v) || 7)); ch('optMax', (v) => (o.maxH = Number(v) || 8));
 }
 KV.get('vindue-optundo').then((u) => { if (u?.db) { ui._optUndo = { at: u.at }; } }).catch(() => {});
+/** "Hvorfor blev kunden (ikke) flyttet?" – årsager og hver mulig flytning med gevinst/tab. */
+function optWhyCard(o, sel) {
+  const q = (o.whyQ || '').toLowerCase(); const h = (m) => D.hm(Math.round(m));
+  const hits = q.length >= 2 ? db.customers.filter((c) => !c.deleted && (c.name.toLowerCase().includes(q) || db.addresses.some((a) => a.customerId === c.id && a.street.toLowerCase().includes(q)))).slice(0, 8) : [];
+  let body = '';
+  if (o.whyC) { const P = o.res ? o.P : (o._wP ||= optProblem()); const ex = O.explain(P, o.res ? sel : [], o.whyC);
+    body = `<h3>${esc(cust(o.whyC)?.name)}</h3>` + (ex.length ? ex.map((x) => `<div style="border-top:1px solid var(--line);padding:8px 0"><b>${esc(addr(x.addressId)?.street)}</b> · ${esc(route(x.routeId)?.name || '–')}${x.ref ? ` · næste besøg ${fmt(x.ref)}` : ''}
+      ${!x.opts ? `<div class="warn-t">Kan ikke flyttes: ${esc(x.why)}</div>` : `<div>${x.moved ? '<span class="pill ok">Flyttes i forslaget</span>' : '<span class="pill">Bliver</span>'}</div>
+      ${x.opts.length ? `<table class="small"><tr><th>Mulig flytning</th><th style="text-align:right">Gevinst</th><th style="text-align:right">Kørsel i alt</th><th>Dage (før → efter)</th></tr>${x.opts.map((c) => `<tr${c.chosen ? ' style="font-weight:700"' : ''}><td>${esc(route(c.routeId)?.name)} ${fmt(c.toDate)} (${c.shift > 0 ? '+' : ''}${c.shift})</td><td style="text-align:right;color:${c.delta < 0 ? 'var(--ok)' : 'var(--bad)'}">${c.delta < 0 ? '+' + -c.delta : '−' + c.delta}</td><td style="text-align:right">${c.drive > 0 ? '+' : ''}${c.drive} min</td><td>${c.days.map((d) => `${fmt(d.d)} ${h(d.before)}→${h(d.after)}`).join(' · ')}</td></tr>`).join('')}</table>` : '<div class="small mute">Ingen ruter kører inden for vinduet med et interval der passer.</div>'}
+      ${x.why.length ? `<details class="small"><summary>Ruter der ikke kan bruges (${x.why.length})</summary>${x.why.map((w) => `<div>${esc(route(w.routeId)?.name)}: ${esc(w.why)}</div>`).join('')}</details>` : ''}`}</div>`).join('') : '<p class="mute">Kunden har ingen aktive aftaler.</p>')
+      + '<p class="small mute">Gevinst = sparede minutter (kørsel + straf for dage over/under målet), set over 12 uger og efter de øvrige valgte flytninger. Gevinst under 10 = ikke værd at flytte.</p>'; }
+  return `<div class="card"><h3>Hvorfor blev en kunde (ikke) flyttet?</h3><div class="row"><input id="optWhyQ" placeholder="Søg kunde eller adresse" value="${esc(o.whyQ || '')}" class="sp"></div>
+    ${hits.length ? `<div class="row small">${hits.map((c) => `<button class="small" data-act="optWhy" data-id="${c.id}">${esc(c.name)}</button>`).join('')}</div>` : ''}${body}</div>`;
+}
 async function optCalibrate() {
   const o = optState(); const P = optProblem(); const base = O.evaluate(P, []);
   const days = Object.entries(base.perDate).filter(([, x]) => x.n >= 4).sort((a, b) => b[1].n - a[1].n).slice(0, 6).map(([d]) => d);
@@ -1569,7 +1585,7 @@ function openDlg(html, onSubmit, closeLabel = 'Annuller') {
 /* ---------------- Hændelser ---------------- */
 document.addEventListener('click', async (e) => {
   const tab = e.target.closest('[data-tab]'); if (tab) { ui.tab = tab.dataset.tab; ui.customer = null; return render(); }
-  const oe = e.target.closest('[data-optexcl]'); if (oe) { const o = optState(); const id = oe.dataset.optexcl; o.excl.has(id) ? o.excl.delete(id) : o.excl.add(id); o.res = null; return render(); }
+  const oe = e.target.closest('[data-optexcl]'); if (oe) { const o = optState(); const id = oe.dataset.optexcl; o.excl.has(id) ? o.excl.delete(id) : o.excl.add(id); o.res = null; o.P = null; o._wP = null; return render(); }
   const om = e.target.closest('[data-optmove]'); if (om) { const o = optState(); o.off ||= new Set(); const k = om.dataset.optmove; o.off.has(k) ? o.off.delete(k) : o.off.add(k); return render(); }
   const os = e.target.closest('[data-osel]'); if (os) { ui.ordSel ||= new Set(); const id = os.dataset.osel; ui.ordSel.has(id) ? ui.ordSel.delete(id) : ui.ordSel.add(id); return render(); }
   const ks = e.target.closest('[data-ksel]'); if (ks) { ui.kSel ||= new Set(); const id = ks.dataset.ksel;
@@ -1602,10 +1618,11 @@ document.addEventListener('click', async (e) => {
       case 'back': ui.customer = null; break;
       case 'optOpen': ui.kView = 'opt'; KV.get('vindue-optundo').then((u) => { ui._optUndo = u?.db ? { at: u.at } : null; softRender(); }).catch(() => {}); break;
       case 'optRun': { const o = optState(); o.busy = 'run'; render(); await new Promise((r) => setTimeout(r, 30));
-        try { o.P = optProblem(); o.res = O.runOptimizer(o.P); o.off = new Set(); o.g = {}; o.evalFor = null;
+        try { o.P = optProblem(); o.res = O.runOptimizer(o.P); o._wP = null; o.off = new Set(); o.g = {}; o.evalFor = null;
           S.audit(db, ui.user.id, 'routes.optimize.proposal', '-', { moves: o.res.moves.length, before: o.res.before.objective, after: o.res.after.objective }); }
         finally { o.busy = null; } break; }
       case 'optAll': optState().off = new Set(); break;
+      case 'optWhy': optState().whyC = id; break;
       case 'optNone': { const o = optState(); o.off = new Set((o.res?.moves || []).map((m) => m.key)); break; }
       case 'optCalib': { const o = optState(); try { await optCalibrate(); } catch (er) { toast(er.message); } finally { o.busy = null; } break; }
       case 'optGcheck': { const o = optState(); const sel = o.res.moves.filter((m) => !o.off?.has(m.key));
