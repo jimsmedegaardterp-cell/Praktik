@@ -14,7 +14,7 @@ import { SUPABASE } from './config.js';
 import { showRouteMap } from './map.js';
 import * as KV from './store.js';
 
-export const VERSION = '2026-11-03 #56';
+export const VERSION = '2026-11-06 #57';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -95,13 +95,19 @@ const TABS = [
 ];
 const TABICON = { kalender: '📅', kunder: '👥', mobil: '🚐', faktura: '🧾', okonomi: '📊', sms: '💬', mig: '🙂', import: '📥', admin: '⚙️' };
 const TABSHORT = { faktura: 'Faktura', sms: 'Beskeder' };
+const isPhone = () => window.matchMedia?.('(max-width: 820px)').matches;
+const PHONE_TABS = { admin: ['kalender', 'kunder', 'okonomi', 'mig'], emp: ['mobil', 'mig'] };
+let wasPhone = isPhone(); window.addEventListener('resize', () => { if (isPhone() !== wasPhone) { wasPhone = isPhone(); render(); } });
 function renderTabs() {
   const tabs = TABS.filter(([, , adm]) => !adm || isAdmin());
   if (ui.tab === 'overblik') ui.tab = 'kalender';
   if (!tabs.some(([k]) => k === ui.tab) && !((ui.tab === 'ruter' || ui.tab === 'dag' || ui.tab === 'print') && isAdmin())) ui.tab = tabs[0][0];
-  const active = ui.tab === 'ruter' ? 'kunder' : (ui.tab === 'dag' || ui.tab === 'print') ? 'kalender' : ui.tab;
+  let active = ui.tab === 'ruter' ? 'kunder' : (ui.tab === 'dag' || ui.tab === 'print') ? 'kalender' : ui.tab;
+  let navTabs = tabs;
+  if (isPhone()) { const keep = PHONE_TABS[isAdmin() ? 'admin' : 'emp']; navTabs = tabs.filter(([k]) => keep.includes(k));
+    active = { faktura: 'okonomi', sms: 'mig', admin: 'mig', import: 'mig', mobil: isAdmin() ? 'kalender' : 'mobil' }[active] || active; }
   const unread = db.smsMessages.filter((m) => m.dir === 'ind' && !m.read).length;
-  document.getElementById('tabs').innerHTML = tabs.map(([k, n]) => `<button data-tab="${k}" class="${active === k ? 'on' : ''}"><span class="ti">${TABICON[k] || ''}</span><span class="tl">${n}</span><span class="ts">${TABSHORT[k] || n}</span>${k === 'sms' && unread ? ` <span class="pill bad">${unread}</span>` : ''}</button>`).join('');
+  document.getElementById('tabs').innerHTML = navTabs.map(([k, n]) => `<button data-tab="${k}" class="${active === k ? 'on' : ''}"><span class="ti">${TABICON[k] || ''}</span><span class="tl">${n}</span><span class="ts">${TABSHORT[k] || n}</span>${k === 'sms' && unread ? ` <span class="pill bad">${unread}</span>` : ''}</button>`).join('');
 }
 function render() {
   renderNet();
@@ -166,6 +172,7 @@ function shrinkImage(file, max = 1280, q = 0.72) {
     img.onerror = rej; img.src = url; });
 }
 /* ---------------- Kunder ---------------- */
+const ecoTabs = () => `<div class="seg subtabs"><button data-tab="okonomi" class="${ui.tab === 'okonomi' ? 'on' : ''}">Oversigt</button><button data-tab="faktura" class="${ui.tab === 'faktura' ? 'on' : ''}">Fakturering</button></div>`;
 const kTabs = () => `<div class="seg subtabs"><button data-act="kview" data-v="kunder" class="${ui.kView !== 'ruter' ? 'on' : ''}">Kunder</button><button data-act="kview" data-v="ruter" class="${ui.kView === 'ruter' ? 'on' : ''}">Faste ruter</button></div>`;
 function kunder() {
   if (ui.customer && cust(ui.customer)) return kundekort(cust(ui.customer));
@@ -224,12 +231,12 @@ function kundekort(c) {
       ${c.rememberNext ? `<div class="warnbox">Husk næste gang: ${esc(c.rememberNext)}</div>` : ''}
       ${c.notes ? `<p>${esc(c.notes)}</p>` : ''}
     </div>
-    <div class="card"><h2>Adresser</h2>${adrs.map((a) => `<div style="margin-bottom:8px"><b>${esc(a.street)}</b> <a class="small" target="_blank" rel="noopener" href="${mapsDirections(a.street)}">Kør hertil ↗</a>${a.access ? `<div class="small">🔑 ${esc(a.access)}</div>` : ''}
+    <div class="card"><h2>Adresser</h2>${adrs.map((a) => `<div style="margin-bottom:8px"><b>${esc(a.street)}</b> <a class="small" target="_blank" rel="noopener" href="${mapsDirections(a.street)}">Kør hertil ↗</a>${obsBox(a, c)}<button class="link small" data-act="obsEdit" data-a="${a.id}" data-c="${c.id}">⚠ ${a.access || c.rememberNext || c.callBefore ? 'Ret' : 'Tilføj'} OBS</button>
       <div class="thumbs">${(a.photos || []).map((ph) => `<span class="th"><img src="${ph.src}" data-act="photo" data-src="${ph.id}" data-a="${a.id}" alt=""><button type="button" class="x" data-act="photoDel" data-a="${a.id}" data-p="${ph.id}" title="Slet">✕</button></span>`).join('')}
       <label class="btn small">📷 Tilføj billede<input type="file" accept="image/*" multiple data-photo="${a.id}" hidden></label></div></div>`).join('')}<button data-act="addAddress" data-id="${c.id}">+ Adresse</button></div>
   </div>
   <div class="card"><h2>Serviceaftaler</h2><table><tr><th>Ydelse</th><th>Adresse</th><th>Interval</th><th>Sæson</th><th>Rute</th><th>Pris</th><th>Næste gang</th></tr>
-    ${ags.map((a) => `<tr class="rowlink" data-act="editAgreement" data-id="${a.id}" title="Klik for at rette aftalen"><td>${esc(a.service)}${a.active ? '' : ' <span class="pill">inaktiv</span>'}</td><td>${esc(addr(a.addressId)?.street)}</td><td>${agrDesc(a)} · ${D.hm(a.durationMin ?? 15)} t</td><td class="small">${a.seasonMonths?.length ? `md. ${Math.min(...a.seasonMonths)}–${Math.max(...a.seasonMonths)}` : 'Hele året'}</td><td>${esc(route(a.routeId)?.name ?? '–')}</td><td>${kr(a.price)}</td><td class="small" style="white-space:nowrap">${(() => { const nv = nextOpen(a.id); return nv ? (nv.plannedDate < todayIso() ? `<span style="color:var(--bad)">${fmt(nv.plannedDate)} ikke færdigmeldt</span>` : 'næste ' + fmt(nv.plannedDate)) : '<span class="mute">ingen planlagt</span>'; })()} <span class="mute">›</span></td></tr>`).join('')}
+    ${ags.map((a) => `<tr class="rowlink" data-act="editAgreement" data-id="${a.id}" title="Klik for at rette aftalen"><td>${esc(a.service)}${a.active ? '' : ' <span class="pill">inaktiv</span>'}<div class="small mute">🧾 Faktura: ${esc(a.invoiceText || a.service)}</div></td><td>${esc(addr(a.addressId)?.street)}</td><td>${agrDesc(a)} · ${D.hm(a.durationMin ?? 15)} t</td><td class="small">${a.seasonMonths?.length ? `md. ${Math.min(...a.seasonMonths)}–${Math.max(...a.seasonMonths)}` : 'Hele året'}</td><td>${esc(route(a.routeId)?.name ?? '–')}</td><td>${kr(a.price)}</td><td class="small" style="white-space:nowrap">${(() => { const nv = nextOpen(a.id); return nv ? (nv.plannedDate < todayIso() ? `<span style="color:var(--bad)">${fmt(nv.plannedDate)} ikke færdigmeldt</span>` : 'næste ' + fmt(nv.plannedDate)) : '<span class="mute">ingen planlagt</span>'; })()} <span class="mute">›</span></td></tr>`).join('')}
   </table><button data-act="addAgreement" data-id="${c.id}" style="margin-top:8px">+ Aftale</button></div>
   <div class="grid">
     <div class="card"><h2>SMS</h2><div class="msgs">${msgs.map(msgHtml).join('') || '<p class="mute">Ingen beskeder</p>'}</div>
@@ -397,7 +404,8 @@ function priceSmsDialog(rows, from) {
 const nextOpen = (agId) => db.visits.filter((v) => v.agreementId === agId && (v.status === 'planlagt' || v.status === 'udsat')).sort((x, y) => x.plannedDate.localeCompare(y.plannedDate))[0] || null;
 function agreementFields(a) {
   const dm = a.durationMin ?? 15;
-  return `<label style="display:block"><span>Ydelse / opgave</span><input name="service" value="${esc(a.service ?? 'Vinduespudsning ude')}" style="width:100%;box-sizing:border-box"></label>
+  return `<label style="display:block"><span>Opgave (beskrivelse af arbejdet – vises i dagsruten)</span><input name="service" value="${esc(a.service ?? 'Vinduespudsning ude')}" style="width:100%;box-sizing:border-box"></label>
+  <label style="display:block"><span>🧾 Tekst på faktura (tom = samme som opgaven)</span><input name="invoiceText" value="${esc(a.invoiceText || '')}" placeholder="Vinduesvask" style="width:100%;box-sizing:border-box"></label>
   <div class="row"><label><span>Pris ekskl. moms</span><input name="price" type="number" min="0" step="1" value="${a.price ?? 300}" style="width:110px"></label>
   <label><span>Interval</span><select name="intervalWeeks">${[0, 1, 2, 3, 4, 6, 8, 10, 12, 16, 26, 52].map((n) => `<option value="${n}" ${n === (a.intervalWeeks ?? 4) ? 'selected' : ''}>${n ? 'Hver ' + n + '. uge' : 'Ikke fast'}</option>`).join('')}</select></label>
   <label><span>Tid</span><span class="row" style="gap:4px;align-items:center"><input name="durH" type="number" min="0" max="99" value="${Math.floor(dm / 60)}" style="width:64px"> t <input name="durM" type="number" min="0" max="59" step="1" value="${dm % 60}" style="width:64px"> min</span></label>
@@ -411,7 +419,7 @@ function saveAgreement(a, customerId, addressId, f) {
   const sf = +f.sFrom, st = +f.sTo; const months = []; for (let m = sf; ; m = (m % 12) + 1) { months.push(m); if (m === st || months.length > 12) break; }
   const anchorDate = f.anchorDate || D.nextRouteDate(route(f.routeId), todayIso()) || todayIso();
   const dur = f.durH != null || f.durM != null ? (+f.durH || 0) * 60 + (+f.durM || 0) : +f.durationMin;
-  const vals = { service: f.service.trim(), price, intervalWeeks: +f.intervalWeeks, durationMin: Math.max(1, dur || 15), routeId: f.routeId || null, anchorDate, seasonMonths: months.length >= 12 ? [] : months };
+  const vals = { service: f.service.trim(), invoiceText: (f.invoiceText || '').trim(), price, intervalWeeks: +f.intervalWeeks, durationMin: Math.max(1, dur || 15), routeId: f.routeId || null, anchorDate, seasonMonths: months.length >= 12 ? [] : months };
   if (!a) { a = { id: S.uid('ag'), customerId, addressId, active: true, ...vals }; db.agreements.push(a); }
   else {
     const rhythmChanged = a.intervalWeeks !== vals.intervalWeeks || a.anchorDate !== vals.anchorDate || JSON.stringify(a.seasonMonths) !== JSON.stringify(vals.seasonMonths) || a.active !== !!f.active;
@@ -495,7 +503,7 @@ function kalender() {
   const q = D.invoiceQueue(db.visits, db.invoiceLinks); const open = db.invoiceLinks.filter((l) => l.status === 'bogført' && l.payment !== 'betalt');
   const t = todayIso();
   $view.innerHTML = `${alertsStrip()}
-  <div class="toolbar"><div class="seg"><button data-act="wk" data-d="-7">‹</button><button data-act="wk" data-d="0">I dag</button><button data-act="wk" data-d="7">›</button></div>
+  <div class="toolbar"><button class="pri dagsrute-btn" data-tab="mobil">🚐 Dagsrute</button><div class="seg"><button data-act="wk" data-d="-7">‹</button><button data-act="wk" data-d="0">I dag</button><button data-act="wk" data-d="7">›</button></div>
     <h2 class="sp">Uge ${D.isoWeek(ws)} <span class="mute small">${fmt(ws)} – ${fmt(days[days.length - 1])} ${ws.slice(0, 4)}</span></h2>
     ${ui.visSel?.size ? `<span class="pill">${ui.visSel.size} kunder valgt</span><button data-act="moveSelVisits">Flyt valgte kunder …</button><button data-act="clearVisSel">Ryd</button>` : ''}
     ${ui.calSel?.size ? `<span class="pill">${ui.calSel.size} ruter valgt</span><button class="pri" data-act="printSel">🖨 Udskriv valgte</button><button data-act="clearSel">Ryd</button>` : `<span class="small mute hide-m">Ctrl+klik: vælg ruter eller kunder</span>`}<button data-act="selWeek">Vælg alle i ugen</button>
@@ -542,7 +550,8 @@ function visitDialog(id) {
   const v = db.visits.find((x) => x.id === id); const c = cust(v.customerId);
   openDlg(`<h2>${esc(c.name)} – ${fmt(v.plannedDate)}</h2><p>${esc(v.service)} · ${esc(addr(v.addressId)?.street)} · ${kr(v.price)} · ${pill(v.status)}</p>
     <p class="small mute">Grundrytme: ${fmt(v.rhythmDate)} · serie #${v.seriesIndex}</p>
-    <div class="row"><button type="button" data-act="moveFromDlg" data-id="${id}">Flyt…</button><button type="button" data-act="cancelVisit" data-id="${id}" class="bad">Aflys</button><button type="button" data-cust="${c.id}">Kundekort</button></div>
+    ${obsBox(addr(v.addressId), c)}
+    <div class="row"><button type="button" data-act="obsEdit" data-a="${v.addressId}" data-c="${c.id}">⚠ OBS …</button><button type="button" data-act="moveFromDlg" data-id="${id}">Flyt…</button><button type="button" data-act="cancelVisit" data-id="${id}" class="bad">Aflys</button><button type="button" data-cust="${c.id}">Kundekort</button></div>
     <h3>Historik</h3>${v.history.map((h) => `<div class="small">${esc(h.at?.slice?.(0, 16) ?? '')} · ${esc(h.action)} ${h.from ? esc(h.from) + ' → ' + esc(h.to) : ''} ${esc(h.note ?? '')}</div>`).join('') || '<div class="small mute">Ingen</div>'}`, null, 'Luk');
 }
 function moveDialog(id, newDate) {
@@ -887,6 +896,20 @@ const STLABEL = { udfoert: 'Udført', kontant: 'Udført, betalt kontant', spring
 const doneLabel = (v) => (v.completion?.cashPaid ? 'Udført og betalt' : v.status === 'aflyst' && /Sprunget over/.test(v.completion?.note || '') ? 'Sprunget over' : STATUS[v.status]?.[0] || v.status);
 /** Kladder pr. besøg (deles af færdigmelding og dagsrute) */
 const vdraft = () => (db.vdraft ||= {});
+/** Dagsrute: Udført på sin egen store linje, Kontant og Udsæt under */
+const statusBig = (v) => `<div class="stbig"><button type="button" class="udf" data-st="${v.id}" data-v="udfoert">✓ Udført</button><div class="stsub"><button type="button" data-st="${v.id}" data-v="kontant">💵 Kontant</button><button type="button" data-st="${v.id}" data-v="spring">⏭ Udsæt</button></div></div>`;
+/** OBS: ting medarbejderen skal være opmærksom på (aldrig på fakturaen) */
+const obsBox = (a, c) => { const xs = [a?.access && esc(a.access), c?.rememberNext && `<b>Kun denne gang:</b> ${esc(c.rememberNext)}`, c?.callBefore && '📞 Ring før besøg'].filter(Boolean);
+  return xs.length ? `<div class="obs"><span class="obs-i">⚠</span><div>${xs.join('<br>')}</div></div>` : ''; };
+function obsDialog(addressId, customerId) {
+  const a = addr(addressId), c = cust(customerId);
+  openDlg(`<h2>⚠ OBS – ${esc(c.name)}</h2><p class="small mute">${esc(a?.street || '')} · Vises på dagsruten og rutesedlen. Kommer aldrig på fakturaen.</p>
+    <label style="display:block"><span>Hver gang (fx nøgle, hund, pas på glaslister)</span><textarea name="access" rows="3" style="width:100%;box-sizing:border-box">${esc(a?.access || '')}</textarea></label>
+    <label style="display:block"><span>Kun næste gang (slettes ved færdigmelding)</span><input name="rememberNext" value="${esc(c.rememberNext || '')}" style="width:100%;box-sizing:border-box"></label>
+    <label><input type="checkbox" name="callBefore" ${c.callBefore ? 'checked' : ''}> 📞 Ring før besøg</label>`, (f) => {
+    if (a) a.access = f.access.trim(); c.rememberNext = f.rememberNext.trim(); c.callBefore = !!f.callBefore;
+    S.audit(db, ui.user.id, 'customer.obs', c.id); save(); toast('OBS gemt'); });
+}
 const statusSeg = (v, res, big) => `<div class="seg st ${big ? 'big' : ''}">${ST.map(([k, t]) => `<button type="button" class="${res === k ? 'on ' + k : ''}" data-st="${v.id}" data-v="${k}">${t}</button>`).join('')}</div>`;
 const extrasHtml = (v, d, done) => { const xs = done ? (v.extras || []) : (d.extras || []);
   return `${xs.map((x, i) => `<div class="extra">➕ ${esc(x.text)} · ${kr(Number(x.price) || 0)}${done ? '' : ` <a href="#" data-act="extraDel" data-id="${v.id}" data-i="${i}" title="Fjern">✕</a>`}</div>`).join('')}${done ? '' : `<button type="button" class="link small" data-act="extraAdd" data-id="${v.id}">+ Ekstra opgave</button>`}`; };
@@ -981,7 +1004,7 @@ function ruter() {
         <td>${done ? `<span class="pill ${v.status === 'udfoert' || v.status === 'delvis' ? 'ok' : 'warn'}">${esc(doneLabel(v))}</span>` : statusSeg(v, res)}
           ${!done && res === 'kontant' ? `<div class="sub"><input type="number" min="0" step="1" class="cash" data-cash="${v.id}" value="${d.cashAmount ?? ''}" placeholder="${kr(Math.round(D.visitTotal({ ...v, extras: d.extras }) * 1.25))}"> <span class="small mute">kontant</span></div>` : ''}
           ${!done && res === 'spring' ? `<div class="sub"><select data-skip="${v.id}">${skipOptions(v, d)}</select>${d.skip === 'move' || d.skip === 'shift' ? `<input type="date" data-mdate="${v.id}" value="${d.moveDate || ''}">` : ''}</div>` : ''}</td>
-        <td class="hide-m">${done ? `<span class="small">${esc(v.service)} · ${kr(D.visitTotal(v))}</span>` : `<select data-svc="${v.id}">${[...new Set([d.service || v.service, ...custServices(v)])].map((x) => `<option value="${esc(x)}" ${x === (d.service || v.service) ? 'selected' : ''}>${esc(x)}</option>`).join('')}<option value="__extra">+ Opret ekstra opgave …</option></select><div class="small mute">${kr(v.price)} · ${D.hm(v.durationMin ?? 15)}</div>`}</td>
+        <td class="hide-m">${done ? `<span class="small">${esc(v.service)} · ${kr(D.visitTotal(v))}</span>` : `<select data-svc="${v.id}">${[...new Set([d.service || v.service, ...custServices(v)])].map((x) => `<option value="${esc(x)}" ${x === (d.service || v.service) ? 'selected' : ''}>${esc(x)}</option>`).join('')}<option value="__extra">+ Opret ekstra opgave …</option></select><div class="small mute">${kr(v.price)} · ${D.hm(v.durationMin ?? 15)}</div><div class="small">🧾 Faktura: ${esc(S.invoiceTextFor(db, { ...v, service: d.service || v.service }))}</div>`}</td>
         <td class="hide-m small"><a href="#" data-act="fmSplitOne" data-id="${v.id}">${splitTxt(sp)}</a></td></tr>`; }).join('')}</tbody></table>${dayDiff}
     <div class="toolbar" style="margin-top:12px"><div class="cashbox">💰 Kontant i alt <b>${kr(stops.reduce((s, v) => { const d = dr[v.id] || {}; return s + (v.completion?.cashAmount || (d.result === 'kontant' ? (d.cashAmount ?? Math.round(D.visitTotal({ ...v, extras: d.extras }) * 125) / 100) : 0)); }, 0))}</b></div><span class="sp"></span>
       <button data-act="fmSave">Gem til senere</button><button class="pri" data-act="fmCommit">✓ Gem og færdigmeld</button></div>
@@ -1054,10 +1077,10 @@ function mobil() {
   <div class="toolbar"><button data-act="smsTomorrow">📱 SMS til morgendagens rute</button>${ui.offline || ui.outbox.length ? `<span class="pill warn">${ui.offline ? 'Offline' : ''} ${ui.outbox.length ? ui.outbox.length + ' venter på net' : ''}</span>` : ''}</div>
   ${left.length ? '' : stops.length ? '<div class="card center"><b>🎉 Alle dagens kunder er færdige</b></div>' : ''}
   ${stops.map((v, i) => { const c = cust(v.customerId), a = addr(v.addressId); const done = (v.status !== 'planlagt' && v.status !== 'udsat') || pending.has(v.id); const d = dr[v.id] || {}; const isNext = left[0]?.id === v.id;
-    return `<div class="stop ${done ? 'done' : ''} ${isNext ? 'next' : ''}" ${isNext ? 'id="nextStop"' : ''}>${isNext ? `<div class="nextbar"><span>Næste kunde</span><a class="btn pri" target="_blank" rel="noopener" href="${mapsDirections(a.street)}">🚗 Navigér hertil</a></div>` : ''}<div class="stop-h"><span class="num">${i + 1}</span><div class="sp"><h3>${esc(c.name)}</h3><a class="small" target="_blank" rel="noopener" href="${mapsDirections(a.street)}">${esc(a.street)}</a></div>${done ? `<span class="pill ok">${pending.has(v.id) ? 'Venter på net' : esc(doneLabel(v))}</span>` : `<span class="small mute">${esc(v.service)}</span>`}</div>
-      ${a.access ? `<div class="desc">${esc(a.access)}</div>` : ''}${c.rememberNext ? `<div class="desc warn-t">⚠ Husk: ${esc(c.rememberNext)}</div>` : ''}${c.callBefore ? '<div class="desc warn-t">📞 Ring før besøg</div>' : ''}
+    return `<div class="stop ${done ? 'done' : ''} ${isNext ? 'next' : ''}" ${isNext ? 'id="nextStop"' : ''}>${isNext ? `<div class="nextbar"><span>Næste kunde</span><a class="btn pri" target="_blank" rel="noopener" href="${mapsDirections(a.street)}">🚗 Navigér hertil</a></div>` : ''}<div class="stop-h"><span class="num">${i + 1}</span><div class="sp"><h3>${esc(c.name)}</h3><a class="small" target="_blank" rel="noopener" href="${mapsDirections(a.street)}">${esc(a.street)}</a></div>${done ? `<span class="pill ok">${pending.has(v.id) ? 'Venter på net' : esc(doneLabel(v))}</span>` : ''}</div>
+      <div class="task">🧽 ${esc(d.service || v.service)}</div>${obsBox(a, c)}${isAdmin() && !done ? `<button type="button" class="link small" data-act="obsEdit" data-a="${a.id}" data-c="${c.id}">✏ ${a.access || c.rememberNext || c.callBefore ? 'Ret' : 'Tilføj'} OBS</button>` : ''}
       ${(a.photos || []).length ? `<div class="thumbs big">${a.photos.map((ph) => `<img src="${ph.src}" data-act="photo" data-src="${ph.id}" data-a="${a.id}" alt="">`).join('')}</div>` : ''}
-      ${done ? ((v.extras || []).length ? `<div>${extrasHtml(v, d, true)}</div>` : '') : `<div class="extras">${extrasHtml(v, d, false)}</div>${statusSeg(v, null, true)}`}</div>`; }).join('') || '<p class="mute center">Ingen besøg denne dag.</p>'}`;
+      ${done ? ((v.extras || []).length ? `<div>${extrasHtml(v, d, true)}</div>` : '') : `<div class="extras">${extrasHtml(v, d, false)}</div>${statusBig(v)}`}</div>`; }).join('') || '<p class="mute center">Ingen besøg denne dag.</p>'}`;
 }
 /** Dagsrute: Udført/Betalt registreres med det samme; Udsæt åbner valg. */
 function mobileStatus(id, val) {
@@ -1131,7 +1154,7 @@ function okonomi() {
   const sv = inM(sel); const byR = new Map(); for (const v of sv) byR.set(v.routeId || '', [...(byR.get(v.routeId || '') || []), v]);
   const rRows = [...byR].map(([rid, vs]) => ({ r: route(rid), ...monthStats(vs) })).filter((x) => x.n || x.nPlan).sort((a, b) => b.rev + b.planRev - (a.rev + a.planRev));
   const y = (k) => rows.filter((r) => r.ym.slice(0, 4) === thisM.slice(0, 4)).reduce((s2, r) => s2 + r[k], 0);
-  $view.innerHTML = `<div class="card"><div class="row"><h2 class="sp">Økonomi pr. måned</h2><span class="small mute">I år: <b>${kr(Math.round(y('rev')))}</b> udført · ${kr(Math.round(y('planRev')))} planlagt (ekskl. moms)</span></div>
+  $view.innerHTML = ecoTabs() + `<div class="card"><div class="row"><h2 class="sp">Økonomi pr. måned</h2><span class="small mute">I år: <b>${kr(Math.round(y('rev')))}</b> udført · ${kr(Math.round(y('planRev')))} planlagt (ekskl. moms)</span></div>
     <table class="eco"><tr><th>Måned</th><th></th><th style="text-align:right">Besøg</th><th style="text-align:right">Omsætning</th><th style="text-align:right" class="hide-m">Arbejde</th><th style="text-align:right" class="hide-m">Kørsel</th><th style="text-align:right">Oms./time</th><th style="text-align:right" title="${WAGE_TIP}">Timeløn</th></tr>
     ${rows.map((r) => `<tr class="${r.ym === sel ? 'on' : ''}" data-act="ecoM" data-m="${r.ym}" style="cursor:pointer"><td><b>${mLabel(r.ym)}</b>${r.ym === thisM ? ' <span class="pill">nu</span>' : ''}</td>
       <td class="barcell"><div class="bar"><span style="width:${(r.rev / max) * 100}%"></span><span class="plan" style="width:${(r.planRev / max) * 100}%"></span></div></td>
@@ -1161,6 +1184,7 @@ function mig() {
   const card = (title, s2) => `<div class="card"><div class="mute">${title}</div><div class="kpi">${kr(Math.round(s2.com))}</div><div class="small">provision · ${s2.n} besøg · ${D.hm(s2.min)} t arbejde · grundlag ${kr(Math.round(s2.base))}</div></div>`;
   $view.innerHTML = `<div class="card"><div class="row"><h2 class="sp">🙂 ${esc(e?.name || ui.user.name)}</h2><button data-act="chPw">Skift kodeord</button>${installBtn()}</div>
       <p class="small mute">${ui.user.role === 'admin' ? 'Admin' : 'Medarbejder'}${rate ? ` · provision ${Math.round(rate * 1000) / 10} %` : ''}</p></div>
+    ${isAdmin() ? `<div class="card"><div class="menu-grid"><button data-tab="admin">⚙️ Admin</button><button data-tab="faktura">🧾 Fakturering</button><button data-tab="sms">💬 Beskeder${db.smsMessages.filter((m) => m.dir === 'ind' && !m.read).length ? ' <span class="pill bad">' + db.smsMessages.filter((m) => m.dir === 'ind' && !m.read).length + '</span>' : ''}</button><button data-tab="import">📥 Import</button></div></div>` : ''}
     <div class="grid2">${card('Denne måned (' + mLabel(ym) + ')', a)}${card('Sidste måned (' + mLabel(prev) + ')', b)}</div>
     <div class="card"><h2>Mine næste ruter</h2>${up.length ? `<table>${up.map((x) => `<tr><td>${fmt(x.d)}</td><td><b>${esc(x.r.name)}</b></td><td>${x.n} kunder</td></tr>`).join('')}</table>` : '<p class="mute">Ingen planlagte ruter de næste 3 uger.</p>'}</div>`;
 }
@@ -1184,7 +1208,7 @@ async function installApp() {
 function faktura() {
   const q = D.invoiceQueue(db.visits, db.invoiceLinks).sort((a, b) => a.completion.at.localeCompare(b.completion.at));
   const links = [...db.invoiceLinks].reverse();
-  $view.innerHTML = `<div class="card"><div class="row"><h2 class="sp">Faktureringskø (${q.length})</h2><label class="small"><input type="checkbox" id="perC" ${db.settings.perCustomerInvoice ? 'checked' : ''}> Samlefaktura pr. kunde</label></div>
+  $view.innerHTML = ecoTabs() + `<div class="card"><div class="row"><h2 class="sp">Faktureringskø (${q.length})</h2><label class="small"><input type="checkbox" id="perC" ${db.settings.perCustomerInvoice ? 'checked' : ''}> Samlefaktura pr. kunde</label></div>
     ${q.length ? `<table><tr><th><input type="checkbox" id="all" checked></th><th>Udført</th><th>Kunde</th><th class="hide-m">Ydelse</th><th>Af</th><th>Pris</th></tr>${q.map((v) => `<tr><td><input type="checkbox" class="qv" value="${v.id}" checked></td><td>${fmt(v.completion.at.slice(0, 10))}</td><td>${esc(cust(v.customerId).name)}${cust(v.customerId).billTo ? `<div class="small mute">💳 faktureres via ${esc(cust(cust(v.customerId).billTo)?.name)}</div>` : ''}</td><td class="hide-m small">${esc(v.service)}${v.status === 'delvis' ? ' (delvis)' : ''}${v.completion.priceChanged ? ' <span class="pill warn">pris ændret</span>' : ''}${v.completion.note ? `<br>💬 ${esc(v.completion.note)}` : ''}</td><td>${esc(emp(v.completion.by)?.name ?? v.completion.by)}<div class="small mute">${esc(PAY[cust(v.customerId).paymentMethod] ?? '')}${v.completion.cashPaid ? ` <span class="pill ok">${v.completion.payMethod === 'mobilepay' ? 'MobilePay' : 'kontant'} modtaget</span>` : ''}</div></td><td>${kr(v.price)}</td></tr>`).join('')}</table>
     <div class="row" style="margin-top:10px"><button class="${ecoReal() ? '' : 'pri'}" data-act="approve">${ecoReal() ? 'Fakturér valgte nu' : 'Godkend valgte → opret kladder (øve-udgave)'}</button>${ecoReal() ? '' : `<label class="small"><input type="checkbox" id="fail" ${eco.failNext ? 'checked' : ''}> Simulér timeout ved næste kald</label>`}</div>
     ${ecoReal() ? `<p class="small"><b>Automatisk:</b> færdigmeldte besøg faktureres af sig selv efter 5 minutter (så fejl kan nå at rettes). Kunder med "samlet pr. måned" faktureres den 1. i næste måned. Det sker, mens appen er åben hos en admin.</p><p class="small mute">Fakturaerne bogføres og ${db.settings.economic.sendEmail === false ? '<b>sendes ikke</b> (slået fra under Admin)' : 'sendes pr. mail til kunder med e-mail og "Email"-faktura'}. Kontant betalt på stedet lægges i kassekladden; bank og MobilePay afstemmes i e-conomic.</p>` : '<p class="small mute">⚠️ e-conomic er ikke forbundet – dette er en øve-udgave uden rigtige fakturaer. Opsætning: Admin → e-conomic.</p>'}` : '<p class="mute">Intet klar til fakturering. Registrér et besøg som udført i 📱 Dagsrute.</p>'}</div>
@@ -1607,6 +1631,7 @@ document.addEventListener('click', async (e) => {
           <p class="small">${ags.length} aftaler. Fremtidige besøg planlægges om på den nye rutes dage; udførte besøg røres ikke.</p>`, (f) => {
           const res = S.moveToRoute(db, ui.user, ags.map((a) => a.id), f.to, todayIso(), D.addDays(todayIso(), 120)); r.order = (r.order || []).filter((x) => !ui.ordSel.has(x)); ui.ordSel = new Set(); ui._ordFor = null;
           toast(`${res.moved} aftaler flyttet til ${route(f.to).name} · ${res.visits} besøg fra ${fmt(res.anchor)}`); }); }
+      case 'obsEdit': return obsDialog(b.dataset.a, b.dataset.c);
       case 'calWeek': ui.calDay = null; ui.calPick = null; break;
       case 'toggleRouteMap': ui.hideRouteMap = !ui.hideRouteMap; break;
       case 'planGoogle': { const day = ui.planDay; const k = gKey(day + 'cur', ui._planOrder); if (ui._google) delete ui._google[k]; googleFor(k, [...ui._planOrder], { start: startPoint(), optimize: false }); break; }

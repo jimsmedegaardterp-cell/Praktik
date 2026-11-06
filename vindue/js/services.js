@@ -115,7 +115,7 @@ async function pushDraft(db, user, link, economic) {
     if (!c.economicNumber || (economic.real && !c.economicSynced)) { const { externalId } = await economic.upsertCustomer(c, { address: addr }); c.economicNumber = externalId; if (economic.real) c.economicSynced = true; audit(db, user.id, 'economic.customer', c.id, { externalId }); }
     const lines = link.visitIds.map((id) => { const v = db.visits.find((x) => x.id === id); const a = db.addresses.find((x) => x.id === v.addressId);
       const dc = v.customerId !== c.id ? db.customers.find((x) => x.id === v.customerId)?.name + ', ' : '';
-      return [{ description: `${v.service} – ${dc}${a?.street ?? ''} (${v.completion.at.slice(0, 10)})`, quantity: 1, unitNetPrice: v.price },
+      return [{ description: `${invoiceTextFor(db, v)} – ${dc}${a?.street ?? ''} (${v.completion.at.slice(0, 10)})`, quantity: 1, unitNetPrice: v.price },
         ...(v.extras || []).filter((x) => x.text).map((x) => ({ description: `Ekstra: ${x.text} – ${a?.street ?? ''}`, quantity: 1, unitNetPrice: Number(x.price) || 0 }))]; }).flat();
     if (economic.findBooked) { const f = await economic.findBooked('SV-' + link.id);
       if (f) { Object.assign(link, { status: 'bogført', invoiceNumber: f.invoiceNumber, gross: f.gross, payment: 'åben', error: null }); audit(db, user.id, 'invoice.found', link.id, { invoiceNumber: f.invoiceNumber }); return link; } }
@@ -355,4 +355,12 @@ export function deleteAgreement(db, user, agreementId, todayIso) {
   if (r?.order && !db.agreements.some((x) => x.routeId === r.id && x.addressId === a.addressId)) r.order = r.order.filter((x) => x !== a.addressId);
   audit(db, user.id, 'agreement.delete', a.id, { service: a.service, removedVisits: before - db.visits.length });
   return { removedVisits: before - db.visits.length };
+}
+
+/** Tekst på fakturaen for et besøg: aftalens fakturatekst (eller en anden af kundens aftaler, hvis opgaven er skiftet); ellers opgaven. */
+export function invoiceTextFor(db, v) {
+  const ag = db.agreements.find((a) => a.id === v.agreementId);
+  if (ag && (!v.service || v.service === ag.service)) return ag.invoiceText || ag.service || v.service;
+  const other = db.agreements.find((a) => a.customerId === v.customerId && a.service === v.service);
+  return other?.invoiceText || v.service || ag?.invoiceText || '';
 }

@@ -131,3 +131,13 @@ test('automatisk fakturerer ikke besøg fra før automatikken blev slået til', 
   assert.equal((await S.autoInvoice(db, admin, api, { nowMs: Date.parse(at) + 1e7 })).length, 0, 'uden startdato: intet');
   assert.equal((await S.autoInvoice(db, admin, api, { from: new Date(Date.parse(at) + 1000).toISOString(), nowMs: Date.parse(at) + 1e7 })).length, 0, 'ældre end start: intet');
 });
+
+test('fakturatekst: aftalens tekst bruges på fakturalinjen, ellers opgaven', async () => {
+  const db = seedDb('2026-11-02'); db.settings.economic = cfg; const { st, api } = fakeServer();
+  const ids = doneVisits(db, 1); const v = db.visits.find((x) => x.id === ids[0]); const ag = db.agreements.find((a) => a.id === v.agreementId);
+  ag.invoiceText = 'Vinduespolering udvendig';
+  assert.equal(S.invoiceTextFor(db, v), 'Vinduespolering udvendig');
+  await S.approveAndBook(db, admin, ids, api);
+  assert.match(st.calls.find(([op]) => op === 'createDraft')[1].lines[0].description, /^Vinduespolering udvendig – /);
+  ag.invoiceText = ''; assert.equal(S.invoiceTextFor(db, v), ag.service);
+});
