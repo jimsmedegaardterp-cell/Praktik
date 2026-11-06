@@ -251,3 +251,20 @@ tr.rowlink:hover td{background:var(--soft)}
   .desc{font-size:17px}
   .num{font-size:15px;min-width:30px;height:30px}
 }
+
+/* Dagsrute: adressen er vigtigst; større tekst på telefon */
+.stop .addr{display:block;font-size:20px;font-weight:700;color:var(--ink);text-decoration:none;line-height:1.25}
+.stop .addr:active{color:var(--pri)}
+.stop .cname{font-size:15px;color:var(--mute);margin-top:2px}
+@media (max-width:820px){
+  html{font-size:17px}
+  body{font-size:17px}
+  .small{font-size:15px}
+  .stop .addr{font-size:22px}
+  .stop .cname{font-size:16px}
+  .task{font-size:18px}
+  .desc{font-size:17px}
+  .obs{font-size:18px}
+  button,.btn,select,input,textarea{font-size:16px}
+  .tabs{will-change:bottom;transform:translateZ(0)}
+}
