@@ -15,7 +15,7 @@ import { showRouteMap } from './map.js';
 import * as KV from './store.js';
 import * as O from './optimizer.js';
 
-export const VERSION = '2026-11-07 #68';
+export const VERSION = '2026-11-07 #69';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -1147,9 +1147,20 @@ const optState = () => (ui.opt ||= { start: D.addDays(mondayOf(todayIso()), 7), 
 const optOpts = () => { const o = optState(); return { start: o.start, startPoint: startPoint(), excludeRouteIds: [...o.excl], ignoreRouteIds: [...o.ign], minDay: o.minH * 60, maxDay: o.maxH * 60, factor: o.factor }; };
 function optProblem() { return O.buildProblem(db, optOpts()); }
 /** Kør (fase 2 igen hvis ruteflytninger er fravalgt). */
-function optCompute(o, keepRoutes) {
+/** Beregning i baggrunden (Web Worker) – appen fryser ikke, og beregningen kan få lang tid. */
+function optWorkerRun(opts, extra) {
+  const data = { db: { addresses: db.addresses, agreements: db.agreements, routes: db.routes, visits: db.visits, closedDays: db.closedDays }, opts, extra };
+  let w; try { w = new Worker(new URL('./optworker.js?v=' + (new URL(import.meta.url).searchParams.get('v') || ''), import.meta.url), { type: 'module' }); }
+  catch { return Promise.resolve(O.optimizeAll(data.db, opts, extra)); }
+  ui._optWorker = w;
+  return new Promise((res, rej) => { w.onmessage = (e) => { if (e.data.ready) return w.postMessage(data); w.terminate(); ui._optWorker = null; e.data.ok ? res(e.data.res) : rej(new Error(e.data.error)); };
+    w.onerror = (e) => { w.terminate(); ui._optWorker = null; rej(new Error(e.message || 'Beregningen fejlede')); }; ui._optReject = rej; });
+}
+async function optCompute(o, keepRoutes) {
   const shifts = keepRoutes ? Object.fromEntries(o.routeMoves.filter((m) => !o.routeOff.has(m.key)).map((m) => [m.key, m.shift])) : undefined;
-  const all = O.optimizeAll(db, optOpts(), shifts ? { routeShifts: shifts } : {});
+  const budget = (o.minutes || 1) * 60000 * (keepRoutes ? 0.25 : 1);
+  o.t0 = Date.now(); o.tEnd = o.t0 + budget;
+  const all = await optWorkerRun({ ...optOpts(), saMs: Math.round(budget * 0.75) }, shifts ? { routeShifts: shifts } : {});
   o.P = all.P; o.res = { moves: all.moves, before: keepRoutes ? o.res.before : all.before, after: all.after };
   if (!keepRoutes) { o.routeMoves = all.routeMoves; o.routeOff = new Set(); }
   o._wP = null; o.off = new Set(); o.g = {}; o.evalFor = null;
@@ -1185,7 +1196,8 @@ function optimView() {
     <div class="row small">Flyttes ikke (tiden tæller med): ${db.routes.filter((r) => !o.ign.has(r.id)).map((r) => `<label><input type="checkbox" data-optexcl="${r.id}" ${o.excl.has(r.id) ? 'checked' : ''}> ${esc(r.name)}</label>`).join(' ')}</div>
     <div class="row"><span class="small">Kørsels-skøn: luftlinje × 1,3 ved 50 km/t × <b>${o.factor.toFixed(2)}</b>${o.calib ? ` <span class="mute">(målt mod Google på ${o.calib.n} dage: ${o.calib.txt})</span>` : ''}</span>${hasG ? `<button data-act="optCalib" ${o.busy ? 'disabled' : ''}>📏 Kalibrér mod Google</button>` : '<span class="small mute">(sæt Google-nøgle for at kalibrere)</span>'}</div>
     <h3>3. Forslag</h3>
-    <div class="row"><button class="pri" data-act="optRun" ${o.busy || !st?.lat ? 'disabled' : ''}>${o.busy === 'run' ? 'Beregner …' : res ? '🔄 Beregn igen' : '✨ Beregn forslag'}</button>${o.busy && o.busy !== 'run' ? `<span class="small mute">${esc(o.busy)}</span>` : ''}</div>
+    <div class="row"><label>Beregningstid <select id="optMin2">${[[0.25, '15 sek.'], [1, '1 min'], [5, '5 min'], [20, '20 min'], [60, '1 time'], [180, '3 timer']].map(([m, t]) => `<option value="${m}" ${(o.minutes || 1) === m ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+      <button class="pri" data-act="optRun" ${o.busy || !st?.lat ? 'disabled' : ''}>${o.busy === 'run' ? 'Beregner …' : res ? '🔄 Beregn igen' : '✨ Beregn forslag'}</button>${o.busy === 'run' ? `<span class="small" id="optTick"></span><button class="small" data-act="optStop">Stop</button>` : ''}${o.busy && o.busy !== 'run' ? `<span class="small mute">${esc(o.busy)}</span>` : ''}</div>
     ${res ? `<div class="grid" style="margin-top:8px"><div class="card"><div class="mute">Nu (${O.DEFAULTS.horizonDays / 7} uger)</div><div>${kpi(res.before)}</div><div class="small mute">${nOver(res.before)} dage over ${o.maxH} t</div></div>
       <div class="card"><div class="mute">Efter forslaget (${(o.routeMoves || []).filter((m) => !o.routeOff.has(m.key)).length} ruter + ${sel.length} af ${res.moves.length} kunder)</div><div><b>${kpi(ev)}</b></div><div class="small mute">${nOver(ev)} dage over ${o.maxH} t</div></div></div>` : ''}
   </div>
@@ -1209,7 +1221,8 @@ function optimView() {
   const wq = document.getElementById('optWhyQ'); if (wq) wq.oninput = () => { o.whyQ = wq.value; render(); const n = document.getElementById('optWhyQ'); n.focus(); n.setSelectionRange(n.value.length, n.value.length); };
   const ch = (id, fn) => { const el = document.getElementById(id); if (el) el.onchange = () => { fn(el.value); o.res = null; o._wP = null; render(); }; };
   ch('optStart', (v) => { if (v) o.start = v; });
-  ch('optMin', (v) => (o.minH = Number(v) || 7)); ch('optMax', (v) => (o.maxH = Number(v) || 8));
+  ch('optMin', (v) => (o.minH = Number(v) || 7)); const m2 = document.getElementById('optMin2'); if (m2) m2.onchange = () => { o.minutes = Number(m2.value) || 1; };
+  clearInterval(ui._optTickT); if (o.busy === 'run') { const tick = () => { const el = document.getElementById('optTick'); if (!el) return clearInterval(ui._optTickT); const left = Math.max(0, Math.round((o.tEnd - Date.now()) / 1000)); el.textContent = `ca. ${left >= 60 ? Math.ceil(left / 60) + ' min' : left + ' sek.'} tilbage – du kan bruge resten af appen imens`; }; tick(); ui._optTickT = setInterval(tick, 1000); } ch('optMax', (v) => (o.maxH = Number(v) || 8));
 }
 KV.get('vindue-optundo').then((u) => { if (u?.db) { ui._optUndo = { at: u.at }; } }).catch(() => {});
 /** "Hvorfor blev kunden (ikke) flyttet?" – årsager og hver mulig flytning med gevinst/tab. */
@@ -1627,7 +1640,7 @@ document.addEventListener('click', async (e) => {
   const tab = e.target.closest('[data-tab]'); if (tab) { ui.tab = tab.dataset.tab; ui.customer = null; return render(); }
   const oi = e.target.closest('[data-optign]'); if (oi) { const o = optState(); const id = oi.dataset.optign; o.ign.has(id) ? o.ign.delete(id) : o.ign.add(id); o.res = null; o.P = null; o._wP = null; return render(); }
   const oe = e.target.closest('[data-optexcl]'); if (oe) { const o = optState(); const id = oe.dataset.optexcl; o.excl.has(id) ? o.excl.delete(id) : o.excl.add(id); o.res = null; o.P = null; o._wP = null; return render(); }
-  const orr = e.target.closest('[data-optroute]'); if (orr) { const o = optState(); const k = orr.dataset.optroute; o.routeOff.has(k) ? o.routeOff.delete(k) : o.routeOff.add(k); o.busy = 'run'; render(); setTimeout(() => { try { optCompute(o, true); } finally { o.busy = null; render(); } }, 30); return; }
+  const orr = e.target.closest('[data-optroute]'); if (orr) { const o = optState(); const k = orr.dataset.optroute; o.routeOff.has(k) ? o.routeOff.delete(k) : o.routeOff.add(k); o.busy = 'run'; render(); optCompute(o, true).catch((er) => { if (er.message !== 'stop') toast(er.message); }).finally(() => { o.busy = null; render(); }); return; }
   const om = e.target.closest('[data-optmove]'); if (om) { const o = optState(); o.off ||= new Set(); const k = om.dataset.optmove; o.off.has(k) ? o.off.delete(k) : o.off.add(k); return render(); }
   const os = e.target.closest('[data-osel]'); if (os) { ui.ordSel ||= new Set(); const id = os.dataset.osel; ui.ordSel.has(id) ? ui.ordSel.delete(id) : ui.ordSel.add(id); return render(); }
   const ks = e.target.closest('[data-ksel]'); if (ks) { ui.kSel ||= new Set(); const id = ks.dataset.ksel;
@@ -1659,10 +1672,11 @@ document.addEventListener('click', async (e) => {
     switch (act) {
       case 'back': ui.customer = null; break;
       case 'optOpen': ui.kView = 'opt'; KV.get('vindue-optundo').then((u) => { ui._optUndo = u?.db ? { at: u.at } : null; softRender(); }).catch(() => {}); break;
-      case 'optRun': { const o = optState(); o.busy = 'run'; render(); await new Promise((r) => setTimeout(r, 30));
-        try { optCompute(o, false);
+      case 'optRun': { const o = optState(); o.busy = 'run'; render();
+        try { await optCompute(o, false);
           S.audit(db, ui.user.id, 'routes.optimize.proposal', '-', { routes: o.routeMoves.length, moves: o.res.moves.length, before: o.res.before.objective, after: o.res.after.objective }); }
-        finally { o.busy = null; } break; }
+        catch (er) { if (er.message !== 'stop') toast(er.message); } finally { o.busy = null; } break; }
+      case 'optStop': { ui._optWorker?.terminate(); ui._optWorker = null; ui._optReject?.(new Error('stop')); toast('Beregningen er stoppet'); return; }
       case 'optAll': optState().off = new Set(); break;
       case 'optWhy': optState().whyC = id; break;
       case 'optNone': { const o = optState(); o.off = new Set((o.res?.moves || []).map((m) => m.key)); break; }
