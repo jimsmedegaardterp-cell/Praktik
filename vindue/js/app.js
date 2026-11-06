@@ -15,7 +15,7 @@ import { showRouteMap } from './map.js';
 import * as KV from './store.js';
 import * as O from './optimizer.js';
 
-export const VERSION = '2026-11-07 #62';
+export const VERSION = '2026-11-07 #63';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -1115,9 +1115,9 @@ function ruteOversigt() {
  * Flytter kunder mellem de faste ruter/dage (højst 4 dage tilbage / 10 frem), så dagene bliver ca. 7–8 timer inkl. kørsel.
  * Intet ændres før "Gennemfør". Kræver kontrolleret backup; en fuld kopi gemmes også på enheden til "Fortryd".
  */
-const optState = () => (ui.opt ||= { start: D.addDays(mondayOf(todayIso()), 7), excl: new Set(db.routes.filter((r) => /tagrende/i.test(r.name)).map((r) => r.id)), minH: 7, maxH: 8, factor: 1, backupOk: false, g: {} });
+const optState = () => (ui.opt ||= { start: D.addDays(mondayOf(todayIso()), 7), excl: new Set(), ign: new Set(db.routes.filter((r) => /tagrende/i.test(r.name)).map((r) => r.id)), minH: 7, maxH: 8, factor: 1, backupOk: false, g: {} });
 function optProblem() { const o = optState();
-  return O.buildProblem(db, { start: o.start, startPoint: startPoint(), excludeRouteIds: [...o.excl], minDay: o.minH * 60, maxDay: o.maxH * 60, factor: o.factor }); }
+  return O.buildProblem(db, { start: o.start, startPoint: startPoint(), excludeRouteIds: [...o.excl], ignoreRouteIds: [...o.ign], minDay: o.minH * 60, maxDay: o.maxH * 60, factor: o.factor }); }
 const optPoint = (x) => (x.visitId ? addr(db.visits.find((v) => v.id === x.visitId)?.addressId) : addr(x.addressId)) || {};
 /** Google-køretid (min) for en dags stop i bedste rækkefølge fra startadressen og hjem. */
 async function optGoogleDay(stops) {
@@ -1145,7 +1145,8 @@ function optimView() {
     <div class="row"><button data-act="backup">⬇ Download backup</button><label class="btn">Kontrollér backup-filen…<input type="file" id="optBk" accept=".json" hidden></label>${o.backupOk ? '<span class="pill ok">✓ Backup kontrolleret – den svarer præcis til data nu</span>' : '<span class="pill warn">Ikke kontrolleret</span>'}</div>
     <h3>2. Indstillinger</h3>
     <div class="row"><label>Første dag der må ændres <input type="date" id="optStart" value="${o.start}"></label><label>Dag mindst <input type="number" id="optMin" value="${o.minH}" step="0.5" style="width:70px"> t</label><label>højst <input type="number" id="optMax" value="${o.maxH}" step="0.5" style="width:70px"> t</label></div>
-    <div class="row small">Flyttes ikke (tiden tæller med): ${db.routes.map((r) => `<label><input type="checkbox" data-optexcl="${r.id}" ${o.excl.has(r.id) ? 'checked' : ''}> ${esc(r.name)}</label>`).join(' ')}</div>
+    <div class="row small">Udføres af en anden (flyttes ikke og tæller ikke med): ${db.routes.map((r) => `<label><input type="checkbox" data-optign="${r.id}" ${o.ign.has(r.id) ? 'checked' : ''}> ${esc(r.name)}</label>`).join(' ')}</div>
+    <div class="row small">Flyttes ikke (tiden tæller med): ${db.routes.filter((r) => !o.ign.has(r.id)).map((r) => `<label><input type="checkbox" data-optexcl="${r.id}" ${o.excl.has(r.id) ? 'checked' : ''}> ${esc(r.name)}</label>`).join(' ')}</div>
     <div class="row"><span class="small">Kørsels-skøn: luftlinje × 1,3 ved 50 km/t × <b>${o.factor.toFixed(2)}</b>${o.calib ? ` <span class="mute">(målt mod Google på ${o.calib.n} dage: ${o.calib.txt})</span>` : ''}</span>${hasG ? `<button data-act="optCalib" ${o.busy ? 'disabled' : ''}>📏 Kalibrér mod Google</button>` : '<span class="small mute">(sæt Google-nøgle for at kalibrere)</span>'}</div>
     <h3>3. Forslag</h3>
     <div class="row"><button class="pri" data-act="optRun" ${o.busy || !st?.lat ? 'disabled' : ''}>${o.busy === 'run' ? 'Beregner …' : res ? '🔄 Beregn igen' : '✨ Beregn forslag'}</button>${o.busy && o.busy !== 'run' ? `<span class="small mute">${esc(o.busy)}</span>` : ''}</div>
@@ -1585,6 +1586,7 @@ function openDlg(html, onSubmit, closeLabel = 'Annuller') {
 /* ---------------- Hændelser ---------------- */
 document.addEventListener('click', async (e) => {
   const tab = e.target.closest('[data-tab]'); if (tab) { ui.tab = tab.dataset.tab; ui.customer = null; return render(); }
+  const oi = e.target.closest('[data-optign]'); if (oi) { const o = optState(); const id = oi.dataset.optign; o.ign.has(id) ? o.ign.delete(id) : o.ign.add(id); o.res = null; o.P = null; o._wP = null; return render(); }
   const oe = e.target.closest('[data-optexcl]'); if (oe) { const o = optState(); const id = oe.dataset.optexcl; o.excl.has(id) ? o.excl.delete(id) : o.excl.add(id); o.res = null; o.P = null; o._wP = null; return render(); }
   const om = e.target.closest('[data-optmove]'); if (om) { const o = optState(); o.off ||= new Set(); const k = om.dataset.optmove; o.off.has(k) ? o.off.delete(k) : o.off.add(k); return render(); }
   const os = e.target.closest('[data-osel]'); if (os) { ui.ordSel ||= new Set(); const id = os.dataset.osel; ui.ordSel.has(id) ? ui.ordSel.delete(id) : ui.ordSel.add(id); return render(); }
