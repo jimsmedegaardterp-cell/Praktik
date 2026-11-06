@@ -15,7 +15,7 @@ import { showRouteMap } from './map.js';
 import * as KV from './store.js';
 import * as O from './optimizer.js';
 
-export const VERSION = '2026-11-07 #63';
+export const VERSION = '2026-11-07 #64';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -627,6 +627,8 @@ function dataCheck() {
     ['Ruter uden kendt dato', db.routes.filter((r) => r.anchorUnknown).map((r) => ({ r, txt: r.name }))],
     ['Kunder uden aftaler', live.filter((c) => !agOf(c).length).map((c) => ({ c, txt: db.addresses.find((a) => a.customerId === c.id)?.street || '' }))],
     ['Faktureres via anden konto – betaler ikke fundet', live.filter((c) => c.billingSkvizId && !c.billTo).map((c) => ({ c, txt: `SkvizBiz betaler-id ${c.billingSkvizId}` }))],
+    ['Flere faste aftaler med samme opgave på samme adresse (dobbelt aftale?)', live.flatMap((c) => { const gs = agOf(c).filter((g) => g.intervalWeeks); const seen = new Map(); for (const g of gs) { const k = g.addressId + '|' + norm(g.service); seen.set(k, [...(seen.get(k) || []), g]); }
+      return [...seen.values()].filter((x) => x.length > 1).map((x) => ({ c, txt: `${x[0].service}: ` + x.map((g) => `${kr(g.price)} · ${D.hm(g.durationMin ?? 15)} t · ${esc(route(g.routeId)?.name || 'ingen rute')}`).join('  /  ') })); })],
     ['Kunder uden telefon og e-mail', live.filter((c) => !c.phone && !c.email).map((c) => ({ c, txt: '' }))],
     ['ℹ️ Flere kunder på samme adresse (kun til orientering)', dupes.map((cs) => ({ c: cs[0], txt: cs.map((x) => `${x.name}${x.customerNo ? ' #' + x.customerNo : ' (uden kundenr.)'}`).join('  ·  '), others: cs.slice(1) }))],
     ['ℹ️ Faste aftaler uden rute (planlægges på deres egen dato – kun til orientering)', live.flatMap((c) => agOf(c).filter((g) => g.intervalWeeks && !g.routeId).map((g) => ({ c, txt: `${g.service} · hver ${g.intervalWeeks}. uge · ${kr(g.price)}` })))],
