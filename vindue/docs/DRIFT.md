@@ -30,6 +30,8 @@ Appen minder om Google og Supabase fra 10/1-2027 (forsiden → "Klaret").
 | Google-tider mangler ("≈" foran tallene) | Tjek nøgle, betaling og kvote i Google Cloud |
 | Fakturaer laves ikke | Fakturering-siden viser fejlen; serverfunktionen og hemmelighederne i Supabase |
 | Gendan fra backup | Admin → Gendan… → vælg JSON-filen |
+| Fortryd ruteoptimering | Kunder → Faste ruter → ✨ Optimér → "Fortryd optimering" (kopi på enheden), ellers Gendan backup-filen |
+| Tilbage til appen før ruteoptimeringen | Stabil version: commit `6dabb8f` (version #59) |
 
 ## Teknik i korte træk (til en ny udvikler)
 - Ren HTML/JavaScript i `vindue/` uden byggetrin. Biblioteker ligger i `vindue/vendor/`.

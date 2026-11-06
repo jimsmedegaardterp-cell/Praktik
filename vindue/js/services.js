@@ -344,6 +344,38 @@ export function moveToRoute(db, user, agreementIds, routeId, todayIso, untilIso)
   return { moved, visits, anchor };
 }
 
+/**
+ * Ruteoptimering: flyt kunder til ny rute + ny dato (moves fra optimizer.runOptimizer).
+ * Fremtidige planlagte (ikke-manuelle) besøg fra startIso fjernes og dannes igen ud fra den nye ankerdato.
+ * Adressen sættes ind i den nye rutes faste rækkefølge der, hvor den giver mindst omvej (luftlinje).
+ */
+export function applyRouteMoves(db, user, moves, startIso, untilIso) {
+  require_(user, 'agreement.edit');
+  const addrOf = (id) => db.addresses.find((a) => a.id === id);
+  const dist = (x, y) => { const a = addrOf(x), b = addrOf(y); if (a?.lat == null || b?.lat == null) return 0; const dx = (a.lng - b.lng) * Math.cos(a.lat * Math.PI / 180), dy = a.lat - b.lat; return Math.hypot(dx, dy); };
+  let moved = 0, visits = 0;
+  for (const m of moves) {
+    const r = db.routes.find((x) => x.id === m.toRoute); if (!r) continue;
+    const ags = db.agreements.filter((a) => m.agreementIds.includes(a.id)); if (!ags.length) continue;
+    const oldRoute = ags[0].routeId;
+    for (const a of ags) {
+      const anchor = m.anchors[a.id]; if (!anchor) continue;
+      a.routeId = r.id; a.anchorDate = anchor; a.idPrefix = `${a.id}~${anchor}`;
+      db.visits = db.visits.filter((v) => !(v.agreementId === a.id && v.status === 'planlagt' && !v.manual && v.plannedDate >= startIso));
+      const nv = D.generateVisits(a, startIso, untilIso, db.visits.filter((v) => v.agreementId === a.id), db.closedDays); db.visits.push(...nv); visits += nv.length;
+      for (const v of db.visits) if (v.agreementId === a.id && v.manual && v.status === 'planlagt' && v.plannedDate >= startIso) v.routeId = r.id;
+    }
+    const o = (r.order || []).filter((x) => x !== m.addressId); let at = o.length, best = Infinity;
+    for (let i = 0; i <= o.length; i++) { const c = (i ? dist(o[i - 1], m.addressId) : 0) + (i < o.length ? dist(m.addressId, o[i]) : 0) - (i && i < o.length ? dist(o[i - 1], o[i]) : 0); if (c < best) { best = c; at = i; } }
+    o.splice(at, 0, m.addressId); r.order = o;
+    const or = db.routes.find((x) => x.id === oldRoute);
+    if (or?.order && !db.agreements.some((a) => a.routeId === or.id && a.addressId === m.addressId)) or.order = or.order.filter((x) => x !== m.addressId);
+    moved++;
+  }
+  audit(db, user.id, 'routes.optimize', '-', { moved, visits, start: startIso });
+  return { moved, visits };
+}
+
 /** Slet en aftale: fremtidige planlagte besøg fjernes; udførte besøg (historik, provision, fakturaer) bevares. */
 export function deleteAgreement(db, user, agreementId, todayIso) {
   require_(user, 'agreement.edit');

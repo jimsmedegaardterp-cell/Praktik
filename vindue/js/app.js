@@ -13,8 +13,9 @@ import { SupabaseCloud, MemoryCloud } from './cloud.js';
 import { SUPABASE } from './config.js';
 import { showRouteMap } from './map.js';
 import * as KV from './store.js';
+import * as O from './optimizer.js';
 
-export const VERSION = '2026-11-06 #59';
+export const VERSION = '2026-11-06 #60';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -178,6 +179,7 @@ const kTabs = () => `<div class="seg subtabs"><button data-act="kview" data-v="k
 function kunder() {
   if (ui.customer && cust(ui.customer)) return kundekort(cust(ui.customer));
   if (ui.kView === 'ruter') return ruteOversigt();
+  if (ui.kView === 'opt') return optimView();
   const q = ui.q.toLowerCase(); const t = todayIso(); ui.kSel ||= new Set(); ui.kSort ||= { k: 'name', d: 1 }; ui.kF ||= {};
   // næste besøg pr. kunde i ét gennemløb
   const nextOf = new Map(); for (const v of db.visits) if (v.status === 'planlagt' && v.plannedDate >= t) { const n = nextOf.get(v.customerId); if (!n || v.plannedDate < n) nextOf.set(v.customerId, v.plannedDate); }
@@ -1098,7 +1100,7 @@ function ruteOversigt() {
     return { r, nRev, nRate, n: new Set(ags.map((a) => a.customerId)).size, year: ags.reduce((s, a) => s + D.annualRevenue(a), 0), min: ags.filter((a) => next && D.generateVisits(a, next, next).length).reduce((s, a) => s + (a.durationMin ?? 15), 0), next, gk, ids, gErr: g0?.error, drive: g ? DP.sumLegs(g.legs) : null }; });
   ui._ovKeys = rows.filter((x) => x.ids.length).map((x) => ({ k: x.gk, ids: x.ids }));
   const tot = rows.reduce((s, x) => s + x.year, 0);
-  $view.innerHTML = kTabs() + `<div class="card"><div class="row"><h2 class="sp">Faste ruter (${db.routes.length})</h2><button data-act="addRoute">+ Opret rute</button></div>
+  $view.innerHTML = kTabs() + `<div class="card"><div class="row"><h2 class="sp">Faste ruter (${db.routes.length})</h2><button data-act="optOpen">✨ Optimér alle ruter (forsøg)</button><button data-act="addRoute">+ Opret rute</button></div>
     <div style="overflow-x:auto"><table class="heat"><tr><td></td>${weeks.map((w) => `<td class="hm">${D.toDate(w).getUTCDate() <= 7 ? MONTHS[D.month(w) - 1] : ''}</td>`).join('')}</tr>
     ${['M', 'T', 'O', 'T', 'F'].map((dn, i) => `<tr><td class="hm">${dn}</td>${weeks.map((w) => { const d = D.addDays(w, i); const n = load.get(d) || 0; return `<td title="${fmt(d)}: ${n} besøg" style="background:${n ? `rgba(31,95,139,${0.15 + 0.85 * n / maxN})` : 'var(--chip)'}"></td>`; }).join('')}</tr>`).join('')}</table></div>
     <p class="small mute">Belastning pr. dag de næste 12 måneder (mørkere = flere besøg).</p></div>
@@ -1107,6 +1109,78 @@ function ruteOversigt() {
     ${rows.map((x) => `<tr data-routemaster="${x.r.id}"><td><b>${esc(x.r.name)}</b></td><td>${esc(emp(x.r.employeeId)?.name)}</td><td>hver ${x.r.intervalWeeks}. uge</td><td>${x.n} kunder</td><td>${(() => { const op = openPastDay(x.r); return op ? `<span style="color:var(--bad)">${fmt(op)} ${op.slice(0, 4)} – åbne besøg</span><br>` : ''; })()}${x.r.anchorUnknown ? '<span style="color:var(--bad)">ukendt – sæt dato under Admin</span>' : x.next ? fmt(x.next) + ' ' + x.next.slice(0, 4) : '–'}</td><td style="text-align:right">${kr(Math.round(x.year))}</td><td style="text-align:right">${kr(Math.round(x.year * 1.25))}</td><td>${D.hm(x.min)}</td><td>${x.drive ? `${D.hm(Math.round(x.drive.sec / 60))} <span class="small mute">${Math.round(x.drive.m / 1000)} km</span>` : x.gErr ? '<span class="warn-t small">fejl</span>' : x.ids.length && db.settings.googleKey ? '<span class="mute small">henter …</span>' : '–'}</td><td><b>${x.drive ? D.hm(x.min + Math.round(x.drive.sec / 60)) : D.hm(x.min)}</b></td>${(() => { const h = (x.min + (x.drive ? x.drive.sec / 60 : 0)) / 60; return `<td style="text-align:right">${h && x.nRev ? kr(Math.round(x.nRev / h)) : '–'}</td><td style="text-align:right">${h && x.nRev ? kr(Math.round(x.nRev * x.nRate / h)) : '–'}</td>`; })()}</tr>`).join('')}
     <tr><td colspan="5"><b>Total</b></td><td style="text-align:right"><b>${kr(Math.round(tot))}</b></td><td style="text-align:right"><b>${kr(Math.round(tot * 1.25))}</b></td><td colspan="5"></td></tr></table>
     <p class="small mute">Oms./år er beregnet ud fra aftalernes pris, interval og sæson.</p></div>`;
+}
+
+/* ---------------- Ruteoptimering (forsøg) ----------------
+ * Flytter kunder mellem de faste ruter/dage (højst 4 dage tilbage / 10 frem), så dagene bliver ca. 7–8 timer inkl. kørsel.
+ * Intet ændres før "Gennemfør". Kræver kontrolleret backup; en fuld kopi gemmes også på enheden til "Fortryd".
+ */
+const optState = () => (ui.opt ||= { start: D.addDays(mondayOf(todayIso()), 7), excl: new Set(db.routes.filter((r) => /tagrende/i.test(r.name)).map((r) => r.id)), minH: 7, maxH: 8, factor: 1, backupOk: false, g: {} });
+function optProblem() { const o = optState();
+  return O.buildProblem(db, { start: o.start, startPoint: startPoint(), excludeRouteIds: [...o.excl], minDay: o.minH * 60, maxDay: o.maxH * 60, factor: o.factor }); }
+const optPoint = (x) => (x.visitId ? addr(db.visits.find((v) => v.id === x.visitId)?.addressId) : addr(x.addressId)) || {};
+/** Google-køretid (min) for en dags stop i bedste rækkefølge fra startadressen og hjem. */
+async function optGoogleDay(stops) {
+  const pts = stops.map(optPoint).filter((p) => p.lat != null || p.street); if (!pts.length) return 0;
+  const st = startPoint(); const fake = pts.map((p, i) => ({ id: i, p })); const ord = DP.localOptimal(fake, (v) => v.p, st);
+  const r = await DP.googleDay(db.settings.googleKey, { start: st, stops: ord.map((i) => pts[i]), optimize: true });
+  return DP.sumLegs(r.legs).sec / 60;
+}
+function optimView() {
+  const o = optState(); const st = startPoint(); const hasG = !!db.settings.googleKey;
+  const undo = ui._optUndo; const h = (m) => D.hm(Math.round(m));
+  const res = o.res; const sel = res ? res.moves.filter((m) => !o.off?.has(m.key)) : [];
+  const ev = res ? (o.evalFor === sel.length + '|' + [...(o.off || [])].join() ? o.ev : (o.ev = O.evaluate(o.P, sel), o.evalFor = sel.length + '|' + [...(o.off || [])].join(), o.ev)) : null;
+  const tot = (x) => (x ? x.work + x.drive : 0);
+  const cls = (m) => (m > o.maxH * 60 ? 'color:var(--bad);font-weight:700' : m && m < o.minH * 60 ? 'color:#b7791f' : '');
+  const runs = (d) => db.routes.filter((r) => D.routeRuns(r, d)).map((r) => r.name).join(', ');
+  const kpi = (x) => x ? `Kørsel ${h(x.drive)} · Overtid ${h(x.over)} · Under ${o.minH} t: ${h(x.under)}` : '';
+  const dates = res ? [...new Set([...Object.keys(res.before.perDate), ...Object.keys(ev.perDate)])].sort() : [];
+  const nOver = (x) => Object.values(x.perDate).filter((d) => tot(d) > o.maxH * 60).length;
+  $view.innerHTML = kTabs() + `<div class="card"><div class="row"><h2 class="sp">✨ Optimér alle ruter (forsøg)</h2><button data-act="kview" data-v="ruter">← Faste ruter</button></div>
+    <p class="small mute">Kunder flyttes <b>permanent</b> mellem de faste ruter og deres dage – højst 4 dage tilbage og 10 dage frem fra næste besøg. Kundens interval skal passe med rutens (8 uger passer på en 4-ugers rute). Der beregnes ${O.DEFAULTS.horizonDays / 7} uger frem, én person, man–fre, kørsel fra og til startadressen. <b>Intet ændres før du trykker "Gennemfør".</b></p>
+    ${undo ? `<div class="warnbox">↩ Der er en optimering fra ${fmtTs(undo.at)}, som kan fortrydes (alt sættes tilbage som før den). <button data-act="optUndo">Fortryd optimering</button> <button class="small" data-act="optUndoForget">Glem</button></div>` : ''}
+    ${!st?.lat ? '<div class="warnbox">⚠️ Sæt startadressen (med koordinater) under Admin først – ellers kan kørslen ikke beregnes.</div>' : ''}
+    <h3>1. Backup</h3>
+    <div class="row"><button data-act="backup">⬇ Download backup</button><label class="btn">Kontrollér backup-filen…<input type="file" id="optBk" accept=".json" hidden></label>${o.backupOk ? '<span class="pill ok">✓ Backup kontrolleret – den svarer præcis til data nu</span>' : '<span class="pill warn">Ikke kontrolleret</span>'}</div>
+    <h3>2. Indstillinger</h3>
+    <div class="row"><label>Første dag der må ændres <input type="date" id="optStart" value="${o.start}"></label><label>Dag mindst <input type="number" id="optMin" value="${o.minH}" step="0.5" style="width:70px"> t</label><label>højst <input type="number" id="optMax" value="${o.maxH}" step="0.5" style="width:70px"> t</label></div>
+    <div class="row small">Flyttes ikke (tiden tæller med): ${db.routes.map((r) => `<label><input type="checkbox" data-optexcl="${r.id}" ${o.excl.has(r.id) ? 'checked' : ''}> ${esc(r.name)}</label>`).join(' ')}</div>
+    <div class="row"><span class="small">Kørsels-skøn: luftlinje × 1,3 ved 50 km/t × <b>${o.factor.toFixed(2)}</b>${o.calib ? ` <span class="mute">(målt mod Google på ${o.calib.n} dage: ${o.calib.txt})</span>` : ''}</span>${hasG ? `<button data-act="optCalib" ${o.busy ? 'disabled' : ''}>📏 Kalibrér mod Google</button>` : '<span class="small mute">(sæt Google-nøgle for at kalibrere)</span>'}</div>
+    <h3>3. Forslag</h3>
+    <div class="row"><button class="pri" data-act="optRun" ${o.busy || !st?.lat ? 'disabled' : ''}>${o.busy === 'run' ? 'Beregner …' : res ? '🔄 Beregn igen' : '✨ Beregn forslag'}</button>${o.busy && o.busy !== 'run' ? `<span class="small mute">${esc(o.busy)}</span>` : ''}</div>
+    ${res ? `<div class="grid" style="margin-top:8px"><div class="card"><div class="mute">Nu (${O.DEFAULTS.horizonDays / 7} uger)</div><div>${kpi(res.before)}</div><div class="small mute">${nOver(res.before)} dage over ${o.maxH} t</div></div>
+      <div class="card"><div class="mute">Efter forslaget (${sel.length} af ${res.moves.length} flytninger)</div><div><b>${kpi(ev)}</b></div><div class="small mute">${nOver(ev)} dage over ${o.maxH} t</div></div></div>` : ''}
+  </div>
+  ${res ? `<div class="card"><div class="row"><h3 class="sp">Dage</h3>${hasG ? `<button data-act="optGcheck" ${o.busy ? 'disabled' : ''}>🗺 Kontrollér ændrede dage med Google</button>` : ''}</div>
+    <div style="overflow-x:auto"><table><tr><th>Dato</th><th>Ruter</th><th style="text-align:right">Nu</th><th style="text-align:right">Efter</th><th style="text-align:right">Heraf kørsel</th>${hasG ? '<th style="text-align:right">Efter (Google)</th>' : ''}<th style="text-align:right">Stop</th></tr>
+    ${dates.map((d) => { const b = res.before.perDate[d], a = ev.perDate[d]; const g = o.g[d + '|' + o.evalFor];
+      return `<tr><td>${fmt(d)} ${d.slice(0, 4)}</td><td class="small">${esc(runs(d))}</td><td style="text-align:right;${cls(tot(b))}">${h(tot(b))}</td><td style="text-align:right;${cls(tot(a))}">${h(tot(a))}</td><td style="text-align:right" class="small">${a ? h(a.drive) : '–'}</td>${hasG ? `<td style="text-align:right;${g != null ? cls((a?.work || 0) + g) : ''}">${g != null ? h((a?.work || 0) + g) : ''}</td>` : ''}<td style="text-align:right">${b?.n || 0} → ${a?.n || 0}</td></tr>`; }).join('')}
+    </table></div><p class="small mute">Rød = over ${o.maxH} t, gul = under ${o.minH} t. Tiden er arbejde + kørsel.</p></div>
+  <div class="card"><div class="row"><h3 class="sp">Flytninger (${sel.length}/${res.moves.length})</h3><button class="small" data-act="optAll">Alle</button><button class="small" data-act="optNone">Ingen</button></div>
+    <div style="overflow-x:auto"><table><tr><th></th><th>Kunde</th><th>Adresse</th><th>Fra</th><th>Til</th><th style="text-align:right">Dage</th></tr>
+    ${res.moves.map((m) => `<tr><td><input type="checkbox" data-optmove="${esc(m.key)}" ${o.off?.has(m.key) ? '' : 'checked'}></td><td>${esc(cust(m.customerId)?.name)}</td><td class="small">${esc(addr(m.addressId)?.street)}</td><td>${esc(route(m.fromRoute)?.name)} ${fmt(m.fromDate)}</td><td><b>${esc(route(m.toRoute)?.name)} ${fmt(m.toDate)}</b></td><td style="text-align:right">${m.shift > 0 ? '+' : ''}${m.shift}</td></tr>`).join('')}
+    </table></div>
+    <div class="row" style="margin-top:10px"><span class="sp small mute">${o.backupOk ? 'Gennemfør flytter de markerede kunder permanent. Kan fortrydes her bagefter, og backup-filen kan altid gendannes.' : 'Kontrollér backup-filen (trin 1) før du kan gennemføre.'}</span><button class="pri" data-act="optApply" ${!o.backupOk || !sel.length || o.busy ? 'disabled' : ''}>✅ Gennemfør ${sel.length} flytninger</button></div></div>` : ''}`;
+  const bk = document.getElementById('optBk'); if (bk) bk.onchange = async (e) => { const f = e.target.files[0]; if (!f) return;
+    try { const d = JSON.parse(await f.text()); o.backupOk = JSON.stringify(d.customers) === JSON.stringify(db.customers) && JSON.stringify(d.agreements) === JSON.stringify(db.agreements) && JSON.stringify(d.routes) === JSON.stringify(db.routes) && JSON.stringify(d.visits) === JSON.stringify(db.visits) && JSON.stringify(d.addresses) === JSON.stringify(db.addresses);
+      toast(o.backupOk ? 'Backup kontrolleret ✓' : 'Filen svarer ikke til data nu – download en ny backup'); } catch { o.backupOk = false; toast('Kunne ikke læse filen'); } render(); };
+  const ch = (id, fn) => { const el = document.getElementById(id); if (el) el.onchange = () => { fn(el.value); o.res = null; render(); }; };
+  ch('optStart', (v) => { if (v) o.start = v; });
+  ch('optMin', (v) => (o.minH = Number(v) || 7)); ch('optMax', (v) => (o.maxH = Number(v) || 8));
+}
+KV.get('vindue-optundo').then((u) => { if (u?.db) { ui._optUndo = { at: u.at }; } }).catch(() => {});
+async function optCalibrate() {
+  const o = optState(); const P = optProblem(); const base = O.evaluate(P, []);
+  const days = Object.entries(base.perDate).filter(([, x]) => x.n >= 4).sort((a, b) => b[1].n - a[1].n).slice(0, 6).map(([d]) => d);
+  if (!days.length) return toast('Ingen dage at måle på');
+  const P1 = O.buildProblem(db, { ...P.opts, factor: 1 }); const est = O.evaluate(P1, []);
+  const ratios = [];
+  for (const [i, d] of days.entries()) { o.busy = `Måler dag ${i + 1}/${days.length} med Google …`; render();
+    const g = await optGoogleDay(O.dayStops(P1, [], d)); const e = est.perDate[d].drive; if (e > 5) ratios.push(g / e); }
+  ratios.sort((a, b) => a - b); const med = ratios.length ? ratios[Math.floor(ratios.length / 2)] : 1;
+  o.factor = Math.round(Math.min(2.5, Math.max(0.6, med)) * 100) / 100; o.calib = { n: ratios.length, txt: ratios.map((r) => r.toFixed(2)).join(', ') }; o.res = null;
+  S.audit(db, ui.user.id, 'routes.optimize.calibrate', '-', { factor: o.factor, days: ratios.length });
 }
 /* ---------------- Mobil dagsrute ---------------- */
 function mobil() {
@@ -1495,6 +1569,8 @@ function openDlg(html, onSubmit, closeLabel = 'Annuller') {
 /* ---------------- Hændelser ---------------- */
 document.addEventListener('click', async (e) => {
   const tab = e.target.closest('[data-tab]'); if (tab) { ui.tab = tab.dataset.tab; ui.customer = null; return render(); }
+  const oe = e.target.closest('[data-optexcl]'); if (oe) { const o = optState(); const id = oe.dataset.optexcl; o.excl.has(id) ? o.excl.delete(id) : o.excl.add(id); o.res = null; return render(); }
+  const om = e.target.closest('[data-optmove]'); if (om) { const o = optState(); o.off ||= new Set(); const k = om.dataset.optmove; o.off.has(k) ? o.off.delete(k) : o.off.add(k); return render(); }
   const os = e.target.closest('[data-osel]'); if (os) { ui.ordSel ||= new Set(); const id = os.dataset.osel; ui.ordSel.has(id) ? ui.ordSel.delete(id) : ui.ordSel.add(id); return render(); }
   const ks = e.target.closest('[data-ksel]'); if (ks) { ui.kSel ||= new Set(); const id = ks.dataset.ksel;
     if (id === '__all') { const all = (ui._kRows || []).every((x) => ui.kSel.has(x)); for (const x of ui._kRows || []) all ? ui.kSel.delete(x) : ui.kSel.add(x); }
@@ -1524,6 +1600,32 @@ document.addEventListener('click', async (e) => {
   try {
     switch (act) {
       case 'back': ui.customer = null; break;
+      case 'optOpen': ui.kView = 'opt'; KV.get('vindue-optundo').then((u) => { ui._optUndo = u?.db ? { at: u.at } : null; softRender(); }).catch(() => {}); break;
+      case 'optRun': { const o = optState(); o.busy = 'run'; render(); await new Promise((r) => setTimeout(r, 30));
+        try { o.P = optProblem(); o.res = O.runOptimizer(o.P); o.off = new Set(); o.g = {}; o.evalFor = null;
+          S.audit(db, ui.user.id, 'routes.optimize.proposal', '-', { moves: o.res.moves.length, before: o.res.before.objective, after: o.res.after.objective }); }
+        finally { o.busy = null; } break; }
+      case 'optAll': optState().off = new Set(); break;
+      case 'optNone': { const o = optState(); o.off = new Set((o.res?.moves || []).map((m) => m.key)); break; }
+      case 'optCalib': { const o = optState(); try { await optCalibrate(); } catch (er) { toast(er.message); } finally { o.busy = null; } break; }
+      case 'optGcheck': { const o = optState(); const sel = o.res.moves.filter((m) => !o.off?.has(m.key));
+        const ch = new Set(sel.flatMap((m) => [...m.fromDates, ...m.toDates])); const ds = [...ch].filter((d) => o.ev?.perDate[d]).sort();
+        try { for (const [i, d] of ds.entries()) { const k = d + '|' + o.evalFor; if (o.g[k] != null) continue; o.busy = `Google: dag ${i + 1}/${ds.length} …`; render(); o.g[k] = await optGoogleDay(O.dayStops(o.P, sel, d)); } }
+        catch (er) { toast(er.message); } finally { o.busy = null; }
+        S.audit(db, ui.user.id, 'google.routes', 'optimize', { days: ds.length }); break; }
+      case 'optApply': { const o = optState(); const sel = o.res.moves.filter((m) => !o.off?.has(m.key));
+        if (!o.backupOk) return toast('Kontrollér backup først');
+        if (!confirm(`Flyt ${sel.length} kunder permanent til nye ruter/dage fra ${fmt(o.start)}?\n\nDet kan fortrydes bagefter med "Fortryd optimering", og backup-filen kan altid gendannes.`)) return;
+        await KV.set('vindue-optundo', { at: new Date().toISOString(), db: JSON.parse(JSON.stringify(db)) });
+        const until = db.visits.reduce((m, v) => (v.plannedDate > m ? v.plannedDate : m), D.addDays(o.start, 180));
+        const r = S.applyRouteMoves(db, ui.user, sel, o.start, until);
+        for (const d of new Set(sel.flatMap((m) => [...m.fromDates, ...m.toDates]))) if (db.dayPlans?.[d]) delete db.dayPlans[d];
+        ui._optUndo = { at: new Date().toISOString() }; o.res = null; o.backupOk = false; ui._google = {}; KV.set('vindue-gcache', {}).catch(() => {});
+        toast(`${r.moved} kunder flyttet (${r.visits} besøg planlagt)`); break; }
+      case 'optUndo': { const u = await KV.get('vindue-optundo'); if (!u?.db) return toast('Intet at fortryde');
+        if (!confirm(`Sæt alt tilbage som før optimeringen ${fmtTs(u.at)}?\n\nÆndringer lavet efter optimeringen (fx udførte besøg) går også tabt.`)) return;
+        db = u.db; S.audit(db, ui.user.id, 'routes.optimize.undo', '-', { at: u.at }); await save(); await KV.del('vindue-optundo'); location.reload(); return; }
+      case 'optUndoForget': if (!confirm('Glem muligheden for at fortryde? (Backup-filen kan stadig gendannes.)')) return; await KV.del('vindue-optundo'); ui._optUndo = null; break;
       case 'newCustomer': return customerForm();
       case 'fitCustomer': return fitDialog();
       case 'kSort': { const k = b.dataset.k; ui.kSort = ui.kSort?.k === k ? { k, d: -ui.kSort.d } : { k, d: 1 }; break; }
