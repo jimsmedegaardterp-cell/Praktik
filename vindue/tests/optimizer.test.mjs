@@ -35,13 +35,13 @@ const opts = { start: START, startPoint: { lat: 57.47, lng: 10.2 }, excludeRoute
 test('optimering: byg problem – vindue, interval, udelukket rute', () => {
   const P = O.buildProblem(mkDb(), opts);
   assert.equal(P.items.length, 25, 'kun A og B er flytbare');
-  const it = P.items.find((x) => x.key === 'ad0|A');
+  const it = P.items.find((x) => x.key === 'ad0|A|2027-03-01');
   assert.ok(it.cands.every((c) => c.routeId !== 'T' && c.routeId !== 'C'), 'ikke til tagrender, ikke uden for vinduet');
   assert.ok(it.cands.some((c) => c.routeId === 'B' && c.shift === 2));
   assert.ok(it.cands.every((c) => c.shift >= -4 && c.shift <= 10));
   assert.equal(it.cur.length, 3, '3 besøg på 12 uger');
   assert.ok(P.fixed.some((f) => f.date === '2027-03-02'), 'tagrenderens tid tæller med');
-  const eight = P.items.find((x) => x.key === 'ad28|A'); assert.ok(eight.cands.length > 0 && eight.cur.length === 2);
+  const eight = P.items.find((x) => x.key === 'ad28|A|2027-03-01'); assert.ok(eight.cands.length > 0 && eight.cur.length === 2);
 });
 
 test('optimering: flytter fra overfyldt til halvtom dag og respekterer vinduet', () => {
@@ -85,4 +85,15 @@ test('optimering: forklaring – årsager og mulige flytninger', () => {
   const ex2 = O.explain(P, r.moves, 'c0'); assert.ok(ex2[0].opts.length > 0); assert.ok(ex2[0].why.some((w) => w.routeId === 'C' && /kører ikke/.test(w.why)));
   assert.ok(ex2[0].opts.every((o, i, a) => !i || a[i - 1].delta <= o.delta), 'sorteret');
   assert.match(O.explain(P, r.moves, 'c25')[0].why, /flyttes ikke/);
+});
+
+test('optimering: rutens dage tages fra kalenderen, og aftaler med forskellig dato flyttes hver for sig', () => {
+  const db = mkDb(); db.routes.find((r) => r.id === 'B').anchorDate = '2027-03-24'; // forkert dato på ruten – besøgene ligger stadig onsdag 3/3
+  db.addresses.push({ id: 'adx', customerId: 'cx', street: 'X', lat: 57.471, lng: 10.2 });
+  for (const [id, anchor] of [['agx1', '2027-03-01'], ['agx2', '2027-03-15']]) db.agreements.push({ id, customerId: 'cx', addressId: 'adx', routeId: 'A', service: 'V', price: 1, intervalWeeks: 4, durationMin: 20, anchorDate: anchor, seasonMonths: [], active: true });
+  S.planAhead(db, '2027-12-31', '2027-01-01');
+  const P = O.buildProblem(db, opts);
+  assert.ok(P.items.find((x) => x.key === 'ad0|A|2027-03-01').cands.some((c) => c.routeId === 'B' && c.shift === 2), 'B onsdag 3/3 som i kalenderen');
+  const xs = P.items.filter((x) => x.customerId === 'cx'); assert.equal(xs.length, 2);
+  assert.ok(xs.find((x) => x.ref === '2027-03-01').cands.some((c) => c.routeId === 'B'));
 });
