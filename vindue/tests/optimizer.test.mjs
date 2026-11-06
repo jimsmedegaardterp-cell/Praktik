@@ -150,3 +150,9 @@ test('optimering: samme rute på to dage – nabokunder samles på én dag', () 
   const r2 = O.optimizeAll(db, { start: START, startPoint: { lat: 57.47, lng: 10.2 }, timeMs: 2000 }, { routeShifts: {} });
   assert.equal(r2.moves.filter((m) => m.toDate === '2027-03-02' && Number(m.addressId.slice(2)) >= 11).length, 4);
 });
+
+test('optimering: dyb søgning (annealing) er aldrig dårligere end den hurtige', () => {
+  const db = mkDb(); const base = { ...opts, excludeRouteIds: [], ignoreRouteIds: ['T'] };
+  const a = O.optimizeAll(db, base); const b = O.optimizeAll(db, { ...base, saMs: 600 });
+  assert.ok(b.after.objective <= a.after.objective + 1, `${b.after.objective} vs ${a.after.objective}`);
+});

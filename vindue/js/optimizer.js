@@ -14,7 +14,7 @@
 import * as D from './domain.js';
 import { km, optimize } from './dayplan.js';
 
-export const DEFAULTS = { horizonDays: 84, windowBack: 4, windowFwd: 10, minDay: 420, maxDay: 480, factor: 1, moveCost: 10, routeMoveCost: 30, timeMs: 4000 };
+export const DEFAULTS = { horizonDays: 84, windowBack: 4, windowFwd: 10, minDay: 420, maxDay: 480, factor: 1, moveCost: 10, routeMoveCost: 30, timeMs: 4000, saMs: 0 };
 const legMin = (a, b, f) => { const k = km(a, b); return k == null ? 0 : (k * 1.3) / 50 * 60 * f; };
 /** Strafpoint for en dags samlede minutter (0 = fridag, ingen straf). */
 export function dayPenalty(T, o = DEFAULTS) {
@@ -177,12 +177,13 @@ export function runOptimizer(P, { seed = 1, now = () => Date.now() } = {}) {
   if (!P.items.some((x) => x.isRoute)) for (const a of P.items) { if (a.pt < 0 || !a.cands.length) continue;
     nb.set(a.key, P.items.filter((b) => b !== a && b.pt >= 0 && b.cands.length && S.dist(a.pt, b.pt) <= nearMin)); }
   const curOcc = (x) => (choice.get(x.key)?.occ || x.cur); const sig = (x) => curOcc(x).map((c) => c.date).sort().join();
-  const t0 = now(); let pass = 0, improved = true;
-  while (improved && pass < 30 && now() - t0 < o.timeMs) {
-    improved = false; pass++;
+  let pass = 0;
+  const greedy = (ms) => { const t0 = now(); let improved = true, p = 0;
+  while (improved && p < 30 && now() - t0 < ms) {
+    improved = false; p++; pass++;
     const order = P.items.filter((it) => it.cands.length).map((it) => [rand(), it]).sort((a, b) => a[0] - b[0]).map((x) => x[1]);
     for (const it of order) {
-      if (now() - t0 > o.timeMs) break;
+      if (now() - t0 > ms) break;
       const mc = it.isRoute ? o.routeMoveCost : o.moveCost;
       const { removed, delta } = removeKeys(new Set([it.key]));
       const stay = -delta; // tilbage som før = ophæver fjernelsen
@@ -197,7 +198,7 @@ export function runOptimizer(P, { seed = 1, now = () => Date.now() } = {}) {
     }
     // samlede flytninger: kunden + naboer med samme dage flyttes til samme rute og dato
     for (const it of order) {
-      if (now() - t0 > o.timeMs) break;
+      if (now() - t0 > ms) break;
       const G = (nb.get(it.key) || []).filter((x) => sig(x) === sig(it)); if (!G.length) continue;
       for (const c of it.cands) {
         if (choice.get(it.key) === c) continue; const tgt = D.addDays(it.ref, c.shift);
@@ -210,6 +211,37 @@ export function runOptimizer(P, { seed = 1, now = () => Date.now() } = {}) {
       }
     }
     for (const dy of S.days.values()) reorder(S, dy);
+  }
+  };
+  greedy(o.timeMs);
+  // Dybere søgning (simulated annealing): tager også midlertidigt dårligere skridt, så fx en fuld dag kan give plads til en hel klynge
+  if (o.saMs > 0) {
+    const byKey = new Map(P.items.map((it) => [it.key, it])); const mcOf = (it) => (it.isRoute ? o.routeMoveCost : o.moveCost);
+    const exact = () => objective(S, o) + [...choice.keys()].reduce((a, k) => a + mcOf(byKey.get(k)), 0);
+    const rebuild = (ch) => { for (const dy of S.days.values()) { dy.tour = []; dy.work = 0; dy.drive = 0; }
+      for (const x of P.fixed) { const dy = S.day(x.date); dy.tour.push({ pt: x.pt, min: x.min, item: null }); dy.work += x.min; }
+      for (const it of P.items) for (const c of (ch.get(it.key)?.occ || it.cur)) { const dy = S.day(c.date); dy.tour.push({ pt: c.pt, min: c.min, item: it.key }); dy.work += c.min; }
+      for (const dy of S.days.values()) reorder(S, dy); choice.clear(); for (const [k, v] of ch) choice.set(k, v); };
+    const pool = P.items.filter((it) => it.cands.length);
+    let obj = exact(), best = obj, bestCh = new Map(choice); const t1 = now(); const T0 = o.saT0 ?? 15; let iter = 0;
+    while (pool.length && now() - t1 < o.saMs) {
+      const T = T0 * Math.pow(0.02, (now() - t1) / o.saMs);
+      const it = pool[Math.floor(rand() * pool.length)]; const cc = choice.get(it.key) || null;
+      const opts = cc ? [null, ...it.cands.filter((c) => c !== cc)] : it.cands; const c = opts[Math.floor(rand() * opts.length)];
+      const members = [[it, c]];
+      if (rand() < 0.4) { const sg = sig(it); const tgt = c ? D.addDays(it.ref, c.shift) : null;
+        for (const x of nb.get(it.key) || []) { if (sig(x) !== sg) continue; const k = c ? x.cands.find((y) => y.routeId === c.routeId && D.addDays(x.ref, y.shift) === tgt) : null;
+          if (c ? k && choice.get(x.key) !== k : choice.get(x.key)) members.push([x, k || null]); } }
+      const { removed, delta } = removeKeys(new Set(members.map(([x]) => x.key)));
+      const mcd = members.reduce((a, [x, k]) => a + ((k ? 1 : 0) - (choice.get(x.key) ? 1 : 0)) * mcOf(x), 0);
+      const d = delta + costOf(members.flatMap(([x, k]) => (k ? k.occ : x.cur))) + mcd;
+      if (d < 0 || rand() < Math.exp(-d / T)) {
+        for (const [x, k] of members) { place(x.key, k ? k.occ : x.cur); if (k) choice.set(x.key, k); else choice.delete(x.key); }
+        obj += d; if (obj < best - 1e-6) { best = obj; bestCh = new Map(choice); }
+      } else restore(removed);
+      if (++iter % 2000 === 0) { for (const dy of S.days.values()) reorder(S, dy); obj = exact(); if (obj < best - 1e-6) { best = obj; bestCh = new Map(choice); } }
+    }
+    rebuild(bestCh); greedy(o.timeMs);
   }
   const after = summary(S, o);
   const moves = P.items.filter((it) => choice.has(it.key)).map((it) => { const c = choice.get(it.key);
@@ -268,7 +300,7 @@ export function explain(P, moves, customerId) {
 export function optimizeAll(db, opts, { routeShifts, now } = {}) {
   let routeMoves = [], before0;
   if (!routeShifts) {
-    const P1 = buildProblem(db, { ...opts, mode: 'routes' }); const r1 = runOptimizer(P1, { now });
+    const P1 = buildProblem(db, { ...opts, mode: 'routes', saMs: Math.round((opts.saMs || 0) / 4) }); const r1 = runOptimizer(P1, { now });
     routeMoves = r1.moves.map((m) => ({ key: m.key, routeId: m.toRoute, shift: m.shift, fromDate: m.fromDate, toDate: m.toDate, n: m.n })); before0 = r1.before;
     routeShifts = Object.fromEntries(routeMoves.map((m) => [m.key, m.shift]));
   }
