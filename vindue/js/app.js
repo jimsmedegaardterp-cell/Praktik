@@ -15,7 +15,7 @@ import { showRouteMap } from './map.js';
 import * as KV from './store.js';
 import * as O from './optimizer.js';
 
-export const VERSION = '2026-11-07 #64';
+export const VERSION = '2026-11-07 #65';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -521,10 +521,12 @@ function kalender() {
         ${[...groups.entries()].map(([rid, gv]) => { const r = route(rid); const order = r?.order || []; gv.sort((a, b) => ((order.indexOf(a.addressId) + 1 || 999) - (order.indexOf(b.addressId) + 1 || 999)));
           const allDone = gv.every((v) => v.status !== 'planlagt' && v.status !== 'udsat');
           const key = (r?.id || '') + '|' + d;
-          const gd = r ? (ui._google || {})[gKey('route:' + r.id + d, gv.filter((v) => v.status !== 'aflyst').map((v) => v.id))] : null; const drv = gd?.legs ? Math.round(DP.sumLegs(gd.legs).sec / 60) : 0;
+          const gd = r ? (ui._google || {})[gKey('route:' + r.id + d, gv.filter((v) => v.status !== 'aflyst').map((v) => v.id))] : null; const gdrv = gd?.legs ? Math.round(DP.sumLegs(gd.legs).sec / 60) : null;
+          // uden Google-svar: skøn (luftlinje × 1,3 ved 50 km/t fra startadressen og hjem) – vises med ≈
+          const drv = gdrv ?? (r ? Math.round(DP.sumLegs(DP.estimateLegs(gv.filter((v) => v.status !== 'aflyst').map((v) => addr(v.addressId)).filter((x) => x?.lat != null), startPoint())).sec / 60) : 0);
           const bm = mins(gv.filter((v) => v.status !== 'aflyst')) + drv;
           return `<div style="--min:${Math.max(bm, 20)}" class="rblock ${allDone ? 'done' : ''} ${r && ui.calSel?.has(key) ? 'sel' : ''} ${ui.calPick === key ? 'picked' : ''}" ${r ? `data-rsel="${key}"` : ''}>${r ? `<div class="grip" data-act="routeMenu" data-r="${r.id}" data-d="${d}" draggable="true" data-dragroute="${key}" title="Klik: muligheder · Træk: flyt ruten · Ctrl+klik: vælg">⋮⋮</div>` : ''}<div class="rhead" ${r ? `data-dblroute="${r.id}" data-day="${d}" draggable="true" data-dragroute="${key}" title="Klik: vis rutens tal og muligheder · Dobbeltklik: færdigmeld · Træk: flyt hele ruten"` : ''}><b>${esc(r?.name ?? 'Uden rute')}</b><span class="badge">${gv.length}</span></div>
-          <div class="rmeta"><span>${D.hm(bm)} t${drv ? ' inkl. kørsel' : ''} · ${kr(gv.filter((v) => v.status !== 'aflyst').reduce((s2, v) => s2 + D.visitTotal(v), 0))}${bm && drv ? ` · <span title="Omsætning / (arbejde + kørsel)">${kr(Math.round(gv.filter((v) => v.status !== 'aflyst').reduce((s2, v) => s2 + D.visitTotal(v), 0) / (bm / 60)))}/t</span>` : ''}</span>${r ? `<button class="icon" data-act="printRoute" data-r="${r.id}" data-d="${d}" title="Udskriv ruteseddel">🖨</button>` : ''}</div>
+          <div class="rmeta"><span>${drv && gdrv == null ? '≈' : ''}${D.hm(bm)} t${drv ? ' inkl. kørsel' : ''} · ${kr(gv.filter((v) => v.status !== 'aflyst').reduce((s2, v) => s2 + D.visitTotal(v), 0))}${bm && drv ? ` · <span title="Omsætning / (arbejde + kørsel)">${kr(Math.round(gv.filter((v) => v.status !== 'aflyst').reduce((s2, v) => s2 + D.visitTotal(v), 0) / (bm / 60)))}/t</span>` : ''}</span>${r ? `<button class="icon" data-act="printRoute" data-r="${r.id}" data-d="${d}" title="Udskriv ruteseddel">🖨</button>` : ''}</div>
           ${gv.map((v) => `<div class="vline ${v.status} ${ui.visSel?.has(v.id) ? 'vsel' : ''}" draggable="${v.status === 'planlagt' || v.status === 'udsat'}" data-visit="${v.id}">${esc(cust(v.customerId)?.name)}</div>`).join('')}</div>`; }).join('')}</div>`; }).join('')}</div></div>
     <aside class="econ"><h3>${ui.calPick ? `${esc(route(pick[0]).name)} · ${fmt(pick[1])}` : ui.calDay ? `Total for ${fmt(ui.calDay)}` : `Total for uge ${D.isoWeek(ws)}`}</h3>${ui.calPick || ui.calDay ? `<p class="small"><a href="#" data-act="calWeek">← Vis hele ugen</a>${ui.calDay ? ` · <a href="#" data-act="dayPlan" data-d="${ui.calDay}">🗺 Dagsplan</a>` : ''}</p>` : ''}
       ${ui.calPick ? `<div class="sidemenu">${routeMenuButtons(pick[0], pick[1])}</div>` : ''}
@@ -1118,8 +1120,16 @@ function ruteOversigt() {
  * Intet ændres før "Gennemfør". Kræver kontrolleret backup; en fuld kopi gemmes også på enheden til "Fortryd".
  */
 const optState = () => (ui.opt ||= { start: D.addDays(mondayOf(todayIso()), 7), excl: new Set(), ign: new Set(db.routes.filter((r) => /tagrende/i.test(r.name)).map((r) => r.id)), minH: 7, maxH: 8, factor: 1, backupOk: false, g: {} });
-function optProblem() { const o = optState();
-  return O.buildProblem(db, { start: o.start, startPoint: startPoint(), excludeRouteIds: [...o.excl], ignoreRouteIds: [...o.ign], minDay: o.minH * 60, maxDay: o.maxH * 60, factor: o.factor }); }
+const optOpts = () => { const o = optState(); return { start: o.start, startPoint: startPoint(), excludeRouteIds: [...o.excl], ignoreRouteIds: [...o.ign], minDay: o.minH * 60, maxDay: o.maxH * 60, factor: o.factor }; };
+function optProblem() { return O.buildProblem(db, optOpts()); }
+/** Kør (fase 2 igen hvis ruteflytninger er fravalgt). */
+function optCompute(o, keepRoutes) {
+  const shifts = keepRoutes ? Object.fromEntries(o.routeMoves.filter((m) => !o.routeOff.has(m.key)).map((m) => [m.routeId, m.shift])) : undefined;
+  const all = O.optimizeAll(db, optOpts(), shifts ? { routeShifts: shifts } : {});
+  o.P = all.P; o.res = { moves: all.moves, before: keepRoutes ? o.res.before : all.before, after: all.after };
+  if (!keepRoutes) { o.routeMoves = all.routeMoves; o.routeOff = new Set(); }
+  o._wP = null; o.off = new Set(); o.g = {}; o.evalFor = null;
+}
 const optPoint = (x) => (x.visitId ? addr(db.visits.find((v) => v.id === x.visitId)?.addressId) : addr(x.addressId)) || {};
 /** Google-køretid (min) for en dags stop i bedste rækkefølge fra startadressen og hjem. */
 async function optGoogleDay(stops) {
@@ -1153,18 +1163,21 @@ function optimView() {
     <h3>3. Forslag</h3>
     <div class="row"><button class="pri" data-act="optRun" ${o.busy || !st?.lat ? 'disabled' : ''}>${o.busy === 'run' ? 'Beregner …' : res ? '🔄 Beregn igen' : '✨ Beregn forslag'}</button>${o.busy && o.busy !== 'run' ? `<span class="small mute">${esc(o.busy)}</span>` : ''}</div>
     ${res ? `<div class="grid" style="margin-top:8px"><div class="card"><div class="mute">Nu (${O.DEFAULTS.horizonDays / 7} uger)</div><div>${kpi(res.before)}</div><div class="small mute">${nOver(res.before)} dage over ${o.maxH} t</div></div>
-      <div class="card"><div class="mute">Efter forslaget (${sel.length} af ${res.moves.length} flytninger)</div><div><b>${kpi(ev)}</b></div><div class="small mute">${nOver(ev)} dage over ${o.maxH} t</div></div></div>` : ''}
+      <div class="card"><div class="mute">Efter forslaget (${(o.routeMoves || []).filter((m) => !o.routeOff.has(m.key)).length} ruter + ${sel.length} af ${res.moves.length} kunder)</div><div><b>${kpi(ev)}</b></div><div class="small mute">${nOver(ev)} dage over ${o.maxH} t</div></div></div>` : ''}
   </div>
   ${res ? `<div class="card"><div class="row"><h3 class="sp">Dage</h3>${hasG ? `<button data-act="optGcheck" ${o.busy ? 'disabled' : ''}>🗺 Kontrollér ændrede dage med Google</button>` : ''}</div>
     <div style="overflow-x:auto"><table><tr><th>Dato</th><th>Ruter</th><th style="text-align:right">Nu</th><th style="text-align:right">Efter</th><th style="text-align:right">Heraf kørsel</th>${hasG ? '<th style="text-align:right">Efter (Google)</th>' : ''}<th style="text-align:right">Stop</th></tr>
     ${dates.map((d) => { const b = res.before.perDate[d], a = ev.perDate[d]; const g = o.g[d + '|' + o.evalFor];
       return `<tr><td>${fmt(d)} ${d.slice(0, 4)}</td><td class="small">${esc(runs(d))}</td><td style="text-align:right;${cls(tot(b))}">${h(tot(b))}</td><td style="text-align:right;${cls(tot(a))}">${h(tot(a))}</td><td style="text-align:right" class="small">${a ? h(a.drive) : '–'}</td>${hasG ? `<td style="text-align:right;${g != null ? cls((a?.work || 0) + g) : ''}">${g != null ? h((a?.work || 0) + g) : ''}</td>` : ''}<td style="text-align:right">${b?.n || 0} → ${a?.n || 0}</td></tr>`; }).join('')}
     </table></div><p class="small mute">Rød = over ${o.maxH} t, gul = under ${o.minH} t. Tiden er arbejde + kørsel.</p></div>
-  <div class="card"><div class="row"><h3 class="sp">Flytninger (${sel.length}/${res.moves.length})</h3><button class="small" data-act="optAll">Alle</button><button class="small" data-act="optNone">Ingen</button></div>
+  ${o.routeMoves?.length ? `<div class="card"><h3>Hele ruter flyttes (${o.routeMoves.filter((m) => !o.routeOff.has(m.key)).length}/${o.routeMoves.length})</h3><p class="small mute">Alle rutens kunder flyttes samme antal dage – også de næste gange. Fjern fluebenet, så beregnes kundeflytningerne igen uden den.</p>
+    <table><tr><th></th><th>Rute</th><th>Fra</th><th>Til</th><th style="text-align:right">Dage</th><th style="text-align:right">Kunder</th></tr>
+    ${o.routeMoves.map((m) => `<tr><td><input type="checkbox" data-optroute="${esc(m.key)}" ${o.routeOff.has(m.key) ? '' : 'checked'} ${o.busy ? 'disabled' : ''}></td><td><b>${esc(route(m.routeId)?.name)}</b></td><td>${fmt(m.fromDate)}</td><td><b>${fmt(m.toDate)}</b></td><td style="text-align:right">${m.shift > 0 ? '+' : ''}${m.shift}</td><td style="text-align:right">${m.n}</td></tr>`).join('')}</table></div>` : ''}
+  <div class="card"><div class="row"><h3 class="sp">Enkeltkunder flyttes (${sel.length}/${res.moves.length})</h3><button class="small" data-act="optAll">Alle</button><button class="small" data-act="optNone">Ingen</button></div>
     <div style="overflow-x:auto"><table><tr><th></th><th>Kunde</th><th>Adresse</th><th>Fra</th><th>Til</th><th style="text-align:right">Dage</th></tr>
     ${res.moves.map((m) => `<tr><td><input type="checkbox" data-optmove="${esc(m.key)}" ${o.off?.has(m.key) ? '' : 'checked'}></td><td>${esc(cust(m.customerId)?.name)}</td><td class="small">${esc(addr(m.addressId)?.street)}</td><td>${esc(route(m.fromRoute)?.name)} ${fmt(m.fromDate)}</td><td><b>${esc(route(m.toRoute)?.name)} ${fmt(m.toDate)}</b></td><td style="text-align:right">${m.shift > 0 ? '+' : ''}${m.shift}</td></tr>`).join('')}
     </table></div>
-    <div class="row" style="margin-top:10px"><span class="sp small mute">${o.backupOk ? 'Gennemfør flytter de markerede kunder permanent. Kan fortrydes her bagefter, og backup-filen kan altid gendannes.' : 'Kontrollér backup-filen (trin 1) før du kan gennemføre.'}</span><button class="pri" data-act="optApply" ${!o.backupOk || !sel.length || o.busy ? 'disabled' : ''}>✅ Gennemfør ${sel.length} flytninger</button></div></div>` : ''}
+    <div class="row" style="margin-top:10px"><span class="sp small mute">${o.backupOk ? 'Gennemfør flytter de markerede kunder permanent. Kan fortrydes her bagefter, og backup-filen kan altid gendannes.' : 'Kontrollér backup-filen (trin 1) før du kan gennemføre.'}</span><button class="pri" data-act="optApply" ${!o.backupOk || !(sel.length || o.routeMoves?.some((m) => !o.routeOff.has(m.key))) || o.busy ? 'disabled' : ''}>✅ Gennemfør</button></div></div>` : ''}
   ${optWhyCard(o, sel)}`;
   const bk = document.getElementById('optBk'); if (bk) bk.onchange = async (e) => { const f = e.target.files[0]; if (!f) return;
     try { const d = JSON.parse(await f.text()); o.backupOk = JSON.stringify(d.customers) === JSON.stringify(db.customers) && JSON.stringify(d.agreements) === JSON.stringify(db.agreements) && JSON.stringify(d.routes) === JSON.stringify(db.routes) && JSON.stringify(d.visits) === JSON.stringify(db.visits) && JSON.stringify(d.addresses) === JSON.stringify(db.addresses);
@@ -1590,6 +1603,7 @@ document.addEventListener('click', async (e) => {
   const tab = e.target.closest('[data-tab]'); if (tab) { ui.tab = tab.dataset.tab; ui.customer = null; return render(); }
   const oi = e.target.closest('[data-optign]'); if (oi) { const o = optState(); const id = oi.dataset.optign; o.ign.has(id) ? o.ign.delete(id) : o.ign.add(id); o.res = null; o.P = null; o._wP = null; return render(); }
   const oe = e.target.closest('[data-optexcl]'); if (oe) { const o = optState(); const id = oe.dataset.optexcl; o.excl.has(id) ? o.excl.delete(id) : o.excl.add(id); o.res = null; o.P = null; o._wP = null; return render(); }
+  const orr = e.target.closest('[data-optroute]'); if (orr) { const o = optState(); const k = orr.dataset.optroute; o.routeOff.has(k) ? o.routeOff.delete(k) : o.routeOff.add(k); o.busy = 'run'; render(); setTimeout(() => { try { optCompute(o, true); } finally { o.busy = null; render(); } }, 30); return; }
   const om = e.target.closest('[data-optmove]'); if (om) { const o = optState(); o.off ||= new Set(); const k = om.dataset.optmove; o.off.has(k) ? o.off.delete(k) : o.off.add(k); return render(); }
   const os = e.target.closest('[data-osel]'); if (os) { ui.ordSel ||= new Set(); const id = os.dataset.osel; ui.ordSel.has(id) ? ui.ordSel.delete(id) : ui.ordSel.add(id); return render(); }
   const ks = e.target.closest('[data-ksel]'); if (ks) { ui.kSel ||= new Set(); const id = ks.dataset.ksel;
@@ -1622,25 +1636,26 @@ document.addEventListener('click', async (e) => {
       case 'back': ui.customer = null; break;
       case 'optOpen': ui.kView = 'opt'; KV.get('vindue-optundo').then((u) => { ui._optUndo = u?.db ? { at: u.at } : null; softRender(); }).catch(() => {}); break;
       case 'optRun': { const o = optState(); o.busy = 'run'; render(); await new Promise((r) => setTimeout(r, 30));
-        try { o.P = optProblem(); o.res = O.runOptimizer(o.P); o._wP = null; o.off = new Set(); o.g = {}; o.evalFor = null;
-          S.audit(db, ui.user.id, 'routes.optimize.proposal', '-', { moves: o.res.moves.length, before: o.res.before.objective, after: o.res.after.objective }); }
+        try { optCompute(o, false);
+          S.audit(db, ui.user.id, 'routes.optimize.proposal', '-', { routes: o.routeMoves.length, moves: o.res.moves.length, before: o.res.before.objective, after: o.res.after.objective }); }
         finally { o.busy = null; } break; }
       case 'optAll': optState().off = new Set(); break;
       case 'optWhy': optState().whyC = id; break;
       case 'optNone': { const o = optState(); o.off = new Set((o.res?.moves || []).map((m) => m.key)); break; }
       case 'optCalib': { const o = optState(); try { await optCalibrate(); } catch (er) { toast(er.message); } finally { o.busy = null; } break; }
       case 'optGcheck': { const o = optState(); const sel = o.res.moves.filter((m) => !o.off?.has(m.key));
-        const ch = new Set(sel.flatMap((m) => [...m.fromDates, ...m.toDates])); const ds = [...ch].filter((d) => o.ev?.perDate[d]).sort();
+        const ch = new Set(O.finalMoves(o.P, sel).moves.flatMap((m) => [...m.fromDates, ...m.toDates])); const ds = [...ch].filter((d) => o.ev?.perDate[d]).sort();
         try { for (const [i, d] of ds.entries()) { const k = d + '|' + o.evalFor; if (o.g[k] != null) continue; o.busy = `Google: dag ${i + 1}/${ds.length} …`; render(); o.g[k] = await optGoogleDay(O.dayStops(o.P, sel, d)); } }
         catch (er) { toast(er.message); } finally { o.busy = null; }
         S.audit(db, ui.user.id, 'google.routes', 'optimize', { days: ds.length }); break; }
       case 'optApply': { const o = optState(); const sel = o.res.moves.filter((m) => !o.off?.has(m.key));
         if (!o.backupOk) return toast('Kontrollér backup først');
-        if (!confirm(`Flyt ${sel.length} kunder permanent til nye ruter/dage fra ${fmt(o.start)}?\n\nDet kan fortrydes bagefter med "Fortryd optimering", og backup-filen kan altid gendannes.`)) return;
+        const fm = O.finalMoves(o.P, sel); const nR = o.routeMoves.filter((m) => !o.routeOff.has(m.key)).length;
+        if (!confirm(`Flyt ${nR} hele ruter og ${sel.length} enkeltkunder permanent (${fm.moves.length} kunder i alt) fra ${fmt(o.start)}?\n\nDet kan fortrydes bagefter med "Fortryd optimering", og backup-filen kan altid gendannes.`)) return;
         await KV.set('vindue-optundo', { at: new Date().toISOString(), db: JSON.parse(JSON.stringify(db)) });
         const until = db.visits.reduce((m, v) => (v.plannedDate > m ? v.plannedDate : m), D.addDays(o.start, 180));
-        const r = S.applyRouteMoves(db, ui.user, sel, o.start, until);
-        for (const d of new Set(sel.flatMap((m) => [...m.fromDates, ...m.toDates]))) if (db.dayPlans?.[d]) delete db.dayPlans[d];
+        const r = S.applyRouteMoves(db, ui.user, fm.moves, o.start, until, fm.routeAnchors);
+        for (const d of new Set(fm.moves.flatMap((m) => [...m.fromDates, ...m.toDates]))) if (db.dayPlans?.[d]) delete db.dayPlans[d];
         ui._optUndo = { at: new Date().toISOString() }; o.res = null; o.backupOk = false; ui._google = {}; KV.set('vindue-gcache', {}).catch(() => {});
         toast(`${r.moved} kunder flyttet (${r.visits} besøg planlagt)`); break; }
       case 'optUndo': { const u = await KV.get('vindue-optundo'); if (!u?.db) return toast('Intet at fortryde');
