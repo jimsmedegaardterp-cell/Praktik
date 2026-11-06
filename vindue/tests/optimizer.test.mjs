@@ -78,3 +78,11 @@ test('optimering: dagsstraf', () => {
   assert.equal(O.dayPenalty(0), 0); assert.equal(O.dayPenalty(450), 0);
   assert.ok(O.dayPenalty(540) > O.dayPenalty(360));
 });
+
+test('optimering: forklaring – årsager og mulige flytninger', () => {
+  const db = mkDb(); db.addresses.find((a) => a.id === 'ad21').lat = null; const P = O.buildProblem(db, opts); const r = O.runOptimizer(P);
+  const ex = O.explain(P, r.moves, 'c21'); assert.match(ex[0].why, /koordinater/);
+  const ex2 = O.explain(P, r.moves, 'c0'); assert.ok(ex2[0].opts.length > 0); assert.ok(ex2[0].why.some((w) => w.routeId === 'C' && /kører ikke/.test(w.why)));
+  assert.ok(ex2[0].opts.every((o, i, a) => !i || a[i - 1].delta <= o.delta), 'sorteret');
+  assert.match(O.explain(P, r.moves, 'c25')[0].why, /flyttes ikke/);
+});

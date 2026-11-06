@@ -41,10 +41,11 @@ export function buildProblem(db, opts = {}) {
   const routes = db.routes.filter((r) => r.anchorDate && r.intervalWeeks && !r.anchorUnknown);
   const routeById = new Map(routes.map((r) => [r.id, r]));
   // flytbare: aktive faste aftaler på en ikke-udelukket rute, med koordinater
-  const groups = new Map();
+  const groups = new Map(); const skipped = [];
   for (const a of db.agreements) {
-    if (!a.active || !a.intervalWeeks || !a.routeId || excl.has(a.routeId) || !routeById.has(a.routeId)) continue;
-    if (ptOf(a.addressId) < 0) continue;
+    const why = !a.active ? 'aftalen er ikke aktiv' : !a.intervalWeeks ? 'ikke fast interval' : !a.routeId ? 'ikke på en fast rute' : excl.has(a.routeId) ? 'ruten er sat til "flyttes ikke"'
+      : !routeById.has(a.routeId) ? 'ruten mangler dato/interval' : ptOf(a.addressId) < 0 ? 'adressen mangler koordinater (Admin → Manglende koordinater)' : null;
+    if (why) { skipped.push({ agreementId: a.id, addressId: a.addressId, customerId: a.customerId, routeId: a.routeId, why }); continue; }
     const k = a.addressId + '|' + a.routeId; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(a);
   }
   const movable = new Set([...groups.values()].flat().map((a) => a.id));
@@ -55,11 +56,16 @@ export function buildProblem(db, opts = {}) {
   for (const [key, ags] of groups) {
     const pt = ptOf(ags[0].addressId); const from = routeById.get(ags[0].routeId);
     const cur = db.visits.filter((v) => live(v) && isMovableVisit(v) && ags.some((a) => a.id === v.agreementId)).map((v) => ({ date: v.plannedDate, min: v.durationMin ?? 15 }));
-    const d0 = new Map(ags.map((a) => [a.id, nextRhythm(a, start)]));
+    // reference = kundens næste planlagte besøg (ellers næste rytmedato)
+    const d0 = new Map(ags.map((a) => { const v = db.visits.filter((x) => x.agreementId === a.id && x.status === 'planlagt' && !x.manual && x.plannedDate >= start).sort((x, y) => (x.plannedDate < y.plannedDate ? -1 : 1))[0];
+      return [a.id, v ? v.plannedDate : nextRhythm(a, start)]; }));
     const ref = [...d0.values()].sort()[0];
-    const cands = [];
+    const cands = []; const why = [];
     for (const r of routes) {
-      if (excl.has(r.id) || ags.some((a) => a.intervalWeeks % r.intervalWeeks)) continue;
+      if (r.id === from.id) continue;
+      if (excl.has(r.id)) { why.push({ routeId: r.id, why: 'sat til "flyttes ikke"' }); continue; }
+      const bad = ags.find((a) => a.intervalWeeks % r.intervalWeeks); if (bad) { why.push({ routeId: r.id, why: `kundens interval (${bad.intervalWeeks} uger) passer ikke med rutens (${r.intervalWeeks} uger)` }); continue; }
+      const n0 = cands.length;
       for (let s = -o.windowBack; s <= o.windowFwd; s++) {
         if (s === 0) continue; // samme dato giver ingen gevinst
         const anchors = new Map(ags.map((a) => [a.id, D.addDays(d0.get(a.id), s)]));
@@ -67,11 +73,12 @@ export function buildProblem(db, opts = {}) {
         const occ = ags.flatMap((a) => occDates(a, anchors.get(a.id), start, end, closed).map((date) => ({ date, min: a.durationMin ?? 15 })));
         cands.push({ routeId: r.id, shift: s, anchors, occ });
       }
+      if (cands.length === n0) { const nx = D.nextRouteDate(r, D.addDays(ref, -o.windowBack)); why.push({ routeId: r.id, why: `kører ikke inden for ${o.windowBack} dage før / ${o.windowFwd} dage efter ${ref}${nx ? ` (næste: ${nx})` : ''}` }); }
     }
-    items.push({ key, agreementIds: ags.map((a) => a.id), addressId: ags[0].addressId, customerId: ags[0].customerId, routeId: from.id, pt, ref, cur, cands });
+    items.push({ key, agreementIds: ags.map((a) => a.id), addressId: ags[0].addressId, customerId: ags[0].customerId, routeId: from.id, pt, ref, cur, cands, why });
   }
   const dates = []; for (let d = start; d <= end; d = D.addDays(d, 1)) if (!D.isClosedDay(d, closed)) dates.push(d);
-  return { pts, dates, items, fixed, routes, opts: o, start, end };
+  return { pts, dates, items, fixed, routes, skipped, opts: o, start, end };
 }
 
 /* ---------- Tilstand: én tur pr. dato (liste af stop {pt, min, item}) ---------- */
@@ -178,5 +185,24 @@ export function dayStops(P, moves, date) {
   for (const x of P.fixed) if (x.date === date) out.push({ visitId: x.visitId, min: x.min });
   for (const it of P.items) { const m = chosen.get(it.key); const c = m && it.cands.find((k) => k.routeId === m.toRoute && k.shift === m.shift);
     for (const x of c ? c.occ : it.cur) if (x.date === date) out.push({ addressId: it.addressId, min: x.min }); }
+  return out;
+}
+
+/**
+ * Hvorfor (ikke) flyttet? For hver af kundens adresser: årsag hvis den ikke kan flyttes, ellers hver mulig flytning
+ * med ændring i samlet strafværdi (negativ = bedre) og timerne på dagene før/efter – målt oven på de valgte flytninger.
+ */
+export function explain(P, moves, customerId) {
+  const base = evaluate(P, moves); const T = (x) => (x ? x.work + x.drive : 0); const out = [];
+  for (const s of P.skipped.filter((x) => x.customerId === customerId)) out.push({ addressId: s.addressId, routeId: s.routeId, why: s.why });
+  for (const it of P.items.filter((x) => x.customerId === customerId)) {
+    const others = moves.filter((m) => m.key !== it.key); const mine = moves.find((m) => m.key === it.key);
+    const stay = mine ? evaluate(P, others) : base;
+    const opts = it.cands.map((c) => { const ev = mine && mine.toRoute === c.routeId && mine.shift === c.shift ? base : evaluate(P, [...others, { key: it.key, toRoute: c.routeId, shift: c.shift }]);
+      const days = [...new Set([...it.cur.map((x) => x.date), ...c.occ.map((x) => x.date)])].sort().map((d) => ({ d, before: T(stay.perDate[d]), after: T(ev.perDate[d]) }));
+      return { routeId: c.routeId, shift: c.shift, toDate: D.addDays(it.ref, c.shift), delta: Math.round(ev.objective - stay.objective + P.opts.moveCost), drive: ev.drive - stay.drive, chosen: mine?.toRoute === c.routeId && mine?.shift === c.shift, days }; })
+      .sort((a, b) => a.delta - b.delta);
+    out.push({ addressId: it.addressId, routeId: it.routeId, ref: it.ref, moved: !!mine, opts, why: it.why });
+  }
   return out;
 }
