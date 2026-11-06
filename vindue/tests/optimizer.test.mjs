@@ -97,3 +97,10 @@ test('optimering: rutens dage tages fra kalenderen, og aftaler med forskellig da
   const xs = P.items.filter((x) => x.customerId === 'cx'); assert.equal(xs.length, 2);
   assert.ok(xs.find((x) => x.ref === '2027-03-01').cands.some((c) => c.routeId === 'B'));
 });
+
+test('optimering: rute udført af en anden tæller ikke med og kan ikke modtage kunder', () => {
+  const P = O.buildProblem(mkDb(), { ...opts, excludeRouteIds: [], ignoreRouteIds: ['T'] });
+  assert.ok(!P.fixed.some((f) => f.date === '2027-03-02'), 'tagrenderens tid tæller ikke');
+  assert.ok(P.items.every((it) => it.cands.every((c) => c.routeId !== 'T')));
+  assert.match(O.explain(P, [], 'c25')[0].why, /en anden/);
+});

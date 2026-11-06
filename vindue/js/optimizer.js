@@ -5,7 +5,8 @@
 //  - En kunde (alle aftaler på samme adresse og rute flyttes samlet) må flyttes til en anden fast rute,
 //    hvis ruten kører på en dato højst `windowBack` dage før og `windowFwd` dage efter kundens næste besøg.
 //  - Kundens interval skal være et multiplum af rutens (8-ugers kunde kan ligge på en 4-ugers rute).
-//  - Ruter i `excludeRouteIds` (Tagrenderens) flyttes ikke, men deres tid tæller med på dagen.
+//  - Ruter i `excludeRouteIds` flyttes ikke, men deres tid tæller med på dagen.
+//  - Ruter i `ignoreRouteIds` (Tagrenderens – udføres af en anden) flyttes ikke og tæller ikke med.
 //  - Én person, man–fre. Dagens tid = arbejde + kørsel (start → stop → start).
 //  - Kørsel skønnes med luftlinje × 1,3 ved 50 km/t × kalibreringsfaktor (målt mod Google).
 import * as D from './domain.js';
@@ -34,7 +35,7 @@ function occDates(a, anchor, start, end, closed) {
  */
 export function buildProblem(db, opts = {}) {
   const o = { ...DEFAULTS, ...opts }; const start = o.start; const end = D.addDays(start, o.horizonDays - 1); const closed = db.closedDays || [];
-  const excl = new Set(o.excludeRouteIds || []);
+  const ign = new Set(o.ignoreRouteIds || []); const excl = new Set([...(o.excludeRouteIds || []), ...ign]);
   const addrById = new Map(db.addresses.map((a) => [a.id, a]));
   const pts = [o.startPoint?.lat != null ? o.startPoint : null]; const ptIdx = new Map();
   const ptOf = (addressId) => { const a = addrById.get(addressId); if (a?.lat == null) return -1; if (!ptIdx.has(addressId)) { ptIdx.set(addressId, pts.length); pts.push({ lat: a.lat, lng: a.lng }); } return ptIdx.get(addressId); };
@@ -49,7 +50,7 @@ export function buildProblem(db, opts = {}) {
   // flytbare: aktive faste aftaler på en ikke-udelukket rute, med koordinater
   const groups = new Map(); const skipped = [];
   for (const a of db.agreements) {
-    const why = !a.active ? 'aftalen er ikke aktiv' : !a.intervalWeeks ? 'ikke fast interval' : !a.routeId ? 'ikke på en fast rute' : excl.has(a.routeId) ? 'ruten er sat til "flyttes ikke"'
+    const why = !a.active ? 'aftalen er ikke aktiv' : !a.intervalWeeks ? 'ikke fast interval' : !a.routeId ? 'ikke på en fast rute' : ign.has(a.routeId) ? 'ruten udføres af en anden og tæller ikke med' : excl.has(a.routeId) ? 'ruten er sat til "flyttes ikke"'
       : !routeById.has(a.routeId) ? 'ruten mangler dato/interval' : ptOf(a.addressId) < 0 ? 'adressen mangler koordinater (Admin → Manglende koordinater)' : null;
     if (why) { skipped.push({ agreementId: a.id, addressId: a.addressId, customerId: a.customerId, routeId: a.routeId, why }); continue; }
     // samme adresse + rute + samme næste dato flyttes samlet; aftaler med forskellige datoer flyttes hver for sig
@@ -58,7 +59,7 @@ export function buildProblem(db, opts = {}) {
   const movable = new Set([...groups.values()].flat().map((a) => a.id));
   const live = (v) => (v.status === 'planlagt' || v.status === 'udsat') && v.plannedDate >= start && v.plannedDate <= end;
   const isMovableVisit = (v) => movable.has(v.agreementId) && !v.manual && v.status === 'planlagt';
-  const fixed = db.visits.filter((v) => live(v) && !isMovableVisit(v)).map((v) => ({ date: v.plannedDate, pt: ptOf(v.addressId), min: v.durationMin ?? 15, visitId: v.id }));
+  const fixed = db.visits.filter((v) => live(v) && !isMovableVisit(v) && !ign.has(v.routeId)).map((v) => ({ date: v.plannedDate, pt: ptOf(v.addressId), min: v.durationMin ?? 15, visitId: v.id }));
   const items = [];
   for (const [key, ags] of groups) {
     const pt = ptOf(ags[0].addressId); const from = routeById.get(ags[0].routeId);
@@ -70,7 +71,7 @@ export function buildProblem(db, opts = {}) {
     const cands = []; const why = [];
     for (const r of routes) {
       if (r.id === from.id) continue;
-      if (excl.has(r.id)) { why.push({ routeId: r.id, why: 'sat til "flyttes ikke"' }); continue; }
+      if (excl.has(r.id)) { why.push({ routeId: r.id, why: ign.has(r.id) ? 'udføres af en anden' : 'sat til "flyttes ikke"' }); continue; }
       const bad = ags.find((a) => a.intervalWeeks % r.intervalWeeks); if (bad) { why.push({ routeId: r.id, why: `kundens interval (${bad.intervalWeeks} uger) passer ikke med rutens (${r.intervalWeeks} uger)` }); continue; }
       const n0 = cands.length;
       for (let s = -o.windowBack; s <= o.windowFwd; s++) {
