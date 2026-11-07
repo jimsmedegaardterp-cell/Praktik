@@ -15,7 +15,7 @@
 import * as D from './domain.js';
 import { km, optimize } from './dayplan.js';
 
-export const DEFAULTS = { horizonDays: 84, windowBack: 4, windowFwd: 10, minDay: 420, maxDay: 450, underW: 0.02, early: 0.02, emptyDay: 0, gap: 60, gapDays: 5, factor: 1, moveCost: 10, routeMoveCost: 30, timeMs: 4000, saMs: 0 };
+export const DEFAULTS = { horizonDays: 84, windowBack: 4, windowFwd: 10, minDay: 420, maxDay: 450, underW: 0.02, early: 0.02, emptyDay: 0, gap: 60, gapDays: 5, lightDay: 180, factor: 1, moveCost: 10, routeMoveCost: 30, timeMs: 4000, saMs: 0 };
 const legMin = (a, b, f) => { const k = km(a, b); return k == null ? 0 : (k * 1.3) / 50 * 60 * f; };
 /** Strafpoint for en dags samlede minutter (0 = fridag, ingen straf). */
 export function dayPenalty(T, o = DEFAULTS) {
@@ -141,7 +141,8 @@ function makeState(P) {
   // "huller": en tom hverdag med fulde dage lige efter (inden for gapDays hverdage) koster o.gap
   const list = [...P.dates].sort(); const pos = new Map(list.map((d, i) => [d, i])); const o = P.opts; const K = o.gapDays ?? 5; const full = (o.maxDay ?? 450) - 60;
   const Tof = (d, ov) => (ov && ov.has(d) ? ov.get(d) : (days.get(d) ? days.get(d).work + days.get(d).drive : 0));
-  const gapAt = (i, ov) => { if (!o.gap || Tof(list[i], ov) > 0) return 0; for (let j = i + 1; j <= i + K && j < list.length; j++) if (Tof(list[j], ov) >= full) return o.gap; return 0; };
+  const light = o.lightDay ?? 180; // en dag med under 3 timer tæller også som et hul (ellers kunne én kunde 'fylde' en tom dag)
+  const gapAt = (i, ov) => { if (!o.gap || Tof(list[i], ov) >= light) return 0; for (let j = i + 1; j <= i + K && j < list.length; j++) if (Tof(list[j], ov) >= full) return o.gap; return 0; };
   const affected = (dates) => { const a = new Set(); for (const d of dates) { const p = pos.get(d); if (p == null) continue; for (let j = Math.max(0, p - K); j <= p; j++) a.add(j); } return a; };
   const gapSum = (aff, ov) => { let s = 0; for (const i of aff) s += gapAt(i, ov); return s; };
   const gapAll = () => { let s = 0; for (let i = 0; i < list.length; i++) s += gapAt(i); return s; };

@@ -188,7 +188,7 @@ tr.subhead td{background:var(--soft);font-size:13px}
   .timeline .taxis div{height:calc(60 * var(--pxm));font-size:12px;color:var(--mute);border-top:1px solid var(--line);padding-top:2px}
   .timeline .day{background-image:repeating-linear-gradient(to bottom,transparent 0,transparent calc(60 * var(--pxm) - 1px),var(--line) calc(60 * var(--pxm) - 1px),var(--line) calc(60 * var(--pxm)));background-position:0 54px;background-repeat:repeat-y;min-height:calc(480 * var(--pxm) + 64px);cursor:pointer}
   .timeline .dayhead{height:36px;margin-bottom:8px}
-  .timeline .rblock{height:calc(var(--min) * var(--pxm));overflow:hidden;margin:0 0 0 0;box-sizing:border-box;cursor:default}
+  .timeline .rblock{min-height:calc(var(--min) * var(--pxm));overflow:visible;margin:0 0 0 0;box-sizing:border-box;cursor:default} /* alle adresser vises altid – blokken vokser hvis nødvendigt */
   .timeline .rblock + .rblock{margin-top:0}
 }
 .day.picked{outline:2px solid var(--pri);outline-offset:-2px}
