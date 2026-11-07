@@ -315,3 +315,31 @@ test('helligdage: transportbånd – hver lukket hverdag rykker hele planen én 
     D.setHolidayShift(null); assert.equal(D.plannedFor('2026-12-24'), '2026-12-28');
   } finally { D.setHolidayShift(null); }
 });
+
+test('flyt permanent efter en helligdag lander på den valgte dato (transportbånd)', () => {
+  D.setHolidayShift('2026-12-01');
+  try {
+    const ag2 = { id: 'agx', customerId: 'c', addressId: 'a', routeId: 'r', service: 'V', price: 1, intervalWeeks: 4, anchorDate: '2026-12-21', seasonMonths: [], active: true };
+    let vs = D.generateVisits(ag2, '2026-12-01', '2027-04-30');
+    const v = vs.find((x) => x.rhythmDate === '2027-01-18'); assert.equal(v.plannedDate, '2027-01-22'); // 4 hverdage rykket efter jul/nytår
+    const r = D.moveVisit(vs, ag2, v.id, '2027-01-26', 'shift', { by: 'u', at: 'x' });
+    const moved = r.visits.find((x) => x.id === v.id); assert.equal(moved.plannedDate, '2027-01-26');
+    const next = r.visits.find((x) => x.seriesIndex === v.seriesIndex + 1); assert.equal(D.diffDays(moved.plannedDate, next.plannedDate), 28, 'næste besøg 4 uger efter');
+    assert.equal(moved.history.at(-1).action, 'forskudt');
+    const k = D.moveVisit(vs, ag2, v.id, '2027-01-25', 'keep', { by: 'u', at: 'x' }); assert.equal(k.visits.find((x) => x.id === v.id).history.at(-1).action, 'flyttet');
+  } finally { D.setHolidayShift(null); }
+});
+
+test('træk kunde til anden rute: kun denne gang eller fremover', () => {
+  const db = seedDb('2026-11-07'); const v = db.visits.find((x) => x.routeId === 'r1' && x.status === 'planlagt' && x.plannedDate >= '2026-11-09');
+  const ag = db.agreements.find((a) => a.id === v.agreementId); const day = D.addDays(v.plannedDate, 1);
+  S.moveVisitToRoute(db, admin, v.id, 'r2', day, false);
+  assert.equal(db.visits.find((x) => x.id === v.id).routeId, 'r2'); assert.equal(ag.routeId, 'r1', 'aftalen uændret');
+  const nxt = db.visits.filter((x) => x.agreementId === ag.id && x.seriesIndex > v.seriesIndex)[0]; assert.equal(nxt.routeId, 'r1');
+  const w = db.visits.find((x) => x.agreementId === ag.id && x.seriesIndex === v.seriesIndex + 1);
+  S.moveVisitToRoute(db, admin, w.id, 'r2', D.addDays(w.plannedDate, 1), true);
+  assert.equal(db.agreements.find((a) => a.id === ag.id).routeId, 'r2');
+  const later = db.visits.filter((x) => x.agreementId === ag.id && x.seriesIndex >= w.seriesIndex);
+  assert.ok(later.every((x) => x.routeId === 'r2')); assert.equal(later[0].plannedDate, D.addDays(w.plannedDate, 1));
+  assert.ok(db.routes.find((r) => r.id === 'r2').order.includes(ag.addressId));
+});
