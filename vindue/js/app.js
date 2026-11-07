@@ -15,7 +15,7 @@ import { showRouteMap } from './map.js';
 import * as KV from './store.js';
 import * as O from './optimizer.js';
 
-export const VERSION = '2026-11-07 #79';
+export const VERSION = '2026-11-07 #80';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -118,6 +118,10 @@ function render() {
   if (gate) return renderGate();
   document.getElementById('tabs').hidden = false;
   if (!users().some((u) => u.id === ui.user?.id)) ui.user = users().find((u) => u.role === 'admin') || users()[0];
+  // helligdage/lukkedage rykker hele planen (transportbånd) – standard fra den dag funktionen kom
+  if (db?.settings && !gate) { if (isAdmin() && db.settings.holidayShift !== false && !db.settings.holidayShiftFrom) db.settings.holidayShiftFrom = todayIso();
+    D.setHolidayShift(db.settings.holidayShift === false ? null : db.settings.holidayShiftFrom || null);
+    if (isAdmin()) S.replanHolidays(db, todayIso()); }
   renderUserSelect();
   renderTabs();
   const tag = document.querySelector('.tag'); if (tag) tag.textContent = (db.settings.realData ? 'PROTOTYPE' : 'PROTOTYPE · testdata') + ' · version ' + VERSION;
@@ -464,9 +468,6 @@ function alertsStrip() {
     if (db.settings.realData && (age == null || age >= 7)) out.push(`<span class="alert">💾 ${age == null ? 'Der er ikke taget backup endnu' : `Sidste backup er ${age} dage gammel`} <button data-act="backup">Download backup</button></span>`);
     // driftspåmindelser (se docs/DRIFT.md)
     for (const d of DRIFT) if (t >= d.from && !db.settings.driftDone?.[d.id]) out.push(`<span class="alert">🔔 ${d.text} <button data-act="driftOk" data-id="${d.id}">Klaret</button></span>`);
-    // helligdage inden for 6 uger, hvor planen ikke er rykket endnu
-    const hp = S.holidayPeriods(db, t, D.addDays(t, 42)).filter((p) => !p.done && db.visits.some((v) => v.status === 'planlagt' && v.plannedDate >= p.start && v.plannedDate <= D.addDays(p.end, 7)));
-    if (hp.length) out.push(`<span class="alert">🎄 Helligdage ${fmt(hp[0].start)}–${fmt(hp[0].end)}: ${hp[0].n} hverdage lukket <button data-act="holDlg">Ryk planen</button></span>`);
     const od = db.invoiceLinks.filter((l) => l.status === 'bogført' && l.payment !== 'betalt' && l.dueDate && l.dueDate < t);
     if (od.length) out.push(`<span class="alert">💸 ${od.length} faktura${od.length > 1 ? 'er' : ''} ikke betalt til tiden (${kr(Math.round(od.reduce((s2, l) => s2 + (l.remainder ?? l.gross ?? 0), 0)))}) <button data-tab="faktura">Vis</button></span>`);
     const bad = db.invoiceLinks.filter((l) => l.status === 'fejl' || (l.status === 'kladde' && (l.attempts || 0) >= 3));
@@ -774,6 +775,7 @@ function applyFerie(label, mode) {
   for (let d = a; d <= b; d = D.addDays(d, 1)) { db.closedInfo[d] = { label }; if (!db.closedDays.includes(d)) { db.closedDays.push(d); n++; } }
   db.closedDays.sort();
   let moved = 0;
+  if (D.holidayShiftFrom()) { S.replanHolidays(db, todayIso()); S.audit(db, ui.user.id, 'calendar.closed', `${a}..${b}`, { label, conveyor: true }); let wk = 0; for (let d = a; d <= b; d = D.addDays(d, 1)) if (D.weekday(d) < 5) wk++; return toast(`${label} ${fmt(a)}${a !== b ? '–' + fmt(b) : ''} indsat – planen er rykket ${wk} ${wk === 1 ? 'hverdag' : 'hverdage'}`); }
   if (mode === 'shift') { const to = D.nextWorkday(D.addDays(b, 1), db.closedDays);
     for (const v of db.visits.filter((x) => (x.status === 'planlagt' || x.status === 'udsat') && x.plannedDate >= a && x.plannedDate <= b)) { try { S.moveVisit(db, ui.user, v.id, to, 'shift'); moved++; } catch {} } }
   if (mode === 'move') { const to = D.nextWorkday(D.addDays(b, 1), db.closedDays);
@@ -1192,7 +1194,7 @@ function optimView() {
   const dates = res ? [...new Set([...Object.keys(res.before.perDate), ...Object.keys(ev.perDate)])].sort() : [];
   const nOver = (x) => Object.values(x.perDate).filter((d) => tot(d) > o.maxH * 60).length;
   $view.innerHTML = kTabs() + `<div class="card"><div class="row"><h2 class="sp">✨ Optimér alle ruter (forsøg)</h2><button data-act="kview" data-v="ruter">← Faste ruter</button></div>
-    <p class="small mute">Kunder flyttes <b>permanent</b> mellem de faste ruter og deres dage – højst 4 dage tilbage og 10 dage frem fra næste besøg. Kundens interval skal passe med rutens (8 uger passer på en 4-ugers rute). Der beregnes ${O.DEFAULTS.horizonDays / 7} uger frem på <b>normale uger</b> (helligdage og ferie flyttes som altid, når besøgene dannes – de får ikke kunderne flyttet permanent), én person, man–fre, kørsel fra og til startadressen. <b>Intet ændres før du trykker "Gennemfør".</b></p>
+    <p class="small mute">Kunder flyttes <b>permanent</b> mellem de faste ruter og deres dage – højst 4 dage tilbage og 10 dage frem fra næste besøg. Kundens interval skal passe med rutens (8 uger passer på en 4-ugers rute). Der beregnes ${O.DEFAULTS.horizonDays / 7} uger frem på <b>normale uger</b> (helligdage og ferie rykker planen bagefter, når besøgene dannes – de får ikke kunderne flyttet permanent), én person, man–fre, kørsel fra og til startadressen. <b>Intet ændres før du trykker "Gennemfør".</b></p>
     ${undo || ui._optOrig ? `<div class="warnbox">${undo ? `↩ Seneste optimering ${fmtTs(undo.at)} kan fortrydes. <button data-act="optUndo">Fortryd seneste</button> ` : ''}${ui._optOrig && ui._optOrig.at !== undo?.at ? `⏮ <button data-act="optOrig">Tilbage til før første optimering (${fmtTs(ui._optOrig.at)})</button> ` : ''}<button class="small" data-act="optUndoForget">Glem</button><br><span class="small">Begge sætter alt tilbage – også det du har ændret bagefter.</span></div>` : ''}
     ${!st?.lat ? '<div class="warnbox">⚠️ Sæt startadressen (med koordinater) under Admin først – ellers kan kørslen ikke beregnes.</div>' : ''}
     <h3>1. Backup</h3>
@@ -1212,14 +1214,14 @@ function optimView() {
   ${res ? `<div class="card"><div class="row"><h3 class="sp">Dage</h3>${hasG ? `<button data-act="optGcheck" ${o.busy ? 'disabled' : ''}>🗺 Kontrollér ændrede dage med Google</button>` : ''}</div>
     <div style="overflow-x:auto"><table><tr><th>Dato</th><th>Ruter</th><th style="text-align:right">Nu</th><th style="text-align:right">Efter</th><th style="text-align:right">Heraf kørsel</th>${hasG ? '<th style="text-align:right">Efter (Google)</th>' : ''}<th style="text-align:right">Stop</th></tr>
     ${dates.map((d) => { const b = res.before.perDate[d], a = ev.perDate[d]; const g = o.g[d + '|' + o.evalFor];
-      return `<tr><td>${fmt(d)} ${d.slice(0, 4)}</td><td class="small">${esc(runs(d))}</td><td style="text-align:right;${cls(tot(b))}">${h(tot(b))}</td><td style="text-align:right;${cls(tot(a))}">${h(tot(a))}</td><td style="text-align:right" class="small">${a ? h(a.drive) : '–'}</td>${hasG ? `<td style="text-align:right;${g != null ? cls((a?.work || 0) + g) : ''}">${g != null ? h((a?.work || 0) + g) : ''}</td>` : ''}<td style="text-align:right">${b?.n || 0} → ${a?.n || 0}</td></tr>`; }).join('')}
+      const pd = D.plannedFor(d, db.closedDays); return `<tr><td>${fmt(pd)} ${pd.slice(0, 4)}</td><td class="small">${esc(runs(d))}</td><td style="text-align:right;${cls(tot(b))}">${h(tot(b))}</td><td style="text-align:right;${cls(tot(a))}">${h(tot(a))}</td><td style="text-align:right" class="small">${a ? h(a.drive) : '–'}</td>${hasG ? `<td style="text-align:right;${g != null ? cls((a?.work || 0) + g) : ''}">${g != null ? h((a?.work || 0) + g) : ''}</td>` : ''}<td style="text-align:right">${b?.n || 0} → ${a?.n || 0}</td></tr>`; }).join('')}
     </table></div><p class="small mute">Rød = over ${o.maxH} t, gul = under ${o.minH} t. Tiden er arbejde + kørsel.</p></div>
   ${o.routeMoves?.length ? `<div class="card"><h3>Hele ruter flyttes (${o.routeMoves.filter((m) => !o.routeOff.has(m.key)).length}/${o.routeMoves.length})</h3><p class="small mute">Alle rutens kunder flyttes samme antal dage – også de næste gange. Fjern fluebenet, så beregnes kundeflytningerne igen uden den.</p>
     <table><tr><th></th><th>Rute</th><th>Fra</th><th>Til</th><th style="text-align:right">Dage</th><th style="text-align:right">Kunder</th></tr>
-    ${o.routeMoves.map((m) => `<tr><td><input type="checkbox" data-optroute="${esc(m.key)}" ${o.routeOff.has(m.key) ? '' : 'checked'} ${o.busy ? 'disabled' : ''}></td><td><b>${esc(route(m.routeId)?.name)}</b></td><td>${fmt(m.fromDate)}</td><td><b>${fmt(m.toDate)}</b></td><td style="text-align:right">${m.shift > 0 ? '+' : ''}${m.shift}</td><td style="text-align:right">${m.n}</td></tr>`).join('')}</table></div>` : ''}
+    ${o.routeMoves.map((m) => `<tr><td><input type="checkbox" data-optroute="${esc(m.key)}" ${o.routeOff.has(m.key) ? '' : 'checked'} ${o.busy ? 'disabled' : ''}></td><td><b>${esc(route(m.routeId)?.name)}</b></td><td>${fmt(D.plannedFor(m.fromDate, db.closedDays))}</td><td><b>${fmt(D.plannedFor(m.toDate, db.closedDays))}</b></td><td style="text-align:right">${m.shift > 0 ? '+' : ''}${m.shift}</td><td style="text-align:right">${m.n}</td></tr>`).join('')}</table></div>` : ''}
   <div class="card"><div class="row"><h3 class="sp">Enkeltkunder flyttes (${sel.length}/${res.moves.length})</h3><button class="small" data-act="optAll">Alle</button><button class="small" data-act="optNone">Ingen</button></div>
     <div style="overflow-x:auto"><table><tr><th></th><th>Kunde</th><th>Adresse</th><th>Fra</th><th>Til</th><th style="text-align:right">Dage</th></tr>
-    ${res.moves.map((m) => `<tr><td><input type="checkbox" data-optmove="${esc(m.key)}" ${o.off?.has(m.key) ? '' : 'checked'}></td><td>${esc(cust(m.customerId)?.name)}</td><td class="small">${esc(addr(m.addressId)?.street)}</td><td>${esc(route(m.fromRoute)?.name)} ${fmt(m.fromDate)}</td><td><b>${esc(route(m.toRoute)?.name)} ${fmt(m.toDate)}</b></td><td style="text-align:right">${m.shift > 0 ? '+' : ''}${m.shift}</td></tr>`).join('')}
+    ${res.moves.map((m) => `<tr><td><input type="checkbox" data-optmove="${esc(m.key)}" ${o.off?.has(m.key) ? '' : 'checked'}></td><td>${esc(cust(m.customerId)?.name)}</td><td class="small">${esc(addr(m.addressId)?.street)}</td><td>${esc(route(m.fromRoute)?.name)} ${fmt(D.plannedFor(m.fromDate, db.closedDays))}</td><td><b>${esc(route(m.toRoute)?.name)} ${fmt(D.plannedFor(m.toDate, db.closedDays))}</b></td><td style="text-align:right">${m.shift > 0 ? '+' : ''}${m.shift}</td></tr>`).join('')}
     </table></div>
     <div class="row" style="margin-top:10px"><span class="sp small mute">${o.backupOk ? 'Gennemfør flytter de markerede kunder permanent. Kan fortrydes her bagefter, og backup-filen kan altid gendannes.' : 'Kontrollér backup-filen (trin 1) før du kan gennemføre.'}</span><button class="pri" data-act="optApply" ${!o.backupOk || !(sel.length || o.routeMoves?.some((m) => !o.routeOff.has(m.key))) || o.busy ? 'disabled' : ''}>✅ Gennemfør</button></div></div>` : ''}
   ${optWhyCard(o, sel)}
@@ -1250,13 +1252,6 @@ function optWhyCard(o, sel) {
     ${hits.length ? `<div class="row small">${hits.map((c) => `<button class="small" data-act="optWhy" data-id="${c.id}">${esc(c.name)}</button>`).join('')}</div>` : ''}${body}</div>`;
 }
 /** Forhåndsvisning + gennemførsel af "Byg ruter ud fra kalenderen". */
-/** Helligdage: ryk hele planen frem med antallet af lukkede hverdage (i stedet for at dynge besøgene sammen dagen efter). */
-function holidayDialog() {
-  const t = todayIso(); const ps = S.holidayPeriods(db, t, D.addDays(t, 365));
-  openDlg(`<h2>🎄 Helligdage og lukkedage</h2><p class="small mute">Normalt flyttes et besøg på en helligdag til næste hverdag – så bliver dagen efter dobbelt så lang. "Ryk planen" flytter i stedet <b>hele planen</b> som et transportbånd fra periodens første dag: torsdagens rute kører på næste åbne dag, de følgende dage rykker med, og efter perioden er alt rykket det antal hverdage, der var lukket. Ruterne og rækkefølgen bevares. Ferie og andre lukkedage sættes via ⋯ på dagen i kalenderen.</p>
-    <table><tr><th>Periode</th><th>Lukkede hverdage</th><th></th></tr>${ps.map((p) => `<tr><td>${fmt(p.start)} ${p.start.slice(0, 4)}${p.end !== p.start ? ' – ' + fmt(p.end) : ''}</td><td class="small">${p.n}: ${p.days.map((d) => fmt(d)).join(', ')}</td><td>${p.done ? '<span class="pill ok">Rykket/sprunget over</span>' : `<button class="pri small" data-act="holShift" data-d="${p.start}">Ryk planen ${p.n} ${p.n === 1 ? 'dag' : 'dage'}</button> <button class="small" data-act="holSkip" data-d="${p.start}">Spring over</button>`}</td></tr>`).join('') || '<tr><td colspan="3" class="mute">Ingen</td></tr>'}</table>
-    <p class="small mute">Kan fortrydes på optimeringssiden ("Fortryd seneste"). Tag gerne en backup først.</p>`, null, 'Luk');
-}
 function rebuildDialog(afterOpt = false) {
   const o = optState(); const plan = S.planRoutesFromCalendar(db, { fromIso: todayIso(), excludeRouteIds: [...o.ign, ...o.excl], startPoint: startPoint() });
   ui._rebuildPlan = plan; const rn = (id) => esc(route(id)?.name || '');
@@ -1712,10 +1707,10 @@ function admin() {
   <div class="card"><h2>Ruter</h2>
     <table><tr><th>Navn</th><th>Medarbejder</th><th>Hver … uge</th><th>Næste dato</th></tr>${db.routes.map((r) => `<tr><td><input data-rf="name" data-r="${r.id}" value="${esc(r.name)}"></td><td><select data-rf="employeeId" data-r="${r.id}">${db.employees.filter((x) => !x.inactive).map((e) => `<option value="${e.id}" ${e.id === r.employeeId ? 'selected' : ''}>${esc(e.name)}</option>`).join('')}</select></td>
       <td><input type="number" min="1" max="52" data-rf="intervalWeeks" data-r="${r.id}" value="${r.intervalWeeks}" style="width:70px"></td><td><input type="date" data-rf="anchorDate" data-r="${r.id}" value="${D.nextRouteDate(r, todayIso())}"></td></tr>`).join('')}</table>
-    <div class="row" style="margin-top:8px"><button data-act="showCheck">Datakontrol</button><button data-act="phraseFind">Find og fjern tekst …</button><button data-act="holDlg">🎄 Helligdage …</button><button data-act="addRoute">+ Rute</button><button data-act="delEmptyRoutes">Slet ruter uden kunder</button><button data-act="recalcRoutes">Genberegn rytme og dato ud fra kunderne</button></div>
+    <div class="row" style="margin-top:8px"><button data-act="showCheck">Datakontrol</button><button data-act="phraseFind">Find og fjern tekst …</button><button data-act="addRoute">+ Rute</button><button data-act="delEmptyRoutes">Slet ruter uden kunder</button><button data-act="recalcRoutes">Genberegn rytme og dato ud fra kunderne</button></div>
     <p class="small mute">Ændring af rutens dato/rytme flytter ikke eksisterende besøg automatisk – brug Kalender (flyt/forskyd) eller ret aftalerne.</p></div>
   <div class="card"><h2>SMS-skabeloner</h2>${((db.templates.paamindelse ||= DEFAULT_TEMPLATES.paamindelse), Object.entries(db.templates)).map(([k, v]) => `<label><span>${esc(k)} – felter: ${k === 'paamindelse' ? '{navn} {fakturanr} {beloeb} {forfald}' : '{navn} {dato} {tid} {nydato}'}</span><textarea data-tpl="${k}">${esc(v)}</textarea></label>`).join('')}</div>
-  <div class="card"><h2>Lukkedage (ferie mv.)</h2><p class="small mute">Helligdage beregnes automatisk. Besøg på lukkedage flyttes til næste arbejdsdag ved planlægning.</p><div class="row"><input type="date" id="cd"><button data-act="addClosed">Tilføj</button></div><div class="small">${db.closedDays.map((d) => `<span class="pill">${d} <a href="#" data-act="rmClosed" data-d="${d}">×</a></span>`).join(' ')}</div></div>
+  <div class="card"><h2>Lukkedage (ferie mv.)</h2><label class="small"><input type="checkbox" id="holShift" ${db.settings.holidayShift !== false ? 'checked' : ''}> <b>Helligdage og lukkedage rykker hele planen</b> – hver lukket hverdag rykker alt efter den én dag frem (anbefalet). Ellers flyttes besøgene til næste hverdag, så den dag bliver dobbelt.</label><p class="small mute">Helligdage beregnes automatisk. Besøg, du selv har flyttet, røres ikke.</p><div class="row"><input type="date" id="cd"><button data-act="addClosed">Tilføj</button></div><div class="small">${db.closedDays.map((d) => `<span class="pill">${d} <a href="#" data-act="rmClosed" data-d="${d}">×</a></span>`).join(' ')}</div></div>
   <div class="card"><h2>Auditlog</h2><div style="max-height:320px;overflow:auto"><table><tr><th>Tid</th><th>Bruger</th><th>Handling</th><th>Ref</th></tr>${db.audit.slice(0, 200).map((a) => `<tr class="small"><td>${fmtTs(a.at)}</td><td>${esc(userName(a.by))}</td><td>${esc(a.action)}</td><td class="mute">${esc(a.ref)} ${esc(JSON.stringify(a.detail).slice(0, 80))}</td></tr>`).join('')}</table></div></div>`;
   document.getElementById('comMonth').onchange = (e) => { ui.comMonth = e.target.value; render(); };
   document.getElementById('comVat').onchange = (e) => { db.settings.commissionInclVat = e.target.checked; S.audit(db, ui.user.id, 'commission.vat', '-', { inclVat: e.target.checked }); render(); };
@@ -1724,6 +1719,7 @@ function admin() {
   $view.querySelectorAll('[data-firm]').forEach((x) => (x.onchange = () => { db.settings.firm ||= {}; db.settings.firm[x.dataset.firm] = x.value.trim(); save(); toast('Gemt'); }));
   const saveStart = () => { const ll = (document.getElementById('stLL').value.match(/(-?\d+(?:[.,]\d+)?)\s*[,; ]\s*(-?\d+(?:[.,]\d+)?)/) || []);
     db.settings.start = { address: document.getElementById('stAddr').value.trim(), lat: ll[1] ? +ll[1].replace(',', '.') : null, lng: ll[2] ? +ll[2].replace(',', '.') : null }; save(); toast('Startadresse gemt'); };
+  document.getElementById('holShift').onchange = (e) => { db.settings.holidayShift = e.target.checked; if (e.target.checked) db.settings.holidayShiftFrom ||= todayIso(); S.audit(db, ui.user.id, 'holiday.shift', e.target.checked ? 'on' : 'off'); render(); toast(e.target.checked ? 'Helligdage rykker nu hele planen' : 'Besøg på helligdage flyttes til næste hverdag'); };
   document.getElementById('stopMin').onchange = (e) => { db.settings.stopMin = Math.max(0, Math.min(30, Number(e.target.value) || 0)); save(); toast('Ekstra tid pr. adresse gemt'); };
   document.getElementById('stAddr').onchange = saveStart; document.getElementById('stLL').onchange = saveStart;
   document.getElementById('gKey').onchange = (e) => { db.settings.googleKey = e.target.value.trim(); S.audit(db, ui.user.id, 'settings.googleKey', '-', { set: !!db.settings.googleKey }); save(); toast(db.settings.googleKey ? 'Nøgle gemt' : 'Nøgle fjernet'); };
@@ -1798,13 +1794,6 @@ document.addEventListener('click', async (e) => {
         catch (er) { if (er.message !== 'stop') toast(er.message); } finally { o.busy = null; } break; }
       case 'optStop': { ui._optWorker?.terminate(); ui._optWorker = null; ui._optReject?.(new Error('stop')); toast('Beregningen er stoppet'); return; }
       case 'optAll': optState().off = new Set(); break;
-      case 'holDlg': return holidayDialog();
-      case 'holShift': { const t = todayIso(); const p = S.holidayPeriods(db, t, D.addDays(t, 365)).find((x) => x.start === b.dataset.d); if (!p) return;
-        if (!confirm(`Ryk hele planen ${p.n} hverdage fra ${fmt(p.start)}?`)) return;
-        const snap = { at: new Date().toISOString(), db: JSON.parse(JSON.stringify(db)) }; await KV.set('vindue-optundo', snap); if (!(await KV.get('vindue-optorig'))?.db) await KV.set('vindue-optorig', snap);
-        const until = db.visits.reduce((m, v) => (v.plannedDate > m ? v.plannedDate : m), D.addDays(t, 180));
-        const r = S.shiftForHolidays(db, ui.user, p, until); optLoadUndo(); ui._google = {}; save(); toast(`Planen er rykket ${p.n} hverdage (${r.agreements} aftaler)`); return holidayDialog(); }
-      case 'holSkip': { (db.settings.holidayDone ||= {})[b.dataset.d] = { at: new Date().toISOString(), skipped: true }; save(); return holidayDialog(); }
       case 'payFromSet': { const v = document.getElementById('payFrom').value; if (!v) return toast('Vælg en dato'); db.settings.payrollFrom = v; S.audit(db, ui.user.id, 'payroll.from', v); break; }
       case 'paySettle': { const to = ui.payTo || todayIso(); const n = S.payrollPending(db, to).length;
         if (!confirm(`Afregn provision til og med ${fmt(to)} (${n} linjer)?\n\nBesøgene markeres som afregnet og kommer ikke med igen. Løngrundlaget hentes som CSV.`)) return;
