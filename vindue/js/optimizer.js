@@ -15,7 +15,7 @@
 import * as D from './domain.js';
 import { km, optimize } from './dayplan.js';
 
-export const DEFAULTS = { horizonDays: 84, windowBack: 4, windowFwd: 10, minDay: 420, maxDay: 450, underW: 0.02, early: 0.12, factor: 1, moveCost: 10, routeMoveCost: 30, timeMs: 4000, saMs: 0 };
+export const DEFAULTS = { horizonDays: 84, windowBack: 4, windowFwd: 10, minDay: 420, maxDay: 450, underW: 0.02, early: 0.02, factor: 1, moveCost: 10, routeMoveCost: 30, timeMs: 4000, saMs: 0 };
 const legMin = (a, b, f) => { const k = km(a, b); return k == null ? 0 : (k * 1.3) / 50 * 60 * f; };
 /** Strafpoint for en dags samlede minutter (0 = fridag, ingen straf). */
 export function dayPenalty(T, o = DEFAULTS) {
@@ -29,9 +29,12 @@ const dayCost = (dy, work, drive, o) => dayPenalty(work + drive, o) + (o.early ?
 function nextRhythm(a, fromIso) { const step = a.intervalWeeks * 7; const k = Math.max(0, Math.ceil(D.diffDays(a.anchorDate, fromIso) / step)); return D.addDays(a.anchorDate, k * step); }
 /** De første n planlagte datoer (i sæson) fra en ny ankerdato – samme antal besøg som nu, så en flytning aldrig "sparer" besøg væk.
  *  null hvis et besøg ville falde mere end `slack` dage efter perioden (fx skubbet ud af sæsonen). */
-function occN(a, anchor, n, end, slack, closed) {
+/** Strukturen beregnes på normale uger: kun weekend er lukket (helligdage/ferie flyttes som altid, når besøgene dannes). */
+const wkday = (d) => { const w = D.weekday(d); return w === 5 ? D.addDays(d, 2) : w === 6 ? D.addDays(d, 1) : d; };
+const isOff = (d) => D.weekday(d) >= 5;
+function occN(a, anchor, n, end, slack) {
   const out = []; const step = a.intervalWeeks * 7; const lim = D.addDays(end, slack);
-  for (let r = anchor, g = 0; out.length < n && g < 400; r = D.addDays(r, step), g++) { if (!D.inSeason(a, r)) continue; const p = D.nextWorkday(r, closed); if (p > lim) return null; out.push(p); }
+  for (let r = anchor, g = 0; out.length < n && g < 400; r = D.addDays(r, step), g++) { if (!D.inSeason(a, r)) continue; const p = wkday(r); if (p > lim) return null; out.push(p); }
   return out.length === n ? out : null;
 }
 /**
@@ -46,7 +49,8 @@ export function buildProblem(db, opts = {}) {
   const ptOf = (addressId) => { const a = addrById.get(addressId); if (a?.lat == null) return -1; if (!ptIdx.has(addressId)) { ptIdx.set(addressId, pts.length); pts.push({ lat: a.lat, lng: a.lng }); } return ptIdx.get(addressId); };
   // Rutens dage = de dage ruten faktisk har planlagte besøg i kalenderen (rutens egen dato/rytme kun hvis den ingen besøg har)
   const visDays = new Map(); const hi = D.addDays(end, o.windowFwd);
-  for (const v of db.visits) if (v.routeId && (v.status === 'planlagt' || v.status === 'udsat') && v.plannedDate >= D.addDays(start, -o.windowBack) && v.plannedDate <= hi) { if (!visDays.has(v.routeId)) visDays.set(v.routeId, new Set()); visDays.get(v.routeId).add(v.plannedDate); }
+  const rd = (v) => (v.manual ? v.plannedDate : wkday(v.rhythmDate || v.plannedDate)); // rytmedagen (uden helligdagsflytning)
+  for (const v of db.visits) { if (!v.routeId || !(v.status === 'planlagt' || v.status === 'udsat')) continue; const d = rd(v); if (d < D.addDays(start, -o.windowBack) || d > hi) continue; if (!visDays.has(v.routeId)) visDays.set(v.routeId, new Set()); visDays.get(v.routeId).add(d); }
   // ruteflytning gælder en "rutedag" = rutens kunder med samme dag i rutens rytme (nøgle `${ruteId}@${dag i rytmen}`)
   const shifts = o.routeShifts || {}; const BASE = '2000-01-03';
   const cls = (r, d) => { const P = r.intervalWeeks * 7; return ((D.diffDays(BASE, d) % P) + P) % P; };
@@ -64,25 +68,25 @@ export function buildProblem(db, opts = {}) {
       : !routeById.has(a.routeId) ? 'ruten mangler dato/interval' : null;
     if (why) { skipped.push({ agreementId: a.id, addressId: a.addressId, customerId: a.customerId, routeId: a.routeId, why }); continue; }
     // samme adresse + rute + samme næste dato flyttes samlet; aftaler med forskellige datoer flyttes hver for sig
-    const k = a.addressId + '|' + a.routeId + '|' + (firstPlanned(a)?.plannedDate || nextRhythm(a, start)); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(a);
+    const fp = firstPlanned(a); const k = a.addressId + '|' + a.routeId + '|' + (fp ? rd(fp) : nextRhythm(a, start)); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(a);
   }
   const movable = new Set([...groups.values()].flat().map((a) => a.id));
-  const live = (v) => (v.status === 'planlagt' || v.status === 'udsat') && v.plannedDate >= start && v.plannedDate <= end;
+  const live = (v) => (v.status === 'planlagt' || v.status === 'udsat') && rd(v) >= start && rd(v) <= end;
   const isMovableVisit = (v) => movable.has(v.agreementId) && !v.manual && v.status === 'planlagt';
-  const fixed = db.visits.filter((v) => live(v) && !isMovableVisit(v) && !ign.has(v.routeId)).map((v) => ({ date: v.plannedDate, pt: ptOf(v.addressId), min: (v.durationMin ?? 15) + (o.stopMin || 0), visitId: v.id }));
+  const fixed = db.visits.filter((v) => live(v) && !isMovableVisit(v) && !ign.has(v.routeId)).map((v) => ({ date: rd(v), pt: ptOf(v.addressId), min: (v.durationMin ?? 15) + (o.stopMin || 0), visitId: v.id }));
   const items = [];
   for (const [key, ags] of groups) {
     const pt = ptOf(ags[0].addressId); const from = routeById.get(ags[0].routeId); const addressId = ags[0].addressId;
     const mk = (date, a) => ({ date, min: (a.durationMin ?? 15) + (o.stopMin || 0), pt, addressId });
     // reference = kundens næste planlagte besøg (ellers næste rytmedato)
     const d0 = new Map(ags.map((a) => { const v = firstPlanned(a);
-      return [a.id, v ? v.plannedDate : nextRhythm(a, start)]; }));
+      return [a.id, v ? rd(v) : wkday(nextRhythm(a, start))]; }));
     const ref = [...d0.values()].sort()[0]; const sh = shiftOf(from, ref); const rcls = from.id + '@' + cls(from, ref);
     // nuværende besøg (flyttes ruten i fase 1, følger kunden med)
-    const nOf = new Map(ags.map((a) => [a.id, db.visits.filter((v) => v.agreementId === a.id && live(v) && isMovableVisit(v)).length]));
-    const occFor = (a, anchor) => occN(a, anchor, nOf.get(a.id), end, o.windowFwd, closed);
-    const cur = sh ? ags.flatMap((a) => (occFor(a, D.addDays(d0.get(a.id), sh)) || []).map((d) => mk(d, a)))
-      : db.visits.filter((v) => live(v) && isMovableVisit(v) && ags.some((a) => a.id === v.agreementId)).map((v) => mk(v.plannedDate, ags.find((a) => a.id === v.agreementId)));
+    // antal besøg i perioden (normale uger, i sæson) – samme antal for alle muligheder
+    const nOf = new Map(ags.map((a) => { let n = 0; for (let r = d0.get(a.id); r <= end; r = D.addDays(r, a.intervalWeeks * 7)) if (D.inSeason(a, r)) n++; return [a.id, n]; }));
+    const occFor = (a, anchor) => occN(a, anchor, nOf.get(a.id), end, o.windowFwd);
+    const cur = ags.flatMap((a) => (occFor(a, D.addDays(d0.get(a.id), sh)) || occN(a, D.addDays(d0.get(a.id), sh), nOf.get(a.id), end, 400) || []).map((d) => mk(d, a)));
     const cands = []; const why = [];
     if (pt < 0) { items.push({ key, agreementIds: ags.map((a) => a.id), addressId, customerId: ags[0].customerId, routeId: from.id, rcls, pt, ref, d0, nOf, curShift: sh, cur, cands, why, whyAll: 'adressen mangler koordinater (Admin → Manglende koordinater)' }); continue; }
     for (const r of routes) {
@@ -93,7 +97,7 @@ export function buildProblem(db, opts = {}) {
         if (s === sh) continue; // samme dato giver ingen gevinst
         const anchors = new Map(ags.map((a) => [a.id, D.addDays(d0.get(a.id), s)]));
         // egen rute: må lægges på enhver arbejdsdag i vinduet (også dage uden ruter); andre ruter: kun deres dage
-        if ([...anchors.values()].some((d) => d < start || (r.id !== from.id && !runsOn(r, d)) || D.isClosedDay(d, closed))) continue;
+        if ([...anchors.values()].some((d) => d < start || (r.id !== from.id && !runsOn(r, d)) || isOff(d))) continue;
         const os = ags.map((a) => occFor(a, anchors.get(a.id))); if (os.some((x) => !x)) continue;
         const occ = ags.flatMap((a, i) => os[i].map((date) => mk(date, a)));
         cands.push({ routeId: r.id, shift: s, anchors, occ });
@@ -114,15 +118,15 @@ export function buildProblem(db, opts = {}) {
       const cands = [];
       for (let s = -o.windowBack; s <= o.windowFwd; s++) {
         if (!s) continue; const anchors = ags.map(({ it, a }) => D.addDays(it.d0.get(a.id), s));
-        if (anchors.some((d) => d < start || D.isClosedDay(d, closed))) continue;
-        const os = ags.map(({ it, a }, i) => occN(a, anchors[i], it.nOf.get(a.id), end, o.windowFwd, closed)); if (os.some((x) => !x)) continue;
+        if (anchors.some((d) => d < start || isOff(d))) continue;
+        const os = ags.map(({ it, a }, i) => occN(a, anchors[i], it.nOf.get(a.id), end, o.windowFwd)); if (os.some((x) => !x)) continue;
         cands.push({ routeId: r.id, shift: s, occ: ags.flatMap(({ it, a }, i) => os[i].map((date) => ({ date, min: (a.durationMin ?? 15) + (o.stopMin || 0), pt: it.pt, addressId: it.addressId }))) });
       }
       const first = mine.map((it) => it.ref).sort()[0];
       items.push({ key: rc, isRoute: true, routeId: r.id, pt: -1, ref: first, cur: mine.flatMap((it) => it.cur), cands, why: [], agreementIds: [], n: mine.length });
     }
   }
-  const dates = []; for (let d = start; d <= end; d = D.addDays(d, 1)) if (!D.isClosedDay(d, closed)) dates.push(d);
+  const dates = []; for (let d = start; d <= end; d = D.addDays(d, 1)) if (!isOff(d)) dates.push(d);
   return { pts, dates, items, fixed, routes, skipped, opts: o, start, end };
 }
 

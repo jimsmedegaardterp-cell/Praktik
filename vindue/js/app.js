@@ -15,7 +15,7 @@ import { showRouteMap } from './map.js';
 import * as KV from './store.js';
 import * as O from './optimizer.js';
 
-export const VERSION = '2026-11-07 #77';
+export const VERSION = '2026-11-07 #78';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -1189,7 +1189,7 @@ function optimView() {
   const dates = res ? [...new Set([...Object.keys(res.before.perDate), ...Object.keys(ev.perDate)])].sort() : [];
   const nOver = (x) => Object.values(x.perDate).filter((d) => tot(d) > o.maxH * 60).length;
   $view.innerHTML = kTabs() + `<div class="card"><div class="row"><h2 class="sp">✨ Optimér alle ruter (forsøg)</h2><button data-act="kview" data-v="ruter">← Faste ruter</button></div>
-    <p class="small mute">Kunder flyttes <b>permanent</b> mellem de faste ruter og deres dage – højst 4 dage tilbage og 10 dage frem fra næste besøg. Kundens interval skal passe med rutens (8 uger passer på en 4-ugers rute). Der beregnes ${O.DEFAULTS.horizonDays / 7} uger frem, én person, man–fre, kørsel fra og til startadressen. <b>Intet ændres før du trykker "Gennemfør".</b></p>
+    <p class="small mute">Kunder flyttes <b>permanent</b> mellem de faste ruter og deres dage – højst 4 dage tilbage og 10 dage frem fra næste besøg. Kundens interval skal passe med rutens (8 uger passer på en 4-ugers rute). Der beregnes ${O.DEFAULTS.horizonDays / 7} uger frem på <b>normale uger</b> (helligdage og ferie flyttes som altid, når besøgene dannes – de får ikke kunderne flyttet permanent), én person, man–fre, kørsel fra og til startadressen. <b>Intet ændres før du trykker "Gennemfør".</b></p>
     ${undo || ui._optOrig ? `<div class="warnbox">${undo ? `↩ Seneste optimering ${fmtTs(undo.at)} kan fortrydes. <button data-act="optUndo">Fortryd seneste</button> ` : ''}${ui._optOrig && ui._optOrig.at !== undo?.at ? `⏮ <button data-act="optOrig">Tilbage til før første optimering (${fmtTs(ui._optOrig.at)})</button> ` : ''}<button class="small" data-act="optUndoForget">Glem</button><br><span class="small">Begge sætter alt tilbage – også det du har ændret bagefter.</span></div>` : ''}
     ${!st?.lat ? '<div class="warnbox">⚠️ Sæt startadressen (med koordinater) under Admin først – ellers kan kørslen ikke beregnes.</div>' : ''}
     <h3>1. Backup</h3>
@@ -1247,10 +1247,10 @@ function optWhyCard(o, sel) {
     ${hits.length ? `<div class="row small">${hits.map((c) => `<button class="small" data-act="optWhy" data-id="${c.id}">${esc(c.name)}</button>`).join('')}</div>` : ''}${body}</div>`;
 }
 /** Forhåndsvisning + gennemførsel af "Byg ruter ud fra kalenderen". */
-function rebuildDialog() {
+function rebuildDialog(afterOpt = false) {
   const o = optState(); const plan = S.planRoutesFromCalendar(db, { fromIso: todayIso(), excludeRouteIds: [...o.ign, ...o.excl], startPoint: startPoint() });
   ui._rebuildPlan = plan; const rn = (id) => esc(route(id)?.name || '');
-  openDlg(`<h2>🧩 Byg ruter ud fra kalenderen</h2><p class="small mute">Én fast rute pr. dag i rytmen (samme ugedag i samme uge af 4-ugers-rytmen; 8- og 12-ugers kunder kommer med på den rute, hvis dag de ligger på). Eksisterende ruter genbruges, hvor de fleste kunder kommer fra – navnet beholdes, hvis mindst halvdelen kommer derfra. <b>Ingen datoer ændres.</b> ${[...o.ign, ...o.excl].map(rn).join(', ') || ''} røres ikke.</p>
+  openDlg(`<h2>🧩 Byg ruter ud fra kalenderen</h2>${afterOpt ? '<p><b>Flytningerne er gennemført.</b> De flyttede kunder står stadig på deres gamle ruter, så kalenderen viser mange små ruteblokke pr. dag. Byg nye ruter nu, så hver dag bliver én rute:</p>' : ''}<p class="small mute">Én fast rute pr. dag i rytmen (samme ugedag i samme uge af 4-ugers-rytmen; 8- og 12-ugers kunder kommer med på den rute, hvis dag de ligger på). Eksisterende ruter genbruges, hvor de fleste kunder kommer fra – navnet beholdes, hvis mindst halvdelen kommer derfra. <b>Ingen datoer ændres.</b> ${[...o.ign, ...o.excl].map(rn).join(', ') || ''} røres ikke.</p>
     <div style="max-height:50vh;overflow:auto"><table><tr><th>Rute</th><th>Rytme</th><th>Næste</th><th style="text-align:right">Kunder</th><th style="text-align:right">Arbejde</th><th>Områder</th><th>Genbruger</th></tr>
     ${plan.groups.map((g) => `<tr class="small"><td><b>${esc(g.name)}</b></td><td>hver ${g.C}. uge</td><td>${fmt(g.anchor)}</td><td style="text-align:right">${g.n}</td><td style="text-align:right">${D.hm(g.min)}</td><td>${esc(g.towns)}</td><td>${g.reuse ? rn(g.reuse) : '<i>ny rute</i>'}</td></tr>`).join('')}</table></div>
     <p class="small">${plan.groups.length} ruter.${plan.untouched ? ` ${plan.untouched} aftaler uden kommende besøg røres ikke.` : ''}${plan.emptied.length ? ` Bliver tomme: ${plan.emptied.map(rn).join(', ')} (slet dem under Admin → "Slet ruter uden kunder", hvis de ikke har historik).` : ''}</p>
@@ -1813,7 +1813,9 @@ document.addEventListener('click', async (e) => {
         const r = S.applyRouteMoves(db, ui.user, fm.moves, o.start, until, fm.routeAnchors);
         for (const d of new Set(fm.moves.flatMap((m) => [...m.fromDates, ...m.toDates]))) if (db.dayPlans?.[d]) delete db.dayPlans[d];
         optLoadUndo(); o.res = null; o.backupOk = false; ui._google = {}; KV.set('vindue-gcache', {}).catch(() => {});
-        toast(`${r.moved} kunder flyttet (${r.visits} besøg planlagt)`); break; }
+        toast(`${r.moved} kunder flyttet (${r.visits} besøg planlagt)`); render();
+        // kunderne har stadig deres gamle rutenavn på de nye dage → byg ruter, så hver dag bliver én rute
+        return rebuildDialog(true); }
       case 'optUndo': { const u = await KV.get('vindue-optundo'); if (!u?.db) return toast('Intet at fortryde');
         if (!confirm(`Sæt alt tilbage som før optimeringen ${fmtTs(u.at)}?\n\nÆndringer lavet efter optimeringen (fx udførte besøg) går også tabt.`)) return;
         db = u.db; S.audit(db, ui.user.id, 'routes.optimize.undo', '-', { at: u.at }); await save(); await KV.del('vindue-optundo'); if ((await KV.get('vindue-optorig'))?.at === u.at) await KV.del('vindue-optorig'); location.reload(); return; }
