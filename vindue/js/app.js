@@ -15,7 +15,7 @@ import { showRouteMap } from './map.js';
 import * as KV from './store.js';
 import * as O from './optimizer.js';
 
-export const VERSION = '2026-11-07 #70';
+export const VERSION = '2026-11-07 #71';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -506,7 +506,7 @@ function dayLen(d, vs) {
   if (c.size > 200) c.clear();
   const st = startPoint(); const A = (v) => addr(v.addressId) || {}; const pts = live.filter((v) => A(v).lat != null);
   const ord = DP.localOptimal(pts, A, st).map((id) => A(pts.find((v) => v.id === id)));
-  const dr = Math.round(DP.sumLegs(DP.estimateLegs(ord, st)).sec / 60); const res = { work, drive: dr, total: work + dr, google: false }; c.set(ck, res); return res;
+  const dr = Math.round(DP.sumLegs(DP.estimateLegs(ord, st)).sec / 60 * (db.settings.driveFactor || 1)); const res = { work, drive: dr, total: work + dr, google: false }; c.set(ck, res); return res;
 }
 function kalender() {
   const ws = ui.weekStart; const rf = ui.calRoute || '';
@@ -535,7 +535,7 @@ function kalender() {
           const key = (r?.id || '') + '|' + d;
           const gd = r ? (ui._google || {})[gKey('route:' + r.id + d, gv.filter((v) => v.status !== 'aflyst').map((v) => v.id))] : null; const gdrv = gd?.legs ? Math.round(DP.sumLegs(gd.legs).sec / 60) : null;
           // uden Google-svar: skøn (luftlinje × 1,3 ved 50 km/t fra startadressen og hjem) – vises med ≈
-          const drv = gdrv ?? (r ? Math.round(DP.sumLegs(DP.estimateLegs(gv.filter((v) => v.status !== 'aflyst').map((v) => addr(v.addressId)).filter((x) => x?.lat != null), startPoint())).sec / 60) : 0);
+          const drv = gdrv ?? (r ? Math.round(DP.sumLegs(DP.estimateLegs(gv.filter((v) => v.status !== 'aflyst').map((v) => addr(v.addressId)).filter((x) => x?.lat != null), startPoint())).sec / 60 * (db.settings.driveFactor || 1)) : 0);
           const bm = mins(gv.filter((v) => v.status !== 'aflyst')) + drv;
           return `<div style="--min:${Math.max(bm, 20)}" class="rblock ${allDone ? 'done' : ''} ${r && ui.calSel?.has(key) ? 'sel' : ''} ${ui.calPick === key ? 'picked' : ''}" ${r ? `data-rsel="${key}"` : ''}>${r ? `<div class="grip" data-act="routeMenu" data-r="${r.id}" data-d="${d}" draggable="true" data-dragroute="${key}" title="Klik: muligheder · Træk: flyt ruten · Ctrl+klik: vælg">⋮⋮</div>` : ''}<div class="rhead" ${r ? `data-dblroute="${r.id}" data-day="${d}" draggable="true" data-dragroute="${key}" title="Klik: vis rutens tal og muligheder · Dobbeltklik: færdigmeld · Træk: flyt hele ruten"` : ''}><b>${esc(r?.name ?? 'Uden rute')}</b><span class="badge">${gv.length}</span></div>
           <div class="rmeta"><span>${drv && gdrv == null ? '≈' : ''}${D.hm(bm)} t${drv ? ' inkl. kørsel' : ''} · ${kr(gv.filter((v) => v.status !== 'aflyst').reduce((s2, v) => s2 + D.visitTotal(v), 0))}${bm && drv ? ` · <span title="Omsætning / (arbejde + kørsel)">${kr(Math.round(gv.filter((v) => v.status !== 'aflyst').reduce((s2, v) => s2 + D.visitTotal(v), 0) / (bm / 60)))}/t</span>` : ''}</span>${r ? `<button class="icon" data-act="printRoute" data-r="${r.id}" data-d="${d}" title="Udskriv ruteseddel">🖨</button>` : ''}</div>
@@ -1143,7 +1143,7 @@ function ruteOversigt() {
  * Flytter kunder mellem de faste ruter/dage (højst 4 dage tilbage / 10 frem), så dagene bliver ca. 7–8 timer inkl. kørsel.
  * Intet ændres før "Gennemfør". Kræver kontrolleret backup; en fuld kopi gemmes også på enheden til "Fortryd".
  */
-const optState = () => (ui.opt ||= { start: D.addDays(mondayOf(todayIso()), 7), excl: new Set(), ign: new Set(db.routes.filter((r) => /tagrende/i.test(r.name)).map((r) => r.id)), minH: 7, maxH: 8, factor: 1, backupOk: false, g: {} });
+const optState = () => (ui.opt ||= { start: D.addDays(mondayOf(todayIso()), 7), excl: new Set(), ign: new Set(db.routes.filter((r) => /tagrende/i.test(r.name)).map((r) => r.id)), minH: 7, maxH: 8, factor: db.settings.driveFactor || 1, backupOk: false, g: {} });
 const optOpts = () => { const o = optState(); return { start: o.start, startPoint: startPoint(), excludeRouteIds: [...o.excl], ignoreRouteIds: [...o.ign], minDay: o.minH * 60, maxDay: o.maxH * 60, factor: o.factor }; };
 function optProblem() { return O.buildProblem(db, optOpts()); }
 /** Kør (fase 2 igen hvis ruteflytninger er fravalgt). */
@@ -1249,7 +1249,7 @@ async function optCalibrate() {
   for (const [i, d] of days.entries()) { o.busy = `Måler dag ${i + 1}/${days.length} med Google …`; render();
     const g = await optGoogleDay(O.dayStops(P1, [], d)); const e = est.perDate[d].drive; if (e > 5) ratios.push(g / e); }
   ratios.sort((a, b) => a - b); const med = ratios.length ? ratios[Math.floor(ratios.length / 2)] : 1;
-  o.factor = Math.round(Math.min(2.5, Math.max(0.6, med)) * 100) / 100; o.calib = { n: ratios.length, txt: ratios.map((r) => r.toFixed(2)).join(', ') }; o.res = null;
+  o.factor = Math.round(Math.min(2.5, Math.max(0.6, med)) * 100) / 100; db.settings.driveFactor = o.factor; save(); o.calib = { n: ratios.length, txt: ratios.map((r) => r.toFixed(2)).join(', ') }; o.res = null;
   S.audit(db, ui.user.id, 'routes.optimize.calibrate', '-', { factor: o.factor, days: ratios.length });
 }
 /* ---------------- Mobil dagsrute ---------------- */
@@ -1673,7 +1673,9 @@ document.addEventListener('click', async (e) => {
     switch (act) {
       case 'back': ui.customer = null; break;
       case 'optOpen': ui.kView = 'opt'; optLoadUndo(); break;
-      case 'optRun': { const o = optState(); o.busy = 'run'; render();
+      case 'optRun': { const o = optState();
+        if (db.settings.googleKey && !o.calib && !db.settings.driveFactor) { try { await optCalibrate(); } catch (er) { toast('Kalibrering mislykkedes: ' + er.message); } }
+        o.busy = 'run'; render();
         try { await optCompute(o, false);
           S.audit(db, ui.user.id, 'routes.optimize.proposal', '-', { routes: o.routeMoves.length, moves: o.res.moves.length, before: o.res.before.objective, after: o.res.after.objective }); }
         catch (er) { if (er.message !== 'stop') toast(er.message); } finally { o.busy = null; } break; }
