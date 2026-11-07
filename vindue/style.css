@@ -82,7 +82,7 @@ label{display:block;margin:8px 0}label>span{display:block;font-size:12px;color:v
 .rhead{display:flex;justify-content:space-between;align-items:center;gap:6px;cursor:pointer}.rhead b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rhead:hover b{color:var(--pri)}
 .rmeta{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--mute);margin-bottom:3px}
-.vline{font-size:12.5px;line-height:1.45;padding:1px 0;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vline{font-size:12.5px;line-height:1.35;padding:1px 0;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .vline[draggable=true]{cursor:grab}.vline:hover{color:var(--pri)}
 .vline.udfoert::before,.vline.delvis::before{content:'✓ ';color:var(--ok)}.vline.aflyst,.vline.forgaeves{text-decoration:line-through;opacity:.55}.vline.udsat::before{content:'⏸ '}
 .econ{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px;box-shadow:var(--shadow);position:sticky;top:60px}
@@ -268,3 +268,6 @@ tr.rowlink:hover td{background:var(--soft)}
   button,.btn,select,input,textarea{font-size:16px}
   .tabs{will-change:bottom;transform:translateZ(0)}
 }
+
+/* Kalender: kompakt skrift når mange korte besøg ellers ville gøre kalenderen meget høj */
+.timeline.compact .vline{font-size:11px;line-height:1.2}.timeline.compact .rmeta{font-size:11px}.timeline.compact .rhead{font-size:13px}

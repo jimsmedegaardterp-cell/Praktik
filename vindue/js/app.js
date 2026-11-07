@@ -15,7 +15,7 @@ import { showRouteMap } from './map.js';
 import * as KV from './store.js';
 import * as O from './optimizer.js';
 
-export const VERSION = '2026-11-07 #81';
+export const VERSION = '2026-11-07 #82';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -127,6 +127,7 @@ function render() {
   const tag = document.querySelector('.tag'); if (tag) tag.textContent = (db.settings.realData ? 'PROTOTYPE' : 'PROTOTYPE · testdata') + ' · version ' + VERSION;
   ({ overblik, kunder, kalender, ruter, dag: dagsplan, print: printView, mobil, faktura, okonomi, mig, sms: beskeder, import: importView, admin })[ui.tab]();
   const rm = document.getElementById('routeMap'); if (rm && ui._routeMapArgs) showRouteMap(rm, ui._routeMapArgs).catch(() => {});
+  fitTimeline();
   save();
 }
 
@@ -501,6 +502,14 @@ function econ(vs, byRoute = false, useGoogle = true) {
   const drive = gOk ? Math.round(gSec / 60) : Math.round(km / 50 * 60); const total = (min + drive) / 60; // timer i alt = arbejde + kørsel
   const wp = live.reduce((t2, v) => t2 + D.visitTotal(v) * wageRate(v.routeId), 0);
   return { n: live.length, sum, min, km: gOk ? Math.round(gM / 1000) : Math.round(km), drive, google: gOk, gWait, prov, perHour: total ? sum / total : 0, wage: total ? wp / total : 0 };
+}
+/** Kalenderens tidsskala tilpasses, så alle adresser i hver ruteblok kan stå inden for blokkens tidshøjde (blokkene passer i længden). */
+function fitTimeline() {
+  const tl = document.querySelector('.timeline'); if (!tl || !window.matchMedia?.('(min-width: 821px)').matches) return;
+  tl.style.removeProperty('--pxm'); tl.classList.remove('compact');
+  const measure = () => { let need = 1.5; for (const b of tl.querySelectorAll('.rblock')) { const m = parseFloat(b.style.getPropertyValue('--min')) || 20; need = Math.max(need, (b.scrollHeight + 2) / m); } return need; };
+  let need = measure(); if (need > 2.2) { tl.classList.add('compact'); need = measure(); } // mindre skrift før kalenderen bliver meget høj
+  if (need > 1.5) tl.style.setProperty('--pxm', Math.min(5, need).toFixed(2) + 'px');
 }
 /** Hele dagen som én tur: arbejde + kørsel (dagsplanens Google-tal hvis gemt, ellers luftlinje-skøn i bedste rækkefølge). */
 function dayLen(d, vs) {
