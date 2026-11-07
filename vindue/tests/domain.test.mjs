@@ -291,3 +291,23 @@ test('lønafregning: kun det der ikke er afregnet, rettelser kommer med næste g
   const hist = S.payrollRuns(db); assert.equal(hist.length, 2); assert.equal(hist[0].totals.e2.com, 105); assert.equal(hist[1].totals.e2.com, 175);
   assert.throws(() => S.settlePayroll(db, admin, '2026-11-30'), /Intet/);
 });
+
+test('helligdage: hele planen rykkes som et transportbånd – ingen dobbeltdage', () => {
+  const db = S.emptyDb(); const days = ['2026-12-21', '2026-12-22', '2026-12-23', '2026-12-24', '2026-12-25', '2026-12-28', '2026-12-29', '2026-12-30', '2026-12-31', '2027-01-01'];
+  days.forEach((d, k) => { db.routes.push({ id: 'r' + k, name: 'R' + k, intervalWeeks: 4, anchorDate: d });
+    for (let j = 0; j < 3; j++) db.agreements.push({ id: `g${k}_${j}`, customerId: 'c', addressId: `a${k}_${j}`, routeId: 'r' + k, service: 'V', price: 100, intervalWeeks: 4, durationMin: 20, anchorDate: d, seasonMonths: [], active: true }); });
+  S.planAhead(db, '2027-06-30', '2026-12-01');
+  const per = (from, to) => { const m = {}; for (const v of db.visits) if (v.plannedDate >= from && v.plannedDate <= to) m[v.plannedDate] = (m[v.plannedDate] || 0) + 1; return m; };
+  assert.equal(per('2026-12-28', '2026-12-28')['2026-12-28'], 9, 'før: torsdag+fredag dynges på mandag');
+  const p = S.holidayPeriods(db, '2026-12-01', '2027-01-31'); assert.equal(p.length, 1); assert.equal(p[0].n, 4); assert.deepEqual(p[0].days, ['2026-12-24', '2026-12-25', '2026-12-31', '2027-01-01']);
+  const n0 = db.visits.filter((v) => v.plannedDate >= '2026-12-01' && v.plannedDate <= '2027-06-01').length;
+  S.shiftForHolidays(db, admin, p[0], '2027-06-30');
+  const m = per('2026-12-21', '2027-03-20'); // påsken er en ny periode assert.ok(Object.values(m).every((n) => n <= 3), 'højst én rutedag pr. dag: ' + JSON.stringify(m));
+  assert.ok(!db.visits.some((v) => v.status === 'planlagt' && D.isClosedDay(v.plannedDate)), 'intet på lukkedage');
+  const g = (id) => db.visits.filter((v) => v.agreementId === id && v.plannedDate >= '2026-12-21').map((v) => v.plannedDate).sort().slice(0, 2);
+  assert.deepEqual(g('g3_0'), ['2026-12-28', '2027-01-27'], 'torsdag 24/12 → mandag 28/12, næste gang 4 hverdage senere end før');
+  assert.deepEqual(g('g0_0'), ['2026-12-21', '2027-01-22'], 'før perioden: uændret, derefter 4 hverdage senere (18/1 → 22/1)');
+  assert.ok(Math.abs(db.visits.filter((v) => v.plannedDate >= '2026-12-01' && v.plannedDate <= '2027-06-01').length - n0) <= 30, 'ca. samme antal besøg (enden af perioden rykker)');
+  assert.ok(S.holidayPeriods(db, '2026-12-01', '2027-01-31')[0].done);
+  assert.equal(new Set(db.visits.map((v) => v.id)).size, db.visits.length);
+});
