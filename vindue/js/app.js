@@ -15,7 +15,7 @@ import { showRouteMap } from './map.js';
 import * as KV from './store.js';
 import * as O from './optimizer.js';
 
-export const VERSION = '2026-11-07 #76';
+export const VERSION = '2026-11-07 #77';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -1377,9 +1377,7 @@ function okonomi() {
   ${moneyCard(sel)}
   <div class="grid2"><div class="card"><h2>${mLabel(sel)} pr. rute</h2><table><tr><th>Rute</th><th style="text-align:right">Besøg</th><th style="text-align:right">Omsætning</th><th style="text-align:right">Oms./time</th><th style="text-align:right">Timeløn</th></tr>
     ${rRows.map((x) => `<tr><td>${esc(x.r?.name ?? 'Uden rute')}</td><td style="text-align:right">${x.n}${x.nPlan ? `<span class="mute small"> +${x.nPlan}</span>` : ''}</td><td style="text-align:right">${kr(Math.round(x.rev))}${x.planRev ? `<div class="small mute">+${kr(Math.round(x.planRev))}</div>` : ''}</td><td style="text-align:right">${x.perHour ? kr(Math.round(x.perHour)) : '–'}</td><td style="text-align:right">${x.wage ? kr(Math.round(x.wage)) : '–'}</td></tr>`).join('') || '<tr><td colspan="5" class="mute">Ingen besøg</td></tr>'}</table></div>
-  <div class="card"><div class="row"><h2 class="sp">${mLabel(sel)} – løngrundlag</h2><button class="small" data-act="comCsv" data-m="${sel}">⬇ Eksportér (CSV)</button></div><table><tr><th>Medarbejder</th><th style="text-align:right">Besøg</th><th style="text-align:right">Timer</th><th style="text-align:right">Grundlag</th><th style="text-align:right">Provision</th></tr>
-    ${payroll(sel).per.map((x) => `<tr><td>${esc(x.e.name)}</td><td style="text-align:right">${x.n}</td><td style="text-align:right">${D.hm(x.min)}</td><td style="text-align:right">${kr(Math.round(x.base))}</td><td style="text-align:right"><b>${kr(Math.round(x.commission))}</b></td></tr>`).join('') || '<tr><td colspan="5" class="mute">Ingen udførte besøg denne måned</td></tr>'}</table>
-    <p class="small mute">Udførte/delvist udførte besøg i måneden (udførelsesdato). Grundlag${db.settings.commissionInclVat ? ' inkl.' : ' ekskl.'} moms, satser under Admin. Timer = arbejdstid + ekstra tid pr. adresse (uden kørsel). CSV'en har en linje pr. besøg til lønsedlen; feriepenge mv. beregnes i lønsystemet.</p></div></div>`;
+  ${payCard()}</div></div>`;
 }
 
 /** Løngrundlag pr. medarbejder for en måned: besøg, timer, grundlag, provision (+ linje pr. besøg). */
@@ -1403,6 +1401,32 @@ function payrollCsv(mon) {
     detail.push([v.completion.at.slice(0, 10), emp(sp.employeeId)?.name ?? sp.employeeId, cust(v.customerId)?.name, addr(v.addressId)?.street, v.service, D.RESULTS[v.status], n2(base), n2(sp.pct), n2(base * sp.pct / 100)]); }
   const csv = [...rows, [], ...detail].map((r) => r.map((c) => `"${String(c ?? '').replace(/"/g, '""')}"`).join(';')).join('\r\n');
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv' })); a.download = `loengrundlag-${mon}.csv`; a.click(); S.audit(db, ui.user.id, 'commission.export', mon);
+}
+/** Løn: provision siden sidste afregning (sent registrerede besøg og rettelser kommer med næste gang – intet to gange). */
+document.addEventListener('change', (e) => { if (e.target.id === 'payTo') { ui.payTo = e.target.value || todayIso(); render(); } });
+function payCard() {
+  const t = todayIso(); ui.payTo ||= t; const runs = S.payrollRuns(db); const first = !db.settings.payrollFrom && !runs.length;
+  const lines = first ? [] : S.payrollPending(db, ui.payTo); const tot = S.payrollTotals(lines);
+  const hrs = (eId) => mins(db.visits.filter((v) => lines.some((l) => l.e === eId && l.kind === 'ny' && l.visitId === v.id)));
+  const empRows = (T, L) => Object.entries(T).map(([e, x]) => `<tr><td>${esc(emp(e)?.name || e)}</td><td style="text-align:right">${x.n}</td><td style="text-align:right">${L ? D.hm(L(e)) : ''}</td><td style="text-align:right">${kr(Math.round(x.base))}</td><td style="text-align:right">${x.fix ? kr(x.fix) : '–'}</td><td style="text-align:right"><b>${kr(x.com)}</b></td></tr>`).join('');
+  return `<div class="card"><h2>💵 Løn – provision siden sidste afregning</h2>
+    ${first ? `<p>Vælg hvilke besøg den første afregning skal tage med (udført fra og med):</p><div class="row"><input type="date" id="payFrom" value="${t.slice(0, 8)}01"><button class="pri" data-act="payFromSet">Gem startdato</button></div><p class="small mute">Besøg udført før datoen regnes som allerede afregnet (fx i SkvizBiz).</p>`
+    : `<div class="row"><label>Til og med <input type="date" id="payTo" value="${ui.payTo}"></label><span class="sp small mute">${runs.length ? `Sidst afregnet ${fmtTs(runs[0].at)} (til og med ${fmt(runs[0].to)})` : `Første afregning – besøg fra ${fmt(db.settings.payrollFrom)}`}</span></div>
+    <table><tr><th>Medarbejder</th><th style="text-align:right">Nye besøg</th><th style="text-align:right">Timer</th><th style="text-align:right">Grundlag</th><th style="text-align:right">Rettelser</th><th style="text-align:right">Provision</th></tr>${empRows(tot, hrs) || '<tr><td colspan="6" class="mute">Intet at afregne 👍</td></tr>'}</table>
+    <div class="row" style="margin-top:8px"><span class="sp small mute">Alle udførte besøg, der ikke er afregnet endnu – også dem, der er registreret for sent. Er et afregnet besøg rettet bagefter (pris, ekstra opgave, aflyst), kommer forskellen med som rettelse.</span><button class="pri" data-act="paySettle" ${lines.length ? '' : 'disabled'}>✅ Afregn og hent løngrundlag</button></div>`}
+    ${runs.length ? `<details style="margin-top:8px"><summary>Tidligere afregninger (${runs.length})</summary><table><tr><th>Afregnet</th><th>Til og med</th><th>Medarbejdere</th><th style="text-align:right">Provision</th><th></th></tr>
+      ${runs.map((r) => `<tr><td>${fmtTs(r.at)}</td><td>${fmt(r.to)}</td><td class="small">${Object.entries(r.totals).map(([e, x]) => `${esc(emp(e)?.name || e)} ${kr(x.com)}`).join(' · ')}</td><td style="text-align:right">${kr(Math.round(Object.values(r.totals).reduce((a, x) => a + x.com, 0) * 100) / 100)}</td><td><button class="small" data-act="payCsv" data-id="${r.id}">⬇ CSV</button></td></tr>`).join('')}</table></details>` : ''}
+    <p class="small mute">Grundlag${db.settings.commissionInclVat ? ' inkl.' : ' ekskl.'} moms, satser under Admin. Timer = arbejdstid + ekstra tid pr. adresse (uden kørsel). Feriepenge mv. beregnes i lønsystemet.</p></div>`;
+}
+function runCsv(r) {
+  const n2 = (x) => (Math.round(x * 100) / 100).toFixed(2).replace('.', ',');
+  const rows = [['Afregnet', 'Til og med', 'Medarbejder', 'Nye besøg', 'Timer', 'Grundlag', 'Rettelser', 'Provision']];
+  for (const [e, x] of Object.entries(r.totals)) rows.push([r.at.slice(0, 10), r.to, emp(e)?.name || e, x.n, n2(mins(db.visits.filter((v) => r.lines.some((l) => l.e === e && l.kind === 'ny' && l.visitId === v.id))) / 60), n2(x.base), n2(x.fix), n2(x.com)]);
+  const detail = [['Dato', 'Medarbejder', 'Kunde', 'Adresse', 'Ydelse', 'Type', 'Grundlag', 'Andel %', 'Provision']];
+  for (const l of [...r.lines].sort((a, b) => (a.date < b.date ? -1 : 1))) { const v = db.visits.find((x) => x.id === l.visitId);
+    detail.push([l.date, emp(l.e)?.name || l.e, cust(v?.customerId)?.name, addr(v?.addressId)?.street, v?.service, l.kind === 'ny' ? 'Udført' : 'Rettelse', n2(l.base), n2(l.pct), n2(l.com)]); }
+  const csv = [...rows, [], ...detail].map((x) => x.map((c) => `"${String(c ?? '').replace(/"/g, '""')}"`).join(';')).join('\r\n');
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv' })); a.download = `loengrundlag-til-${r.to}.csv`; a.click();
 }
 /** Penge ind: faktureret, betalt, udestående og forfaldent (fra fakturaerne og betalingsstatus fra e-conomic). */
 function moneyCard(sel) {
@@ -1764,6 +1788,11 @@ document.addEventListener('click', async (e) => {
         catch (er) { if (er.message !== 'stop') toast(er.message); } finally { o.busy = null; } break; }
       case 'optStop': { ui._optWorker?.terminate(); ui._optWorker = null; ui._optReject?.(new Error('stop')); toast('Beregningen er stoppet'); return; }
       case 'optAll': optState().off = new Set(); break;
+      case 'payFromSet': { const v = document.getElementById('payFrom').value; if (!v) return toast('Vælg en dato'); db.settings.payrollFrom = v; S.audit(db, ui.user.id, 'payroll.from', v); break; }
+      case 'paySettle': { const to = ui.payTo || todayIso(); const n = S.payrollPending(db, to).length;
+        if (!confirm(`Afregn provision til og med ${fmt(to)} (${n} linjer)?\n\nBesøgene markeres som afregnet og kommer ikke med igen. Løngrundlaget hentes som CSV.`)) return;
+        const r = S.settlePayroll(db, ui.user, to); runCsv(r); toast('Afregnet – løngrundlag hentet'); break; }
+      case 'payCsv': { const r = S.payrollRuns(db).find((x) => x.id === id); if (r) runCsv(r); return; }
       case 'odAll': { const t = todayIso(); ui.odSel = new Set(db.invoiceLinks.filter((l) => l.status === 'bogført' && l.payment !== 'betalt' && l.dueDate && l.dueDate < t).map((l) => l.id)); break; }
       case 'remindSel': return remindDialog();
       case 'rebuildRoutes': return rebuildDialog();
