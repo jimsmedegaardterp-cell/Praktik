@@ -6,6 +6,7 @@ export const DEFAULT_TEMPLATES = {
   varsel: 'Hej {navn}. Vi kommer og pudser dine vinduer i morgen ({dato}). Svar på denne SMS hvis det ikke passer. Mvh. Sindal Vinduespolering',
   forsinket: 'Hej {navn}. Vi er lidt forsinket i dag og forventer at være hos dig ca. kl. {tid}. Mvh. Sindal Vinduespolering',
   aflyst: 'Hej {navn}. Vi må desværre flytte besøget {dato}. Vi kommer i stedet {nydato}. Mvh. Sindal Vinduespolering',
+  paamindelse: 'Hej {navn}. Vi kan ikke se, at faktura {fakturanr} på {beloeb} (forfald {forfald}) er betalt. Vil du se på det? Har du allerede betalt, så se bort fra denne besked. Mvh. Sindal Vinduespolering',
 };
 /** Tom database til rigtige data: kun ejeren som bruger, ingen kunder/ruter. */
 export function freshDb() {

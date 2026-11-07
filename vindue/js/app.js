@@ -2,7 +2,7 @@
 import * as D from './domain.js';
 import * as S from './services.js';
 import { MockEconomic, EconomicApi, MockSms, mapsDirections, mapsRoute, smsLink, suggestOrder, routeKm } from './adapters.js';
-import { seedDb, freshDb } from './seed.js';
+import { seedDb, freshDb, DEFAULT_TEMPLATES } from './seed.js';
 import * as I from './import.js';
 import * as G from './gdpr.js';
 import * as SD from './stamdata.js';
@@ -15,7 +15,7 @@ import { showRouteMap } from './map.js';
 import * as KV from './store.js';
 import * as O from './optimizer.js';
 
-export const VERSION = '2026-11-07 #73';
+export const VERSION = '2026-11-07 #74';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -1418,10 +1418,28 @@ async function installApp() {
 }
 
 /* ---------------- Fakturering ---------------- */
+/** Forfaldne fakturaer: vælg og send betalingspåmindelse som SMS fra egen telefon. */
+function overdueCard() {
+  const t = todayIso(); const od = db.invoiceLinks.filter((l) => l.status === 'bogført' && l.payment !== 'betalt' && l.dueDate && l.dueDate < t).sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+  if (!od.length) return ''; ui.odSel ||= new Set();
+  const last = (l) => (l.reminders || []).map((r) => r.at).sort().at(-1);
+  return `<div class="card"><div class="row"><h2 class="sp">💸 Ikke betalt til tiden (${od.length})</h2><button class="small" data-act="odAll">Vælg alle</button><button class="pri" data-act="remindSel" ${ui.odSel.size ? '' : 'disabled'}>📱 Send påmindelse til valgte (${[...ui.odSel].filter((id) => od.some((l) => l.id === id)).length})</button></div>
+    <table><tr><th></th><th>Kunde</th><th>Faktura</th><th>Forfald</th><th style="text-align:right">Mangler</th><th>Sidst påmindet</th></tr>
+    ${od.map((l) => `<tr><td><input type="checkbox" data-od="${l.id}" ${ui.odSel.has(l.id) ? 'checked' : ''}></td><td><a href="#" data-cust="${l.customerId}">${esc(cust(l.customerId)?.name)}</a></td><td>${esc(l.invoiceNumber || '')}</td><td>${fmt(l.dueDate)} <span class="small mute">(${D.diffDays(l.dueDate, t)} dage)</span></td><td style="text-align:right">${kr(Math.round(l.remainder ?? l.gross ?? l.total * 1.25))}</td><td class="small">${last(l) ? fmtTs(last(l)) + ` (${l.reminders.length})` : '–'}</td></tr>`).join('')}</table>
+    <p class="small mute">Betalingsstatus hentes fra e-conomic (automatisk hver 3. time, mens appen er åben – eller "Hent betalingsstatus" nedenfor). Teksten rettes under Admin → SMS-skabeloner ("paamindelse").</p></div>`;
+}
+function remindDialog() {
+  db.templates.paamindelse ||= DEFAULT_TEMPLATES.paamindelse;
+  const ls = db.invoiceLinks.filter((l) => ui.odSel.has(l.id)); const by = new Map(); for (const l of ls) by.set(l.customerId, [...(by.get(l.customerId) || []), l]);
+  ui._remList = [...by.entries()].map(([cid, xs]) => { const c = cust(cid); const amt = xs.reduce((s2, l) => s2 + (l.remainder ?? l.gross ?? l.total * 1.25), 0);
+    return { c, ids: xs.map((l) => l.id), text: D.renderTemplate(db.templates.paamindelse, { navn: (c?.name || '').split(' ')[0], fakturanr: xs.map((l) => l.invoiceNumber).join(', ').replace(/, ([^,]*)$/, ' og $1'), beloeb: kr(Math.round(amt)), forfald: fmt(xs.map((l) => l.dueDate).sort()[0]) }) }; });
+  openDlg(`<h2>Betalingspåmindelse (${ui._remList.length})</h2><p class="small mute">Tryk på hver kunde – telefonens SMS-app åbner med teksten. Påmindelsen noteres på fakturaen.</p>
+    ${ui._remList.map((x, i) => { const tel = D.normalizePhone(x.c?.phone); return `<div class="row" style="border-bottom:1px solid var(--line);padding:6px 0"><div class="sp"><b>${esc(x.c?.name)}</b><div class="small mute">${esc(x.text)}</div></div>${tel ? `<a class="btn pri" data-remi="${i}" href="${smsLink(tel, x.text)}">📱 Send</a>` : '<span class="pill bad">intet mobilnr.</span>'}</div>`; }).join('')}`, null, 'Færdig');
+}
 function faktura() {
   const q = D.invoiceQueue(db.visits, db.invoiceLinks).sort((a, b) => a.completion.at.localeCompare(b.completion.at));
   const links = [...db.invoiceLinks].reverse();
-  $view.innerHTML = ecoTabs() + `<div class="card"><div class="row"><h2 class="sp">Faktureringskø (${q.length})</h2><label class="small"><input type="checkbox" id="perC" ${db.settings.perCustomerInvoice ? 'checked' : ''}> Samlefaktura pr. kunde</label></div>
+  $view.innerHTML = ecoTabs() + overdueCard() + `<div class="card"><div class="row"><h2 class="sp">Faktureringskø (${q.length})</h2><label class="small"><input type="checkbox" id="perC" ${db.settings.perCustomerInvoice ? 'checked' : ''}> Samlefaktura pr. kunde</label></div>
     ${q.length ? `<table><tr><th><input type="checkbox" id="all" checked></th><th>Udført</th><th>Kunde</th><th class="hide-m">Ydelse</th><th>Af</th><th>Pris</th></tr>${q.map((v) => `<tr><td><input type="checkbox" class="qv" value="${v.id}" checked></td><td>${fmt(v.completion.at.slice(0, 10))}</td><td>${esc(cust(v.customerId).name)}${cust(v.customerId).billTo ? `<div class="small mute">💳 faktureres via ${esc(cust(cust(v.customerId).billTo)?.name)}</div>` : ''}</td><td class="hide-m small">${esc(v.service)}${v.status === 'delvis' ? ' (delvis)' : ''}${v.completion.priceChanged ? ' <span class="pill warn">pris ændret</span>' : ''}${v.completion.note ? `<br>💬 ${esc(v.completion.note)}` : ''}</td><td>${esc(emp(v.completion.by)?.name ?? v.completion.by)}<div class="small mute">${esc(PAY[cust(v.customerId).paymentMethod] ?? '')}${v.completion.cashPaid ? ` <span class="pill ok">${v.completion.payMethod === 'mobilepay' ? 'MobilePay' : 'kontant'} modtaget</span>` : ''}</div></td><td>${kr(v.price)}</td></tr>`).join('')}</table>
     <div class="row" style="margin-top:10px"><button class="${ecoReal() ? '' : 'pri'}" data-act="approve">${ecoReal() ? 'Fakturér valgte nu' : 'Godkend valgte → opret kladder (øve-udgave)'}</button>${ecoReal() ? '' : `<label class="small"><input type="checkbox" id="fail" ${eco.failNext ? 'checked' : ''}> Simulér timeout ved næste kald</label>`}</div>
     ${ecoReal() ? `<p class="small"><b>Automatisk:</b> færdigmeldte besøg faktureres af sig selv efter 5 minutter (så fejl kan nå at rettes). Kunder med "samlet pr. måned" faktureres den 1. i næste måned. Det sker, mens appen er åben hos en admin.</p><p class="small mute">Fakturaerne bogføres og ${db.settings.economic.sendEmail === false ? '<b>sendes ikke</b> (slået fra under Admin)' : 'sendes pr. mail til kunder med e-mail og "Email"-faktura'}. Kontant betalt på stedet lægges i kassekladden; bank og MobilePay afstemmes i e-conomic.</p>` : '<p class="small mute">⚠️ e-conomic er ikke forbundet – dette er en øve-udgave uden rigtige fakturaer. Opsætning: Admin → e-conomic.</p>'}` : '<p class="mute">Intet klar til fakturering. Registrér et besøg som udført i 📱 Dagsrute.</p>'}</div>
@@ -1616,7 +1634,7 @@ function admin() {
       <td><input type="number" min="1" max="52" data-rf="intervalWeeks" data-r="${r.id}" value="${r.intervalWeeks}" style="width:70px"></td><td><input type="date" data-rf="anchorDate" data-r="${r.id}" value="${D.nextRouteDate(r, todayIso())}"></td></tr>`).join('')}</table>
     <div class="row" style="margin-top:8px"><button data-act="showCheck">Datakontrol</button><button data-act="phraseFind">Find og fjern tekst …</button><button data-act="addRoute">+ Rute</button><button data-act="delEmptyRoutes">Slet ruter uden kunder</button><button data-act="recalcRoutes">Genberegn rytme og dato ud fra kunderne</button></div>
     <p class="small mute">Ændring af rutens dato/rytme flytter ikke eksisterende besøg automatisk – brug Kalender (flyt/forskyd) eller ret aftalerne.</p></div>
-  <div class="card"><h2>SMS-skabeloner</h2>${Object.entries(db.templates).map(([k, v]) => `<label><span>${esc(k)} – felter: {navn} {dato} {tid} {nydato}</span><textarea data-tpl="${k}">${esc(v)}</textarea></label>`).join('')}</div>
+  <div class="card"><h2>SMS-skabeloner</h2>${((db.templates.paamindelse ||= DEFAULT_TEMPLATES.paamindelse), Object.entries(db.templates)).map(([k, v]) => `<label><span>${esc(k)} – felter: ${k === 'paamindelse' ? '{navn} {fakturanr} {beloeb} {forfald}' : '{navn} {dato} {tid} {nydato}'}</span><textarea data-tpl="${k}">${esc(v)}</textarea></label>`).join('')}</div>
   <div class="card"><h2>Lukkedage (ferie mv.)</h2><p class="small mute">Helligdage beregnes automatisk. Besøg på lukkedage flyttes til næste arbejdsdag ved planlægning.</p><div class="row"><input type="date" id="cd"><button data-act="addClosed">Tilføj</button></div><div class="small">${db.closedDays.map((d) => `<span class="pill">${d} <a href="#" data-act="rmClosed" data-d="${d}">×</a></span>`).join(' ')}</div></div>
   <div class="card"><h2>Auditlog</h2><div style="max-height:320px;overflow:auto"><table><tr><th>Tid</th><th>Bruger</th><th>Handling</th><th>Ref</th></tr>${db.audit.slice(0, 200).map((a) => `<tr class="small"><td>${fmtTs(a.at)}</td><td>${esc(userName(a.by))}</td><td>${esc(a.action)}</td><td class="mute">${esc(a.ref)} ${esc(JSON.stringify(a.detail).slice(0, 80))}</td></tr>`).join('')}</table></div></div>`;
   document.getElementById('comMonth').onchange = (e) => { ui.comMonth = e.target.value; render(); };
@@ -1675,6 +1693,10 @@ document.addEventListener('click', async (e) => {
   if (stb) { const id = stb.dataset.st, val = stb.dataset.v; const d = vdraft()[id] || {};
     if (ui.tab === 'mobil') return mobileStatus(id, val);
     vdraft()[id] = { ...d, result: d.result === val ? 'aaben' : val }; save(); return render(); }
+  const odc = e.target.closest('[data-od]'); if (odc) { ui.odSel ||= new Set(); ui.odSel.has(odc.dataset.od) ? ui.odSel.delete(odc.dataset.od) : ui.odSel.add(odc.dataset.od); return render(); }
+  const rmi = e.target.closest('[data-remi]'); if (rmi) { const x = ui._remList[+rmi.dataset.remi]; const at = new Date().toISOString();
+    logManualSms(x.c, x.text, 'rem:' + x.ids.join(',') + ':' + at.slice(0, 10)); for (const id of x.ids) { const l = db.invoiceLinks.find((y) => y.id === id); if (l) (l.reminders ||= []).push({ at, by: ui.user.id }); }
+    for (const id of x.ids) ui.odSel.delete(id); save(); rmi.textContent = '✓ Sendt'; rmi.classList.remove('pri'); return; }
   const sl = e.target.closest('[data-smsi]'); if (sl) { const x = ui._smsList[+sl.dataset.smsi]; logManualSms(x.c, x.text, x.v && x.text.includes('i morgen') ? 'varsel:' + x.v.id : undefined); sl.textContent = '✓ Sendt'; sl.classList.remove('pri'); return; }
   const vs_ = e.target.closest('[data-varsel]'); if (vs_) { const v = db.visits.find((x) => x.id === vs_.dataset.varsel); const c = cust(v.customerId); logManualSms(c, vs_.dataset.text, 'varsel:' + v.id); setTimeout(render, 300); return; }
   const rmx = e.target.closest('[data-routemaster]'); if (rmx) { ui.tab = 'ruter'; ui.route = rmx.dataset.routemaster; ui.routeMaster = true; ui._ordFor = null; ui.ordSel = new Set(); return render(); }
@@ -1695,6 +1717,8 @@ document.addEventListener('click', async (e) => {
         catch (er) { if (er.message !== 'stop') toast(er.message); } finally { o.busy = null; } break; }
       case 'optStop': { ui._optWorker?.terminate(); ui._optWorker = null; ui._optReject?.(new Error('stop')); toast('Beregningen er stoppet'); return; }
       case 'optAll': optState().off = new Set(); break;
+      case 'odAll': { const t = todayIso(); ui.odSel = new Set(db.invoiceLinks.filter((l) => l.status === 'bogført' && l.payment !== 'betalt' && l.dueDate && l.dueDate < t).map((l) => l.id)); break; }
+      case 'remindSel': return remindDialog();
       case 'rebuildRoutes': return rebuildDialog();
       case 'optWhy': optState().whyC = id; break;
       case 'optNone': { const o = optState(); o.off = new Set((o.res?.moves || []).map((m) => m.key)); break; }
