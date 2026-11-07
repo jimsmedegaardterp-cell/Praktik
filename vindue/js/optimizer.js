@@ -5,6 +5,7 @@
 //  - En kunde (alle aftaler på samme adresse og rute flyttes samlet) må flyttes til en anden fast rute,
 //    hvis ruten kører på en dato højst `windowBack` dage før og `windowFwd` dage efter kundens næste besøg.
 //  - Kundens interval skal være et multiplum af rutens (8-ugers kunde kan ligge på en 4-ugers rute).
+//  - På egen rute må kunden flyttes til enhver arbejdsdag i vinduet – også dage uden ruter (så tomme dage kan fyldes).
 //  - Ruter i `excludeRouteIds` flyttes ikke, men deres tid tæller med på dagen.
 //  - Ruter i `ignoreRouteIds` (Tagrenderens – udføres af en anden) flyttes ikke og tæller ikke med.
 //  - Hele ruter kan også flyttes (fase 1: alle rutens kunder samme antal dage, inden for samme vindue);
@@ -20,7 +21,7 @@ const legMin = (a, b, f) => { const k = km(a, b); return k == null ? 0 : (k * 1.
 export function dayPenalty(T, o = DEFAULTS) {
   if (T <= 0) return 0;
   const over = Math.max(0, T - o.maxDay), under = Math.max(0, o.minDay - T);
-  return over * 8 + over * over * 0.05 + under * 0.3;
+  return over * 10 + over * over * 0.2 + under * 0.3; // over målet straffes hårdt (30 min over ≈ 8 timers kørsel)
 }
 /** Næste rytmedato ≥ fromIso for en aftale (uden sæson). */
 function nextRhythm(a, fromIso) { const step = a.intervalWeeks * 7; const k = Math.max(0, Math.ceil(D.diffDays(a.anchorDate, fromIso) / step)); return D.addDays(a.anchorDate, k * step); }
@@ -87,7 +88,8 @@ export function buildProblem(db, opts = {}) {
       for (let s = -o.windowBack; s <= o.windowFwd; s++) {
         if (s === sh) continue; // samme dato giver ingen gevinst
         const anchors = new Map(ags.map((a) => [a.id, D.addDays(d0.get(a.id), s)]));
-        if ([...anchors.values()].some((d) => d < start || !runsOn(r, d) || D.isClosedDay(d, closed))) continue;
+        // egen rute: må lægges på enhver arbejdsdag i vinduet (også dage uden ruter); andre ruter: kun deres dage
+        if ([...anchors.values()].some((d) => d < start || (r.id !== from.id && !runsOn(r, d)) || D.isClosedDay(d, closed))) continue;
         const occ = ags.flatMap((a) => occDates(a, anchors.get(a.id), start, end, closed).map((date) => mk(date, a)));
         cands.push({ routeId: r.id, shift: s, anchors, occ });
       }

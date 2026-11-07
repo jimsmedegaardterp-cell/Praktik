@@ -52,7 +52,8 @@ test('optimering: flytter fra overfyldt til halvtom dag og respekterer vinduet',
   assert.ok(r.after.over < r.before.over, `overtid ${r.before.over} → ${r.after.over}`);
   const tot = (s, d) => (s.perDate[d] ? s.perDate[d].work + s.perDate[d].drive : 0);
   assert.ok(tot(r.after, '2027-03-01') <= 480 + 30 && tot(r.before, '2027-03-01') > 600);
-  for (const m of r.moves) { assert.equal(m.toRoute, 'B'); assert.ok(m.shift >= -4 && m.shift <= 10); }
+  for (const m of r.moves) { assert.ok(['A', 'B'].includes(m.toRoute)); assert.ok(m.shift >= -4 && m.shift <= 10); }
+  assert.ok(r.moves.some((m) => m.toRoute === 'A' && m.toDate !== '2027-03-01'), 'egen rute på en tom dag');
   // delmængde
   const half = O.evaluate(P, r.moves.slice(0, 1)); assert.ok(half.objective > r.after.objective && half.objective < r.before.objective);
   assert.ok(O.dayStops(P, r.moves, '2027-03-03').length > 4);
@@ -61,7 +62,8 @@ test('optimering: flytter fra overfyldt til halvtom dag og respekterer vinduet',
 test('optimering: gennemfør flytter aftaler, besøg og rækkefølge – data før startdato røres ikke', () => {
   const db = mkDb(); const P = O.buildProblem(db, opts); const r = O.runOptimizer(P);
   const past = db.visits.filter((v) => v.plannedDate < START).map((v) => v.id).sort();
-  const m = r.moves[0]; const res = S.applyRouteMoves(db, admin, [m], START, '2027-12-31');
+  const it = P.items.find((x) => x.key === 'ad0|A|2027-03-01'); const c = it.cands.find((k) => k.routeId === 'B' && k.shift === 2);
+  const m = { key: it.key, agreementIds: it.agreementIds, addressId: it.addressId, toRoute: 'B', shift: 2, anchors: Object.fromEntries(c.anchors) }; assert.ok(r.moves.length); const res = S.applyRouteMoves(db, admin, [m], START, '2027-12-31');
   assert.equal(res.moved, 1);
   const a = db.agreements.find((x) => x.id === m.agreementIds[0]);
   assert.equal(a.routeId, 'B'); assert.equal(a.anchorDate, D.addDays('2027-03-01', m.shift));
