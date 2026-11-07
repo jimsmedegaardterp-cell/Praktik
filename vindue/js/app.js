@@ -15,7 +15,7 @@ import { showRouteMap } from './map.js';
 import * as KV from './store.js';
 import * as O from './optimizer.js';
 
-export const VERSION = '2026-11-07 #69';
+export const VERSION = '2026-11-07 #70';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -1186,7 +1186,7 @@ function optimView() {
   const nOver = (x) => Object.values(x.perDate).filter((d) => tot(d) > o.maxH * 60).length;
   $view.innerHTML = kTabs() + `<div class="card"><div class="row"><h2 class="sp">✨ Optimér alle ruter (forsøg)</h2><button data-act="kview" data-v="ruter">← Faste ruter</button></div>
     <p class="small mute">Kunder flyttes <b>permanent</b> mellem de faste ruter og deres dage – højst 4 dage tilbage og 10 dage frem fra næste besøg. Kundens interval skal passe med rutens (8 uger passer på en 4-ugers rute). Der beregnes ${O.DEFAULTS.horizonDays / 7} uger frem, én person, man–fre, kørsel fra og til startadressen. <b>Intet ændres før du trykker "Gennemfør".</b></p>
-    ${undo ? `<div class="warnbox">↩ Der er en optimering fra ${fmtTs(undo.at)}, som kan fortrydes (alt sættes tilbage som før den). <button data-act="optUndo">Fortryd optimering</button> <button class="small" data-act="optUndoForget">Glem</button></div>` : ''}
+    ${undo || ui._optOrig ? `<div class="warnbox">${undo ? `↩ Seneste optimering ${fmtTs(undo.at)} kan fortrydes. <button data-act="optUndo">Fortryd seneste</button> ` : ''}${ui._optOrig && ui._optOrig.at !== undo?.at ? `⏮ <button data-act="optOrig">Tilbage til før første optimering (${fmtTs(ui._optOrig.at)})</button> ` : ''}<button class="small" data-act="optUndoForget">Glem</button><br><span class="small">Begge sætter alt tilbage – også det du har ændret bagefter.</span></div>` : ''}
     ${!st?.lat ? '<div class="warnbox">⚠️ Sæt startadressen (med koordinater) under Admin først – ellers kan kørslen ikke beregnes.</div>' : ''}
     <h3>1. Backup</h3>
     <div class="row"><button data-act="backup">⬇ Download backup</button><label class="btn">Kontrollér backup-filen…<input type="file" id="optBk" accept=".json" hidden></label>${o.backupOk ? '<span class="pill ok">✓ Backup kontrolleret – den svarer præcis til data nu</span>' : '<span class="pill warn">Ikke kontrolleret</span>'}</div>
@@ -1224,7 +1224,8 @@ function optimView() {
   ch('optMin', (v) => (o.minH = Number(v) || 7)); const m2 = document.getElementById('optMin2'); if (m2) m2.onchange = () => { o.minutes = Number(m2.value) || 1; };
   clearInterval(ui._optTickT); if (o.busy === 'run') { const tick = () => { const el = document.getElementById('optTick'); if (!el) return clearInterval(ui._optTickT); const left = Math.max(0, Math.round((o.tEnd - Date.now()) / 1000)); el.textContent = `ca. ${left >= 60 ? Math.ceil(left / 60) + ' min' : left + ' sek.'} tilbage – du kan bruge resten af appen imens`; }; tick(); ui._optTickT = setInterval(tick, 1000); } ch('optMax', (v) => (o.maxH = Number(v) || 8));
 }
-KV.get('vindue-optundo').then((u) => { if (u?.db) { ui._optUndo = { at: u.at }; } }).catch(() => {});
+const optLoadUndo = () => Promise.all([KV.get('vindue-optundo'), KV.get('vindue-optorig')]).then(([u, o]) => { ui._optUndo = u?.db ? { at: u.at } : null; ui._optOrig = o?.db ? { at: o.at } : null; softRender(); }).catch(() => {});
+optLoadUndo();
 /** "Hvorfor blev kunden (ikke) flyttet?" – årsager og hver mulig flytning med gevinst/tab. */
 function optWhyCard(o, sel) {
   const q = (o.whyQ || '').toLowerCase(); const h = (m) => D.hm(Math.round(m));
@@ -1671,7 +1672,7 @@ document.addEventListener('click', async (e) => {
   try {
     switch (act) {
       case 'back': ui.customer = null; break;
-      case 'optOpen': ui.kView = 'opt'; KV.get('vindue-optundo').then((u) => { ui._optUndo = u?.db ? { at: u.at } : null; softRender(); }).catch(() => {}); break;
+      case 'optOpen': ui.kView = 'opt'; optLoadUndo(); break;
       case 'optRun': { const o = optState(); o.busy = 'run'; render();
         try { await optCompute(o, false);
           S.audit(db, ui.user.id, 'routes.optimize.proposal', '-', { routes: o.routeMoves.length, moves: o.res.moves.length, before: o.res.before.objective, after: o.res.after.objective }); }
@@ -1690,16 +1691,19 @@ document.addEventListener('click', async (e) => {
         if (!o.backupOk) return toast('Kontrollér backup først');
         const fm = O.finalMoves(o.P, sel); const nR = o.routeMoves.filter((m) => !o.routeOff.has(m.key)).length;
         if (!confirm(`Flyt ${nR} hele ruter og ${sel.length} enkeltkunder permanent (${fm.moves.length} kunder i alt) fra ${fmt(o.start)}?\n\nDet kan fortrydes bagefter med "Fortryd optimering", og backup-filen kan altid gendannes.`)) return;
-        await KV.set('vindue-optundo', { at: new Date().toISOString(), db: JSON.parse(JSON.stringify(db)) });
+        { const snap = { at: new Date().toISOString(), db: JSON.parse(JSON.stringify(db)) }; await KV.set('vindue-optundo', snap); if (!(await KV.get('vindue-optorig'))?.db) await KV.set('vindue-optorig', snap); }
         const until = db.visits.reduce((m, v) => (v.plannedDate > m ? v.plannedDate : m), D.addDays(o.start, 180));
         const r = S.applyRouteMoves(db, ui.user, fm.moves, o.start, until, fm.routeAnchors);
         for (const d of new Set(fm.moves.flatMap((m) => [...m.fromDates, ...m.toDates]))) if (db.dayPlans?.[d]) delete db.dayPlans[d];
-        ui._optUndo = { at: new Date().toISOString() }; o.res = null; o.backupOk = false; ui._google = {}; KV.set('vindue-gcache', {}).catch(() => {});
+        optLoadUndo(); o.res = null; o.backupOk = false; ui._google = {}; KV.set('vindue-gcache', {}).catch(() => {});
         toast(`${r.moved} kunder flyttet (${r.visits} besøg planlagt)`); break; }
       case 'optUndo': { const u = await KV.get('vindue-optundo'); if (!u?.db) return toast('Intet at fortryde');
         if (!confirm(`Sæt alt tilbage som før optimeringen ${fmtTs(u.at)}?\n\nÆndringer lavet efter optimeringen (fx udførte besøg) går også tabt.`)) return;
-        db = u.db; S.audit(db, ui.user.id, 'routes.optimize.undo', '-', { at: u.at }); await save(); await KV.del('vindue-optundo'); location.reload(); return; }
-      case 'optUndoForget': if (!confirm('Glem muligheden for at fortryde? (Backup-filen kan stadig gendannes.)')) return; await KV.del('vindue-optundo'); ui._optUndo = null; break;
+        db = u.db; S.audit(db, ui.user.id, 'routes.optimize.undo', '-', { at: u.at }); await save(); await KV.del('vindue-optundo'); if ((await KV.get('vindue-optorig'))?.at === u.at) await KV.del('vindue-optorig'); location.reload(); return; }
+      case 'optOrig': { const u = await KV.get('vindue-optorig'); if (!u?.db) return toast('Ingen kopi fra før første optimering');
+        if (!confirm(`Sæt alt tilbage som før den FØRSTE optimering ${fmtTs(u.at)}?\n\nAlt ændret siden (også udførte besøg, noter og rettelser) går tabt.`)) return;
+        db = u.db; S.audit(db, ui.user.id, 'routes.optimize.undoAll', '-', { at: u.at }); await save(); await KV.del('vindue-optundo'); await KV.del('vindue-optorig'); location.reload(); return; }
+      case 'optUndoForget': if (!confirm('Glem muligheden for at fortryde? (Backup-filen kan stadig gendannes.)')) return; await KV.del('vindue-optundo'); await KV.del('vindue-optorig'); ui._optUndo = null; ui._optOrig = null; break;
       case 'newCustomer': return customerForm();
       case 'fitCustomer': return fitDialog();
       case 'kSort': { const k = b.dataset.k; ui.kSort = ui.kSort?.k === k ? { k, d: -ui.kSort.d } : { k, d: 1 }; break; }
