@@ -221,3 +221,14 @@ test('optimering: tom dag før fyldte dage – arbejdet rykkes frem, selv når i
   assert.equal(T(r.before, '2027-03-01'), 0);
   assert.ok(T(r.after, '2027-03-01') > 0, 'mandag tages i brug: ' + ['2027-03-01', ...days, '2027-03-05'].map((d) => T(r.after, d)).join(','));
 });
+
+test('optimering: helligdage (påske) får ikke kunderne flyttet permanent', () => {
+  const db = S.emptyDb(); db.routes = [{ id: 'M', name: 'Man', intervalWeeks: 4, anchorDate: '2027-03-01', order: [] }, { id: 'T', name: 'Tir', intervalWeeks: 4, anchorDate: '2027-03-02', order: [] }];
+  let i = 0; for (const [rid, d, lng] of [['M', '2027-03-01', 10.1], ['T', '2027-03-02', 10.3]]) for (let j = 0; j < 16; j++) { i++;
+    db.addresses.push({ id: 'ad' + i, customerId: 'c' + i, street: 'V' + i, lat: 57.45 + j * 0.001, lng });
+    db.agreements.push({ id: 'ag' + i, customerId: 'c' + i, addressId: 'ad' + i, routeId: rid, service: 'V', price: 1, intervalWeeks: 4, durationMin: 20, anchorDate: d, seasonMonths: [], active: true }); }
+  S.planAhead(db, '2027-12-31', '2027-01-01'); // 2. påskedag 29/3-2027 → mandagsruten flyttes til tirsdag den uge
+  assert.ok(db.visits.some((v) => v.routeId === 'M' && v.plannedDate === '2027-03-30'));
+  const r = O.optimizeAll(db, { start: START, startPoint: { lat: 57.47, lng: 10.2 }, maxDay: 450, saMs: 300 });
+  assert.equal(r.moves.length + r.routeMoves.length, 0, 'ingen flytninger: ' + JSON.stringify(r.routeMoves) + r.moves.length);
+});
