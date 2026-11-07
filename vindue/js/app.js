@@ -15,7 +15,7 @@ import { showRouteMap } from './map.js';
 import * as KV from './store.js';
 import * as O from './optimizer.js';
 
-export const VERSION = '2026-11-07 #75';
+export const VERSION = '2026-11-07 #76';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -1374,13 +1374,54 @@ function okonomi() {
       <td style="text-align:right">${r.n}${r.nPlan ? `<span class="mute small"> +${r.nPlan}</span>` : ''}</td><td style="text-align:right"><b>${kr(Math.round(r.rev))}</b>${r.planRev ? `<div class="small mute">+${kr(Math.round(r.planRev))} planlagt</div>` : ''}</td>
       <td style="text-align:right" class="hide-m">${D.hm(r.work)}</td><td style="text-align:right" class="hide-m">${r.drive ? (r.est ? '≈ ' : '') + D.hm(r.drive) : '–'}</td><td style="text-align:right">${r.perHour ? kr(Math.round(r.perHour)) : '–'}</td><td style="text-align:right">${r.wage ? kr(Math.round(r.wage)) : '–'}</td></tr>`).join('')}</table>
     <p class="small mute">Omsætning = udførte besøg (ekskl. moms). Lys bjælke = planlagt. Kørsel fra gemte Google-dagsplaner, ellers skøn (≈). Oms./time = omsætning / (arbejde + kørsel). Timeløn = omsætning × medarbejdersats / (arbejde + kørsel) – ruter på ejeren regnes med standardsatsen. Klik på en måned for detaljer.</p></div>
+  ${moneyCard(sel)}
   <div class="grid2"><div class="card"><h2>${mLabel(sel)} pr. rute</h2><table><tr><th>Rute</th><th style="text-align:right">Besøg</th><th style="text-align:right">Omsætning</th><th style="text-align:right">Oms./time</th><th style="text-align:right">Timeløn</th></tr>
     ${rRows.map((x) => `<tr><td>${esc(x.r?.name ?? 'Uden rute')}</td><td style="text-align:right">${x.n}${x.nPlan ? `<span class="mute small"> +${x.nPlan}</span>` : ''}</td><td style="text-align:right">${kr(Math.round(x.rev))}${x.planRev ? `<div class="small mute">+${kr(Math.round(x.planRev))}</div>` : ''}</td><td style="text-align:right">${x.perHour ? kr(Math.round(x.perHour)) : '–'}</td><td style="text-align:right">${x.wage ? kr(Math.round(x.wage)) : '–'}</td></tr>`).join('') || '<tr><td colspan="5" class="mute">Ingen besøg</td></tr>'}</table></div>
-  <div class="card"><h2>${mLabel(sel)} pr. medarbejder</h2><table><tr><th>Medarbejder</th><th style="text-align:right">Besøg</th><th style="text-align:right">Grundlag</th><th style="text-align:right">Provision</th></tr>
-    ${db.employees.filter((e) => com[e.id]).map((e) => `<tr><td>${esc(e.name)}</td><td style="text-align:right">${com[e.id].visits}</td><td style="text-align:right">${kr(Math.round(com[e.id].base))}</td><td style="text-align:right"><b>${kr(Math.round(com[e.id].commission))}</b></td></tr>`).join('') || '<tr><td colspan="4" class="mute">Ingen provision denne måned</td></tr>'}</table>
-    <p class="small mute">Provision efter satserne under Admin (udført arbejde${db.settings.commissionInclVat ? ' inkl.' : ' ekskl.'} moms).</p></div></div>`;
+  <div class="card"><div class="row"><h2 class="sp">${mLabel(sel)} – løngrundlag</h2><button class="small" data-act="comCsv" data-m="${sel}">⬇ Eksportér (CSV)</button></div><table><tr><th>Medarbejder</th><th style="text-align:right">Besøg</th><th style="text-align:right">Timer</th><th style="text-align:right">Grundlag</th><th style="text-align:right">Provision</th></tr>
+    ${payroll(sel).per.map((x) => `<tr><td>${esc(x.e.name)}</td><td style="text-align:right">${x.n}</td><td style="text-align:right">${D.hm(x.min)}</td><td style="text-align:right">${kr(Math.round(x.base))}</td><td style="text-align:right"><b>${kr(Math.round(x.commission))}</b></td></tr>`).join('') || '<tr><td colspan="5" class="mute">Ingen udførte besøg denne måned</td></tr>'}</table>
+    <p class="small mute">Udførte/delvist udførte besøg i måneden (udførelsesdato). Grundlag${db.settings.commissionInclVat ? ' inkl.' : ' ekskl.'} moms, satser under Admin. Timer = arbejdstid + ekstra tid pr. adresse (uden kørsel). CSV'en har en linje pr. besøg til lønsedlen; feriepenge mv. beregnes i lønsystemet.</p></div></div>`;
 }
 
+/** Løngrundlag pr. medarbejder for en måned: besøg, timer, grundlag, provision (+ linje pr. besøg). */
+function payroll(mon) {
+  const rates = Object.fromEntries(db.employees.map((e) => [e.id, e.commissionRate ?? db.settings.commissionRate]));
+  const [y, m] = mon.split('-').map(Number); const from = mon + '-01', to = `${mon}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`;
+  const com = D.commission(db.visits, { rates, from, to, inclVat: !!db.settings.commissionInclVat });
+  const done = db.visits.filter((v) => D.isBillable(v) && v.completion && v.completion.at.slice(0, 7) === mon);
+  const share = (v) => (v.split?.length ? v.split : [{ employeeId: v.completion.by, pct: (rates[v.completion.by] ?? db.settings.commissionRate) * 100 }]);
+  const per = db.employees.map((e) => { const vs = done.filter((v) => share(v).some((x) => x.employeeId === e.id)); const c = com[e.id] || { visits: 0, base: 0, commission: 0, rate: 0 };
+    return { e, n: vs.length, min: mins(vs), base: c.base, commission: c.commission, rate: c.rate }; }).filter((x) => x.n);
+  return { per, done, share, rates };
+}
+function payrollCsv(mon) {
+  const { per, done, share } = payroll(mon); const n2 = (x) => (Math.round(x * 100) / 100).toFixed(2).replace('.', ',');
+  const rows = [['Måned', 'Medarbejder', 'Besøg', 'Timer', 'Grundlag', 'Sats', 'Provision']];
+  for (const x of per) rows.push([mon, x.e.name, x.n, n2(x.min / 60), n2(x.base), n2(x.rate * 100) + ' %', n2(x.commission)]);
+  const vat = db.settings.commissionInclVat ? 1.25 : 1;
+  const detail = [['Dato', 'Medarbejder', 'Kunde', 'Adresse', 'Ydelse', 'Status', 'Beløb', 'Andel %', 'Provision']];
+  for (const v of done.sort((a, b) => a.completion.at.localeCompare(b.completion.at))) for (const sp of share(v)) { if (!sp.pct) continue; const base = D.visitTotal(v) * vat;
+    detail.push([v.completion.at.slice(0, 10), emp(sp.employeeId)?.name ?? sp.employeeId, cust(v.customerId)?.name, addr(v.addressId)?.street, v.service, D.RESULTS[v.status], n2(base), n2(sp.pct), n2(base * sp.pct / 100)]); }
+  const csv = [...rows, [], ...detail].map((r) => r.map((c) => `"${String(c ?? '').replace(/"/g, '""')}"`).join(';')).join('\r\n');
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv' })); a.download = `loengrundlag-${mon}.csv`; a.click(); S.audit(db, ui.user.id, 'commission.export', mon);
+}
+/** Penge ind: faktureret, betalt, udestående og forfaldent (fra fakturaerne og betalingsstatus fra e-conomic). */
+function moneyCard(sel) {
+  const t = todayIso(); const ls = db.invoiceLinks.filter((l) => l.status === 'bogført'); const g = (l) => l.gross ?? l.total * 1.25; const rem = (l) => l.remainder ?? g(l);
+  const inM = ls.filter((l) => (l.createdAt || '').slice(0, 7) === sel); const open = ls.filter((l) => l.payment !== 'betalt'); const od = open.filter((l) => l.dueDate && l.dueDate < t);
+  const cash = ls.filter((l) => l.paymentRegistered && (l.paymentRegistered.at || l.createdAt || '').slice(0, 7) === sel);
+  const notSent = db.invoiceLinks.filter((l) => l.status !== 'bogført').length; const sum = (xs, f) => xs.reduce((s2, l) => s2 + f(l), 0);
+  let synced = null; try { synced = Number(localStorage.getItem('vindue-paysync')) || null; } catch {}
+  const box = (label, val, sub, bad) => `<div><div class="mute small">${label}</div><div class="kpi" style="font-size:22px${bad ? ';color:var(--bad)' : ''}">${val}</div><div class="small mute">${sub}</div></div>`;
+  return `<div class="card"><div class="row"><h2 class="sp">💰 Penge ind</h2><button class="small" data-act="syncPay">Hent betalingsstatus</button></div>
+    <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
+      ${box(`Faktureret ${mLabel(sel)}`, kr(Math.round(sum(inM, g))), `${inM.length} fakturaer · ${kr(Math.round(sum(inM, (l) => l.total)))} ekskl. moms`)}
+      ${box(`Heraf betalt`, kr(Math.round(sum(inM.filter((l) => l.payment === 'betalt'), g))), `${inM.filter((l) => l.payment === 'betalt').length} af ${inM.length}`)}
+      ${box('Udestående i alt', kr(Math.round(sum(open, rem))), `${open.length} ubetalte fakturaer`)}
+      ${box('Forfaldent', kr(Math.round(sum(od, rem))), od.length ? `<a href="#" data-tab="faktura">${od.length} fakturaer – send påmindelse</a>` : 'ingen 👍', od.length > 0)}
+      ${box(`Kontant ${mLabel(sel)}`, kr(Math.round(sum(cash, (l) => l.paymentRegistered.amount || 0))), `${cash.length} betalinger i kassekladden`)}
+    </div>
+    <p class="small mute">Beløb inkl. moms. Betalingsstatus kommer fra e-conomic${synced ? ` (sidst hentet ${fmtTs(synced)})` : ''} – hentes automatisk hver 3. time, mens appen er åben.${notSent ? ` <b>${notSent} fakturaer er ikke færdige i e-conomic</b> – se Fakturering.` : ''}${ecoReal() ? '' : ' <b>e-conomic er ikke forbundet – tallene er øve-tal.</b>'}</p></div>`;
+}
 /* ---------------- Mig: medarbejderens egen side ---------------- */
 function mig() {
   const me = ui.user.employeeId; const e = emp(me); const t = todayIso(); const ym = t.slice(0, 7);
@@ -1795,11 +1836,7 @@ document.addEventListener('click', async (e) => {
       case 'pay': eco.simulatePayment(db.invoiceLinks.find((l) => l.id === id).invoiceNumber); await S.syncPayments(db, eco); break;
       case 'syncPay': try { await S.syncPayments(db, ecoApi(), ui.user); toast('Betalingsstatus hentet'); } catch (er) { toast('Fejl: ' + er.message); } break;
       case 'fakeInbound': return openDlg(`<h2>Simulér indgående SMS</h2><label><span>Fra nummer</span><select name="from">${db.customers.filter((c) => !c.deleted).map((c) => `<option value="${esc(c.phone)}">${esc(c.name)} (${esc(c.phone)})</option>`).join('')}<option value="+4599887766">Ukendt: +45 99 88 77 66</option></select></label><label><span>Tekst</span><input name="text" value="Det passer fint, tak!" required></label>`, (f) => { S.receiveSms(db, { providerId: S.uid('in'), from: f.from, text: f.text }); });
-      case 'comCsv': { const { com, mon } = ui._com; const rows = [['Måned', 'Medarbejder', 'Besøg', 'Grundlag', 'Sats', 'Provision']];
-        for (const e of db.employees) { const x = com[e.id]; if (x) rows.push([mon, e.name, x.visits, x.base.toFixed(2).replace('.', ','), String(x.rate * 100).replace('.', ',') + ' %', x.commission.toFixed(2).replace('.', ',')]); }
-        const detail = [['Dato', 'Medarbejder', 'Kunde', 'Ydelse', 'Status', 'Pris']]; for (const v of db.visits) { if (!D.isBillable(v) || !v.completion || v.completion.at.slice(0, 7) !== mon) continue; detail.push([v.completion.at.slice(0, 10), emp(v.completion.by)?.name ?? v.completion.by, cust(v.customerId)?.name, v.service, D.RESULTS[v.status], v.price.toFixed(2).replace('.', ',')]); }
-        const csv = [...rows, [], ...detail].map((r) => r.map((c) => `"${String(c ?? '').replace(/"/g, '""')}"`).join(';')).join('\r\n');
-        const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv' })); a.download = `loengrundlag-${mon}.csv`; a.click(); S.audit(db, ui.user.id, 'commission.export', mon); return; }
+      case 'comCsv': return payrollCsv(b.dataset.m || ui._com.mon);
       case 'impCancel': ui.imp = null; break;
       case 'gdprUpdate': { const st = ui.imp; if (!confirm(`Opdatér ${st.updates.length} kunder med oplysninger fra GDPR-udtrækket?`)) return;
         const backup = st.updates.map((u) => ({ id: u.customerId, before: Object.fromEntries(Object.keys(u.set).map((k) => [k, db.customers.find((c) => c.id === u.customerId)[k]])) }));
