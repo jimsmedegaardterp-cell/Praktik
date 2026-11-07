@@ -182,3 +182,27 @@ test('optimering: en flytning ændrer aldrig antallet af besøg (sæson og perio
   const P = O.buildProblem(db, { ...opts, start: '2027-04-26' });
   for (const it of P.items) for (const c of it.cands) assert.equal(c.occ.length, it.cur.length, it.key);
 });
+
+test('byg nye ruter ud fra kalenderen: én rute pr. rutedag, genbrug navne, datoer uændret', () => {
+  const db = S.emptyDb();
+  db.routes = [{ id: 'A', name: 'Sindal 1', intervalWeeks: 4, anchorDate: '2027-03-01', order: [] }, { id: 'B', name: 'Hjørring', intervalWeeks: 4, anchorDate: '2027-03-01', order: [] }, { id: 'T', name: 'Tagrenderens', intervalWeeks: 4, anchorDate: '2027-03-02', order: [] }];
+  let i = 0; const add = (rid, anchor, iv, city) => { i++; db.addresses.push({ id: 'ad' + i, customerId: 'c' + i, street: `Vej ${i}, 98${70 + (city === 'Sindal' ? 0 : 1)}0 ${city}`, lat: 57.47 + i * 0.001, lng: 10.2 });
+    db.agreements.push({ id: 'ag' + i, customerId: 'c' + i, addressId: 'ad' + i, routeId: rid, service: 'V', price: 1, intervalWeeks: iv, durationMin: 20, anchorDate: anchor, seasonMonths: [], active: true }); };
+  for (let k = 0; k < 5; k++) add('A', '2027-03-01', 4, 'Sindal');      // mandag uge 1
+  for (let k = 0; k < 3; k++) add('A', '2027-03-03', 4, 'Sindal');      // onsdag (efter optimering)
+  add('A', '2027-03-29', 8, 'Sindal');                                   // 8-ugers kunde, samme rutedag som mandag (28 dage senere)
+  for (let k = 0; k < 4; k++) add('B', '2027-03-03', 4, 'Hjørring');    // onsdag
+  add('T', '2027-03-02', 4, 'Sindal');                                   // tagrender røres ikke
+  S.planAhead(db, '2027-12-31', '2027-01-01');
+  const dates = Object.fromEntries(db.visits.map((v) => [v.id, v.plannedDate]));
+  const plan = S.planRoutesFromCalendar(db, { fromIso: '2027-03-01', excludeRouteIds: ['T'], startPoint: { lat: 57.47, lng: 10.2 } });
+  assert.equal(plan.groups.length, 2, plan.groups.map((g) => g.key + g.name).join());
+  const mon = plan.groups.find((g) => g.anchor === '2027-03-01'); const wed = plan.groups.find((g) => g.anchor === '2027-03-03');
+  assert.equal(mon.agreementIds.length, 6, '8-ugers kunden kommer med på mandagsruten'); assert.equal(mon.name, 'Sindal 1');
+  assert.equal(wed.agreementIds.length, 7); assert.equal(wed.reuse, 'B'); assert.match(wed.name, /Hjørring/);
+  S.applyRouteRebuild(db, { id: 'u', role: 'admin' }, plan, '2027-03-01');
+  assert.ok(db.agreements.filter((a) => a.routeId === 'B').length === 7 && db.agreements.find((a) => a.id === 'ag14').routeId === 'T');
+  assert.deepEqual(Object.fromEntries(db.visits.map((v) => [v.id, v.plannedDate])), dates, 'ingen datoer ændret');
+  const B = db.routes.find((r) => r.id === 'B'); assert.ok(db.visits.filter((v) => v.routeId === 'B' && v.plannedDate >= '2027-03-01').every((v) => D.routeRuns(B, v.rhythmDate)));
+  assert.equal(B.order.length, 7);
+});
