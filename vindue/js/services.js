@@ -534,3 +534,43 @@ export function payrollRuns(db) {
       prev = e.amounts || {}; } }
   return [...runs.values()].map((r) => ({ ...r, totals: payrollTotals(r.lines) })).sort((a, b) => (a.at < b.at ? 1 : -1));
 }
+
+/* --------- Helligdage: ryk hele planen i stedet for at dynge besøg sammen ---------
+ * Lukkede hverdage (helligdage + firmaets lukkedage) samles i perioder (huller på højst 7 dage slås sammen).
+ * Hele planen fra periodens første dag rykkes som et transportbånd: den k-te hverdag efter starten lægges på den k-te åbne dag.
+ * Efter perioden er alt rykket N hverdage (N = antal lukkede hverdage i perioden). Rækkefølgen og ruterne bevares.
+ */
+const isWk = (d) => D.weekday(d) < 5;
+export function holidayPeriods(db, fromIso, toIso) {
+  const days = []; for (let d = fromIso; d <= toIso; d = D.addDays(d, 1)) if (isWk(d) && D.isClosedDay(d, db.closedDays || [])) days.push(d);
+  const out = []; for (const d of days) { const p = out[out.length - 1]; if (p && D.diffDays(p.days[p.days.length - 1], d) <= 7) p.days.push(d); else out.push({ days: [d] }); }
+  return out.map((p) => ({ start: p.days[0], end: p.days[p.days.length - 1], days: p.days, n: p.days.length, done: !!db.settings.holidayDone?.[p.days[0]] }));
+}
+/** Transportbånd: dato → ny dato for en periode. */
+export function holidayMap(period) {
+  const closed = new Set(period.days);
+  return (x) => { if (x < period.start) return x;
+    let k = 0; for (let d = period.start; d < x; d = D.addDays(d, 1)) if (isWk(d)) k++;
+    let d = period.start; for (;;) { if (isWk(d) && !closed.has(d)) { if (k === 0) return d; k--; } d = D.addDays(d, 1); } };
+}
+export function shiftForHolidays(db, user, period, untilIso) {
+  require_(user, 'agreement.edit');
+  const map = holidayMap(period); const after = D.addDays(period.end, 1); let moved = 0, created = 0;
+  const shiftN = (d) => { let n = period.n, x = d; while (n > 0) { x = D.addDays(x, 1); if (isWk(x)) n--; } return x; }; // efter perioden: N hverdage frem
+  for (const a of db.agreements) {
+    if (!a.active || !a.intervalWeeks) continue;
+    const old = db.visits.filter((v) => v.agreementId === a.id && v.status === 'planlagt' && !v.manual && (v.rhythmDate || v.plannedDate) >= period.start);
+    if (!old.length) continue;
+    const inPer = old.filter((v) => (v.rhythmDate || v.plannedDate) <= period.end);
+    db.visits = db.visits.filter((v) => !old.includes(v));
+    for (const v of inPer) { const nd = map(v.rhythmDate || v.plannedDate); try { const mv = D.manualVisit(a, nd, db.visits); Object.assign(mv, { price: v.price, service: v.service, durationMin: v.durationMin, extras: v.extras, routeId: v.routeId, holidayFrom: v.rhythmDate }); db.visits.push(mv); created++; } catch { /* findes allerede den dag */ } }
+    const step = a.intervalWeeks * 7; let y = a.anchorDate; if (y <= period.end) y = D.addDays(y, Math.ceil((D.diffDays(y, after)) / step) * step);
+    const na = shiftN(y); a.anchorDate = na; a.idPrefix = `${a.id}~${na}`;
+    const nv = D.generateVisits(a, after, untilIso, db.visits.filter((v) => v.agreementId === a.id), db.closedDays); db.visits.push(...nv); created += nv.length; moved++;
+  }
+  for (const r of db.routes) { if (!r.intervalWeeks || !r.anchorDate) continue; const step = r.intervalWeeks * 7; let y = r.anchorDate; if (y <= period.end) y = D.addDays(y, Math.ceil(D.diffDays(y, after) / step) * step); r.anchorDate = shiftN(y); }
+  for (const d of Object.keys(db.dayPlans || {})) if (d >= period.start) delete db.dayPlans[d];
+  (db.settings.holidayDone ||= {})[period.start] = { at: now(), n: period.n };
+  audit(db, user.id, 'holiday.shift', period.start, { n: period.n, agreements: moved, visits: created });
+  return { agreements: moved, visits: created };
+}

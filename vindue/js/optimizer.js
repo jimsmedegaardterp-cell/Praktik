@@ -15,11 +15,11 @@
 import * as D from './domain.js';
 import { km, optimize } from './dayplan.js';
 
-export const DEFAULTS = { horizonDays: 84, windowBack: 4, windowFwd: 10, minDay: 420, maxDay: 450, underW: 0.02, early: 0.02, factor: 1, moveCost: 10, routeMoveCost: 30, timeMs: 4000, saMs: 0 };
+export const DEFAULTS = { horizonDays: 84, windowBack: 4, windowFwd: 10, minDay: 420, maxDay: 450, underW: 0.02, early: 0.02, emptyDay: 0, gap: 60, gapDays: 5, factor: 1, moveCost: 10, routeMoveCost: 30, timeMs: 4000, saMs: 0 };
 const legMin = (a, b, f) => { const k = km(a, b); return k == null ? 0 : (k * 1.3) / 50 * 60 * f; };
 /** Strafpoint for en dags samlede minutter (0 = fridag, ingen straf). */
 export function dayPenalty(T, o = DEFAULTS) {
-  if (T <= 0) return 0;
+  if (T <= 0) return o.emptyDay ?? 0; // tom hverdag: hellere flere, lidt kortere dage end tomme dage ved siden af fulde
   const over = Math.max(0, T - o.maxDay), under = Math.max(0, o.minDay - T);
   return over * 10 + over * over * 0.2 + under * (o.underW ?? 0.02); // over målet straffes hårdt; korte dage næsten ikke (kørslen hjem tæller i forvejen)
 }
@@ -138,7 +138,14 @@ function makeState(P) {
   const idx = new Map(P.dates.map((d, i) => [d, i])); const ix = (d) => idx.get(d) ?? Math.round(D.diffDays(P.start, d) * 5 / 7);
   const days = new Map(P.dates.map((d) => [d, { tour: [], work: 0, drive: 0, idx: ix(d) }]));
   const day = (d) => { if (!days.has(d)) days.set(d, { tour: [], work: 0, drive: 0, idx: ix(d) }); return days.get(d); };
-  return { dist, days, day };
+  // "huller": en tom hverdag med fulde dage lige efter (inden for gapDays hverdage) koster o.gap
+  const list = [...P.dates].sort(); const pos = new Map(list.map((d, i) => [d, i])); const o = P.opts; const K = o.gapDays ?? 5; const full = (o.maxDay ?? 450) - 60;
+  const Tof = (d, ov) => (ov && ov.has(d) ? ov.get(d) : (days.get(d) ? days.get(d).work + days.get(d).drive : 0));
+  const gapAt = (i, ov) => { if (!o.gap || Tof(list[i], ov) > 0) return 0; for (let j = i + 1; j <= i + K && j < list.length; j++) if (Tof(list[j], ov) >= full) return o.gap; return 0; };
+  const affected = (dates) => { const a = new Set(); for (const d of dates) { const p = pos.get(d); if (p == null) continue; for (let j = Math.max(0, p - K); j <= p; j++) a.add(j); } return a; };
+  const gapSum = (aff, ov) => { let s = 0; for (const i of aff) s += gapAt(i, ov); return s; };
+  const gapAll = () => { let s = 0; for (let i = 0; i < list.length; i++) s += gapAt(i); return s; };
+  return { dist, days, day, affected, gapSum, gapAll };
 }
 const tourLen = (S, t) => { let s = 0, prev = 0; for (const x of t) { s += S.dist(prev, x.pt); prev = x.pt; } return s + S.dist(prev, 0); };
 function reorder(S, dy) { // nærmeste nabo + 2-opt fra startadressen
@@ -155,7 +162,7 @@ const removeGain = (S, t, i) => { const a = i ? t[i - 1].pt : 0, b = i < t.lengt
 const total = (dy) => dy.work + dy.drive;
 
 /** Samlet strafværdi for alle dage. */
-function objective(S, o) { let s = 0; for (const dy of S.days.values()) s += dy.drive + dayCost(dy, dy.work, dy.drive, o); return s; }
+function objective(S, o) { let s = S.gapAll(); for (const dy of S.days.values()) s += dy.drive + dayCost(dy, dy.work, dy.drive, o); return s; }
 
 /**
  * Optimér. Returnerer { moves, before, after } – intet i databasen ændres.
@@ -172,17 +179,20 @@ export function runOptimizer(P, { seed = 1, now = () => Date.now() } = {}) {
   let rnd = seed >>> 0 || 1; const rand = () => ((rnd = (rnd * 1664525 + 1013904223) >>> 0) / 4294967296);
   /** Fjern alle stop for nøglerne (husk positioner, så genindsættelse giver præcis samme ture). */
   const removeKeys = (keys) => { const removed = []; let delta = 0;
+    const ds = []; for (const [d, dy] of S.days) if (dy.tour.some((x) => keys.has(x.item))) ds.push(d); const aff = S.affected(ds); const g0 = S.gapSum(aff);
     for (const [d, dy] of S.days) for (let i = dy.tour.length - 1; i >= 0; i--) if (keys.has(dy.tour[i].item)) {
       const b = dy.drive + dayCost(dy, dy.work, dy.drive, o); const g = removeGain(S, dy.tour, i); const [x] = dy.tour.splice(i, 1);
       dy.drive -= g; dy.work -= x.min; removed.push({ d, i, x, g }); delta += dy.drive + dayCost(dy, dy.work, dy.drive, o) - b; }
+    delta += S.gapSum(aff) - g0;
     return { removed, delta }; };
   const restore = (removed) => { for (const r of [...removed].reverse()) { const dy = S.days.get(r.d); dy.tour.splice(r.i, 0, r.x); dy.drive += r.g; dy.work += r.x.min; } };
   const costOf = (occ) => { // indsæt midlertidigt pr. dato (billigste indsættelse, ét stop ad gangen) og fjern igen
     const byDate = new Map(); for (const c of occ) byDate.set(c.date, [...(byDate.get(c.date) || []), c]);
-    let s = 0; for (const [d, cs] of byDate) { const dy = S.day(d); let ic = 0, min = 0; const added = [];
+    let s = 0; const ov = new Map(); for (const [d, cs] of byDate) { const dy = S.day(d); let ic = 0, min = 0; const added = [];
       for (const c of cs) { const x = insertCost(S, dy.tour, c.pt); const e = { pt: c.pt, min: c.min, item: '~' }; dy.tour.splice(x.at, 0, e); added.push(e); ic += x.cost; min += c.min; }
       dy.tour = dy.tour.filter((e) => !added.includes(e));
-      s += ic + dayCost(dy, dy.work + min, dy.drive + ic, o) - dayCost(dy, dy.work, dy.drive, o); }
+      s += ic + dayCost(dy, dy.work + min, dy.drive + ic, o) - dayCost(dy, dy.work, dy.drive, o); ov.set(d, dy.work + min + dy.drive + ic); }
+    if (o.gap) { const aff = S.affected([...ov.keys()]); s += S.gapSum(aff, ov) - S.gapSum(aff); }
     return s; };
   const place = (key, occ) => { for (const c of occ) { const dy = S.day(c.date); const { cost, at } = insertCost(S, dy.tour, c.pt); dy.tour.splice(at, 0, { pt: c.pt, min: c.min, item: key }); dy.drive += cost; dy.work += c.min; } };
   // naboer (≤ nearMin minutters kørsel) – til samlede flytninger, så en hel klynge kan skifte dag
