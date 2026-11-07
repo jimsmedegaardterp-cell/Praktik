@@ -46,6 +46,30 @@ export function nextWorkday(iso, extraClosed = []) {
   return d;
 }
 
+/* ---------------- Helligdage rykker hele planen (transportbånd) ----------------
+ * Fra datoen SHIFT_FROM lægges planen på hverdagene i rækkefølge: den k-te hverdag efter SHIFT_FROM (i aftalernes rytme)
+ * kører på den k-te ÅBNE dag. En helligdag/lukkedag rykker altså alt efter den én dag – i stedet for at dynge besøgene
+ * sammen på dagen efter. Rytmen (rhythmDate) er uændret; kun den planlagte dato følger transportbåndet.
+ */
+let SHIFT_FROM = null; const convCache = new Map();
+export function setHolidayShift(fromIso) { if ((fromIso || null) !== SHIFT_FROM) { SHIFT_FROM = fromIso || null; convCache.clear(); } }
+export const holidayShiftFrom = () => SHIFT_FROM;
+function conveyor(extraClosed) {
+  const key = extraClosed.join(','); let c = convCache.get(key);
+  if (!c) { c = { wk: new Map(), open: [], last: addDays(SHIFT_FROM, -1), nW: 0 }; convCache.set(key, c); if (convCache.size > 20) convCache.delete(convCache.keys().next().value); }
+  return c;
+}
+/** Planlagt dato for en rytmedato. Uden transportbånd (eller før startdatoen): næste hverdag som før. */
+export function plannedFor(r, extraClosed = []) {
+  if (!SHIFT_FROM || r < SHIFT_FROM) return nextWorkday(r, extraClosed);
+  let d = r; while (weekday(d) >= 5) d = addDays(d, 1); // rytmedag i weekenden → mandag
+  const c = conveyor(extraClosed);
+  const step = () => { c.last = addDays(c.last, 1); if (weekday(c.last) >= 5) return; c.wk.set(c.last, c.nW++); if (!isClosedDay(c.last, extraClosed)) c.open.push(c.last); };
+  while (c.last < d) step();
+  const k = c.wk.get(d); let guard = 0; while (c.open.length <= k && guard++ < 5000) step();
+  return c.open[k];
+}
+
 /* ---------------- Besøgsplan ----------------
  * En aftale har en grundrytme: anchorDate + k * intervalWeeks.
  * Besøget får et deterministisk id `${agreementId}#${k}` → samme besøg kan aldrig dannes to gange.
@@ -69,7 +93,7 @@ export function generateVisits(agreement, fromIso, toIso_, existing = [], extraC
     if (have.has(id)) continue;
     out.push({
       id, agreementId: agreement.id, customerId: agreement.customerId, addressId: agreement.addressId,
-      routeId: agreement.routeId, seriesIndex: k, rhythmDate: r, plannedDate: nextWorkday(r, extraClosed),
+      routeId: agreement.routeId, seriesIndex: k, rhythmDate: r, plannedDate: plannedFor(r, extraClosed),
       status: 'planlagt', price: agreement.price, service: agreement.service, durationMin: agreement.durationMin ?? 15, completion: null, history: [],
     });
   }
@@ -139,7 +163,7 @@ export function moveVisit(visits, agreement, visitId, newDate, mode, { by, at },
     if (x.agreementId !== agreement.id || x.seriesIndex < v.seriesIndex) return x;
     if (x.status !== 'planlagt' && x.status !== 'udsat') return x;
     const r = rhythmDate(ag, x.seriesIndex);
-    const n = { ...x, rhythmDate: r, plannedDate: x.id === visitId ? newDate : nextWorkday(r, extraClosed), status: 'planlagt' };
+    const n = { ...x, rhythmDate: r, plannedDate: x.id === visitId ? newDate : plannedFor(r, extraClosed), status: 'planlagt' };
     n.history = log(n, x.plannedDate);
     return n;
   }) , delta };
