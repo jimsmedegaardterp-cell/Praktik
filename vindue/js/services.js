@@ -1,6 +1,7 @@
 // Applikationslag: binder domæne + data + adaptere sammen og skriver auditlog.
 // Svarer til det, der i produktion kører på serveren (med server-side adgangskontrol).
 import * as D from './domain.js';
+import { localOptimal } from './dayplan.js';
 
 export const uid = (p = 'id') => p + '_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
 const now = () => new Date().toISOString();
@@ -424,4 +425,62 @@ export function removePhrase(db, user, phrase, onlyIds) {
   for (const h of hits) { const x = db[h.col].find((y) => y.id === h.id); if (x) x[h.field] = h.after; }
   audit(db, user.id, 'text.removePhrase', '-', { phrase, n: hits.length });
   return hits.length;
+}
+
+/* --------- Byg nye faste ruter ud fra kalenderen (efter ruteoptimering) ---------
+ * Hver kunde hører til den "rutedag" hendes næste besøg ligger på: samme ugedag i samme uge af rytmen (4 uger for 4/8/12 …-ugers kunder).
+ * Én rute pr. rutedag. Eksisterende ruter genbruges, hvor de fleste kunder kommer fra (navn og historik bevares); ellers ny rute med områdenavn.
+ * Datoerne ændres ikke – kun hvilken rute kunderne står på, rutens rytme/dato og rækkefølge.
+ */
+const cityOf = (street) => ((String(street || '').match(/\b\d{4}\s+([^,]+)$/) || [])[1] || '').trim();
+export function cycleFor(intervalWeeks) { const i = intervalWeeks; return i % 4 === 0 ? 4 : i % 2 === 0 ? 2 : i; }
+export function planRoutesFromCalendar(db, { fromIso, excludeRouteIds = [], startPoint = null } = {}) {
+  const excl = new Set(excludeRouteIds); const BASE = '2000-01-03';
+  const addrOf = (id) => db.addresses.find((a) => a.id === id);
+  const groups = new Map(); let untouched = 0;
+  for (const a of db.agreements) {
+    if (!a.active || !a.intervalWeeks || !a.routeId || excl.has(a.routeId)) continue;
+    const v = db.visits.filter((x) => x.agreementId === a.id && !x.manual && (x.status === 'planlagt' || x.status === 'udsat') && x.plannedDate >= fromIso).sort((x, y) => (x.plannedDate < y.plannedDate ? -1 : 1))[0];
+    if (!v) { untouched++; continue; }
+    const C = cycleFor(a.intervalWeeks); const P = C * 7; const slot = ((D.diffDays(BASE, v.rhythmDate) % P) + P) % P;
+    const k = C + '@' + slot; if (!groups.has(k)) groups.set(k, { key: k, C, anchor: v.rhythmDate, agreementIds: [], from: {} });
+    const g = groups.get(k); g.agreementIds.push(a.id); if (v.rhythmDate < g.anchor) g.anchor = v.rhythmDate; g.from[a.routeId] = (g.from[a.routeId] || 0) + 1;
+  }
+  const list = [...groups.values()].sort((x, y) => (x.anchor < y.anchor ? -1 : x.anchor > y.anchor ? 1 : x.C - y.C));
+  // genbrug ruter: størst overlap først
+  const pairs = list.flatMap((g) => Object.entries(g.from).map(([rid, n]) => ({ g, rid, n }))).sort((x, y) => y.n - x.n);
+  const usedR = new Set();
+  for (const { g, rid, n } of pairs) { if (g.reuse || usedR.has(rid) || !db.routes.some((r) => r.id === rid)) continue; g.reuse = rid; g.keepName = n * 2 >= g.agreementIds.length; usedR.add(rid); }
+  const taken = new Set(db.routes.filter((r) => excl.has(r.id) || list.some((g) => g.reuse === r.id && g.keepName)).map((r) => r.name));
+  for (const g of list) {
+    const ags = g.agreementIds.map((id) => db.agreements.find((a) => a.id === id));
+    const addrIds = [...new Set(ags.map((a) => a.addressId))];
+    const cnt = {}; for (const id of addrIds) { const c = cityOf(addrOf(id)?.street); if (c) cnt[c] = (cnt[c] || 0) + 1; }
+    const top = Object.entries(cnt).sort((x, y) => y[1] - x[1]); g.towns = top.map(([c, n]) => `${c} (${n})`).join(', ');
+    if (g.keepName) g.name = db.routes.find((r) => r.id === g.reuse).name;
+    else { let base = top.length ? top[0][0] + (top[1] && top[1][1] * 4 >= addrIds.length ? '/' + top[1][0] : '') : 'Rute'; let nm = base, i = 2; while (taken.has(nm)) nm = `${base} ${i++}`; g.name = nm; }
+    taken.add(g.name);
+    const pts = addrIds.map((id) => ({ id, a: addrOf(id) })); const withLL = pts.filter((p) => p.a?.lat != null);
+    g.order = [...localOptimal(withLL, (p) => p.a, startPoint), ...pts.filter((p) => p.a?.lat == null).map((p) => p.id)];
+    const emp = {}; for (const a of ags) { const e = db.routes.find((r) => r.id === a.routeId)?.employeeId; if (e) emp[e] = (emp[e] || 0) + 1; }
+    g.employeeId = g.reuse ? db.routes.find((r) => r.id === g.reuse).employeeId : Object.entries(emp).sort((x, y) => y[1] - x[1])[0]?.[0] || null;
+    g.n = addrIds.length; g.min = ags.reduce((s, a) => s + (a.durationMin ?? 15), 0);
+  }
+  const involved = new Set(list.flatMap((g) => Object.keys(g.from)));
+  const emptied = db.routes.filter((r) => involved.has(r.id) && !usedR.has(r.id)).map((r) => r.id);
+  return { groups: list, untouched, emptied };
+}
+export function applyRouteRebuild(db, user, plan, todayIso) {
+  require_(user, 'route.edit');
+  const newIds = [];
+  for (const g of plan.groups) {
+    let r = g.reuse && db.routes.find((x) => x.id === g.reuse);
+    if (!r) { r = { id: uid('r') }; db.routes.push(r); newIds.push(r.id); }
+    Object.assign(r, { name: g.name, intervalWeeks: g.C, anchorDate: g.anchor, order: [...g.order], employeeId: g.employeeId ?? r.employeeId ?? null }); delete r.anchorUnknown;
+    const ids = new Set(g.agreementIds);
+    for (const a of db.agreements) if (ids.has(a.id)) a.routeId = r.id;
+    for (const v of db.visits) if (ids.has(v.agreementId) && (v.status === 'planlagt' || v.status === 'udsat') && v.plannedDate >= todayIso) v.routeId = r.id;
+  }
+  audit(db, user.id, 'routes.rebuild', '-', { routes: plan.groups.length, created: newIds.length, emptied: plan.emptied.length });
+  return { routes: plan.groups.length, created: newIds.length };
 }

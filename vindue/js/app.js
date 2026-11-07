@@ -15,7 +15,7 @@ import { showRouteMap } from './map.js';
 import * as KV from './store.js';
 import * as O from './optimizer.js';
 
-export const VERSION = '2026-11-07 #72';
+export const VERSION = '2026-11-07 #73';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -1128,7 +1128,7 @@ function ruteOversigt() {
     return { r, nRev, nRate, n: new Set(ags.map((a) => a.customerId)).size, year: ags.reduce((s, a) => s + D.annualRevenue(a), 0), min: ags.filter((a) => next && D.generateVisits(a, next, next).length).reduce((s, a) => s + (a.durationMin ?? 15), 0), next, gk, ids, gErr: g0?.error, drive: g ? DP.sumLegs(g.legs) : null }; });
   ui._ovKeys = rows.filter((x) => x.ids.length).map((x) => ({ k: x.gk, ids: x.ids }));
   const tot = rows.reduce((s, x) => s + x.year, 0);
-  $view.innerHTML = kTabs() + `<div class="card"><div class="row"><h2 class="sp">Faste ruter (${db.routes.length})</h2><button data-act="optOpen">✨ Optimér alle ruter (forsøg)</button><button data-act="addRoute">+ Opret rute</button></div>
+  $view.innerHTML = kTabs() + `<div class="card"><div class="row"><h2 class="sp">Faste ruter (${db.routes.length})</h2><button data-act="optOpen">✨ Optimér alle ruter (forsøg)</button><button data-act="rebuildRoutes">🧩 Byg ruter ud fra kalenderen</button><button data-act="addRoute">+ Opret rute</button></div>
     <div style="overflow-x:auto"><table class="heat"><tr><td></td>${weeks.map((w) => `<td class="hm">${D.toDate(w).getUTCDate() <= 7 ? MONTHS[D.month(w) - 1] : ''}</td>`).join('')}</tr>
     ${['M', 'T', 'O', 'T', 'F'].map((dn, i) => `<tr><td class="hm">${dn}</td>${weeks.map((w) => { const d = D.addDays(w, i); const n = load.get(d) || 0; return `<td title="${fmt(d)}: ${n} besøg" style="background:${n ? `rgba(31,95,139,${0.15 + 0.85 * n / maxN})` : 'var(--chip)'}"></td>`; }).join('')}</tr>`).join('')}</table></div>
     <p class="small mute">Belastning pr. dag de næste 12 måneder (mørkere = flere besøg).</p></div>
@@ -1215,7 +1215,8 @@ function optimView() {
     ${res.moves.map((m) => `<tr><td><input type="checkbox" data-optmove="${esc(m.key)}" ${o.off?.has(m.key) ? '' : 'checked'}></td><td>${esc(cust(m.customerId)?.name)}</td><td class="small">${esc(addr(m.addressId)?.street)}</td><td>${esc(route(m.fromRoute)?.name)} ${fmt(m.fromDate)}</td><td><b>${esc(route(m.toRoute)?.name)} ${fmt(m.toDate)}</b></td><td style="text-align:right">${m.shift > 0 ? '+' : ''}${m.shift}</td></tr>`).join('')}
     </table></div>
     <div class="row" style="margin-top:10px"><span class="sp small mute">${o.backupOk ? 'Gennemfør flytter de markerede kunder permanent. Kan fortrydes her bagefter, og backup-filen kan altid gendannes.' : 'Kontrollér backup-filen (trin 1) før du kan gennemføre.'}</span><button class="pri" data-act="optApply" ${!o.backupOk || !(sel.length || o.routeMoves?.some((m) => !o.routeOff.has(m.key))) || o.busy ? 'disabled' : ''}>✅ Gennemfør</button></div></div>` : ''}
-  ${optWhyCard(o, sel)}`;
+  ${optWhyCard(o, sel)}
+  <div class="card"><h3>4. Byg nye faste ruter ud fra kalenderen</h3><p class="small mute">Efter "Gennemfør" kan kunderne ligge på mange forskellige dage for samme rute. Her laves én fast rute pr. dag i rytmen, med områdenavn og bedste rækkefølge. Datoerne ændres ikke.</p><button data-act="rebuildRoutes">🧩 Byg ruter ud fra kalenderen …</button></div>`;
   const bk = document.getElementById('optBk'); if (bk) bk.onchange = async (e) => { const f = e.target.files[0]; if (!f) return;
     try { const d = JSON.parse(await f.text()); o.backupOk = JSON.stringify(d.customers) === JSON.stringify(db.customers) && JSON.stringify(d.agreements) === JSON.stringify(db.agreements) && JSON.stringify(d.routes) === JSON.stringify(db.routes) && JSON.stringify(d.visits) === JSON.stringify(db.visits) && JSON.stringify(d.addresses) === JSON.stringify(db.addresses);
       toast(o.backupOk ? 'Backup kontrolleret ✓' : 'Filen svarer ikke til data nu – download en ny backup'); } catch { o.backupOk = false; toast('Kunne ikke læse filen'); } render(); };
@@ -1240,6 +1241,18 @@ function optWhyCard(o, sel) {
       + '<p class="small mute">Gevinst = sparede minutter (kørsel + straf for dage over/under målet), set over 12 uger og efter de øvrige valgte flytninger. Gevinst under 10 = ikke værd at flytte.</p>'; }
   return `<div class="card"><h3>Hvorfor blev en kunde (ikke) flyttet?</h3><div class="row"><input id="optWhyQ" placeholder="Søg kunde eller adresse" value="${esc(o.whyQ || '')}" class="sp"></div>
     ${hits.length ? `<div class="row small">${hits.map((c) => `<button class="small" data-act="optWhy" data-id="${c.id}">${esc(c.name)}</button>`).join('')}</div>` : ''}${body}</div>`;
+}
+/** Forhåndsvisning + gennemførsel af "Byg ruter ud fra kalenderen". */
+function rebuildDialog() {
+  const o = optState(); const plan = S.planRoutesFromCalendar(db, { fromIso: todayIso(), excludeRouteIds: [...o.ign, ...o.excl], startPoint: startPoint() });
+  ui._rebuildPlan = plan; const rn = (id) => esc(route(id)?.name || '');
+  openDlg(`<h2>🧩 Byg ruter ud fra kalenderen</h2><p class="small mute">Én fast rute pr. dag i rytmen (samme ugedag i samme uge af 4-ugers-rytmen; 8- og 12-ugers kunder kommer med på den rute, hvis dag de ligger på). Eksisterende ruter genbruges, hvor de fleste kunder kommer fra – navnet beholdes, hvis mindst halvdelen kommer derfra. <b>Ingen datoer ændres.</b> ${[...o.ign, ...o.excl].map(rn).join(', ') || ''} røres ikke.</p>
+    <div style="max-height:50vh;overflow:auto"><table><tr><th>Rute</th><th>Rytme</th><th>Næste</th><th style="text-align:right">Kunder</th><th style="text-align:right">Arbejde</th><th>Områder</th><th>Genbruger</th></tr>
+    ${plan.groups.map((g) => `<tr class="small"><td><b>${esc(g.name)}</b></td><td>hver ${g.C}. uge</td><td>${fmt(g.anchor)}</td><td style="text-align:right">${g.n}</td><td style="text-align:right">${D.hm(g.min)}</td><td>${esc(g.towns)}</td><td>${g.reuse ? rn(g.reuse) : '<i>ny rute</i>'}</td></tr>`).join('')}</table></div>
+    <p class="small">${plan.groups.length} ruter.${plan.untouched ? ` ${plan.untouched} aftaler uden kommende besøg røres ikke.` : ''}${plan.emptied.length ? ` Bliver tomme: ${plan.emptied.map(rn).join(', ')} (slet dem under Admin → "Slet ruter uden kunder", hvis de ikke har historik).` : ''}</p>
+    <p class="small mute">Kan fortrydes på optimeringssiden ("Fortryd seneste"), og backup-filen kan altid gendannes.</p>`,
+    async () => { const snap = { at: new Date().toISOString(), db: JSON.parse(JSON.stringify(db)) }; await KV.set('vindue-optundo', snap); if (!(await KV.get('vindue-optorig'))?.db) await KV.set('vindue-optorig', snap);
+      const r = S.applyRouteRebuild(db, ui.user, ui._rebuildPlan, todayIso()); optLoadUndo(); ui._google = {}; toast(`${r.routes} ruter bygget (${r.created} nye)`); });
 }
 async function optCalibrate() {
   const o = optState(); const P = optProblem(); const base = O.evaluate(P, []);
@@ -1682,6 +1695,7 @@ document.addEventListener('click', async (e) => {
         catch (er) { if (er.message !== 'stop') toast(er.message); } finally { o.busy = null; } break; }
       case 'optStop': { ui._optWorker?.terminate(); ui._optWorker = null; ui._optReject?.(new Error('stop')); toast('Beregningen er stoppet'); return; }
       case 'optAll': optState().off = new Set(); break;
+      case 'rebuildRoutes': return rebuildDialog();
       case 'optWhy': optState().whyC = id; break;
       case 'optNone': { const o = optState(); o.off = new Set((o.res?.moves || []).map((m) => m.key)); break; }
       case 'optCalib': { const o = optState(); try { await optCalibrate(); } catch (er) { toast(er.message); } finally { o.busy = null; } break; }
