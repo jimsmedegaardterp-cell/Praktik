@@ -143,14 +143,16 @@ test('optimering: samme rute på to dage – nabokunder samles på én dag', () 
   for (let k = 0; k < 4; k++) add('M', '2027-03-04', 57.521 + k * 0.001, 10.051, 20); // torsdag – naboer
   for (let k = 0; k < 14; k++) add('X', '2027-03-04', 57.45 + k * 0.001, 10.3, 25); // torsdag – andet sted, fylder dagen
   S.planAhead(db, '2027-12-31', '2027-01-01');
-  const r = O.optimizeAll(db, { start: START, startPoint: { lat: 57.47, lng: 10.2 }, timeMs: 2000 });
+  const r = O.optimizeAll(db, { start: START, startPoint: { lat: 57.47, lng: 10.2 }, timeMs: 2000, maxDay: 600 });
   const fm = O.finalMoves(r.P, r.moves);
-  const moved = fm.moves.filter((m) => Number(m.addressId.slice(2)) >= 11 && Number(m.addressId.slice(2)) <= 14 && m.toDate === '2027-03-02');
-  assert.equal(moved.length, 4, 'alle fire torsdagskunder til tirsdag: ' + JSON.stringify(r.routeMoves) + JSON.stringify(r.moves.map((m) => [m.addressId, m.toDate])));
+  const fin = (n) => { const it = r.P.items.find((x) => x.addressId === 'ad' + n); const m = fm.moves.find((x) => x.key === it.key); return m ? m.toDate : D.addDays(it.ref, it.curShift || 0); };
+  const ds = new Set([...Array(14).keys()].map((k) => fin(k + 1)));
+  assert.equal(ds.size, 1, 'alle 14 Mygdal-kunder på samme dag: ' + [...ds].join());
   assert.ok(r.after.drive < r.before.drive);
   // uden ruteflytninger: naboerne flyttes samlet som enkeltkunder
-  const r2 = O.optimizeAll(db, { start: START, startPoint: { lat: 57.47, lng: 10.2 }, timeMs: 2000 }, { routeShifts: {} });
-  assert.equal(r2.moves.filter((m) => m.toDate === '2027-03-02' && Number(m.addressId.slice(2)) >= 11).length, 4);
+  const r2 = O.optimizeAll(db, { start: START, startPoint: { lat: 57.47, lng: 10.2 }, timeMs: 2000, maxDay: 600 }, { routeShifts: {} });
+  const fin2 = (n) => { const it = r2.P.items.find((x) => x.addressId === 'ad' + n); const m = r2.moves.find((x) => x.key === it.key); return m ? m.toDate : it.ref; };
+  assert.equal(new Set([...Array(14).keys()].map((k) => fin2(k + 1))).size, 1, 'samlet uden ruteflytninger');
 });
 
 test('optimering: dyb søgning (annealing) er aldrig dårligere end den hurtige', () => {
@@ -205,4 +207,17 @@ test('byg nye ruter ud fra kalenderen: én rute pr. rutedag, genbrug navne, dato
   assert.deepEqual(Object.fromEntries(db.visits.map((v) => [v.id, v.plannedDate])), dates, 'ingen datoer ændret');
   const B = db.routes.find((r) => r.id === 'B'); assert.ok(db.visits.filter((v) => v.routeId === 'B' && v.plannedDate >= '2027-03-01').every((v) => D.routeRuns(B, v.rhythmDate)));
   assert.equal(B.order.length, 7);
+});
+
+test('optimering: tom dag før fyldte dage – arbejdet rykkes frem, selv når ingen dag er for lang', () => {
+  const db = S.emptyDb(); const days = ['2027-03-02', '2027-03-03', '2027-03-04']; // man 1/3 tom, tir–tor 3 korte ruter
+  db.routes = days.map((d, k) => ({ id: 'R' + k, name: 'R' + k, intervalWeeks: 4, anchorDate: d, order: [] }));
+  let i = 0;
+  days.forEach((d, k) => { for (let j = 0; j < 12; j++) { i++; db.addresses.push({ id: 'ad' + i, customerId: 'c' + i, street: 'V' + i, lat: 57.40 + k * 0.05 + j * 0.001, lng: 10.0 + k * 0.05 });
+    db.agreements.push({ id: 'ag' + i, customerId: 'c' + i, addressId: 'ad' + i, routeId: 'R' + k, service: 'V', price: 200, intervalWeeks: 4, durationMin: 20, anchorDate: d, seasonMonths: [], active: true }); } });
+  S.planAhead(db, '2027-12-31', '2027-01-01');
+  const r = O.optimizeAll(db, { start: START, startPoint: { lat: 57.47, lng: 10.2 }, maxDay: 450, saMs: 500 });
+  const T = (s, d) => (s.perDate[d] ? s.perDate[d].work + s.perDate[d].drive : 0);
+  assert.equal(T(r.before, '2027-03-01'), 0);
+  assert.ok(T(r.after, '2027-03-01') > 0, 'mandag tages i brug: ' + ['2027-03-01', ...days, '2027-03-05'].map((d) => T(r.after, d)).join(','));
 });

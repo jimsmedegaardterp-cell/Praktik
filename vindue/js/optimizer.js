@@ -15,7 +15,7 @@
 import * as D from './domain.js';
 import { km, optimize } from './dayplan.js';
 
-export const DEFAULTS = { horizonDays: 84, windowBack: 4, windowFwd: 10, minDay: 420, maxDay: 450, underW: 0.02, early: 0.05, factor: 1, moveCost: 10, routeMoveCost: 30, timeMs: 4000, saMs: 0 };
+export const DEFAULTS = { horizonDays: 84, windowBack: 4, windowFwd: 10, minDay: 420, maxDay: 450, underW: 0.02, early: 0.12, factor: 1, moveCost: 10, routeMoveCost: 30, timeMs: 4000, saMs: 0 };
 const legMin = (a, b, f) => { const k = km(a, b); return k == null ? 0 : (k * 1.3) / 50 * 60 * f; };
 /** Strafpoint for en dags samlede minutter (0 = fridag, ingen straf). */
 export function dayPenalty(T, o = DEFAULTS) {
@@ -69,11 +69,11 @@ export function buildProblem(db, opts = {}) {
   const movable = new Set([...groups.values()].flat().map((a) => a.id));
   const live = (v) => (v.status === 'planlagt' || v.status === 'udsat') && v.plannedDate >= start && v.plannedDate <= end;
   const isMovableVisit = (v) => movable.has(v.agreementId) && !v.manual && v.status === 'planlagt';
-  const fixed = db.visits.filter((v) => live(v) && !isMovableVisit(v) && !ign.has(v.routeId)).map((v) => ({ date: v.plannedDate, pt: ptOf(v.addressId), min: v.durationMin ?? 15, visitId: v.id }));
+  const fixed = db.visits.filter((v) => live(v) && !isMovableVisit(v) && !ign.has(v.routeId)).map((v) => ({ date: v.plannedDate, pt: ptOf(v.addressId), min: (v.durationMin ?? 15) + (o.stopMin || 0), visitId: v.id }));
   const items = [];
   for (const [key, ags] of groups) {
     const pt = ptOf(ags[0].addressId); const from = routeById.get(ags[0].routeId); const addressId = ags[0].addressId;
-    const mk = (date, a) => ({ date, min: a.durationMin ?? 15, pt, addressId });
+    const mk = (date, a) => ({ date, min: (a.durationMin ?? 15) + (o.stopMin || 0), pt, addressId });
     // reference = kundens næste planlagte besøg (ellers næste rytmedato)
     const d0 = new Map(ags.map((a) => { const v = firstPlanned(a);
       return [a.id, v ? v.plannedDate : nextRhythm(a, start)]; }));
@@ -116,7 +116,7 @@ export function buildProblem(db, opts = {}) {
         if (!s) continue; const anchors = ags.map(({ it, a }) => D.addDays(it.d0.get(a.id), s));
         if (anchors.some((d) => d < start || D.isClosedDay(d, closed))) continue;
         const os = ags.map(({ it, a }, i) => occN(a, anchors[i], it.nOf.get(a.id), end, o.windowFwd, closed)); if (os.some((x) => !x)) continue;
-        cands.push({ routeId: r.id, shift: s, occ: ags.flatMap(({ it, a }, i) => os[i].map((date) => ({ date, min: a.durationMin ?? 15, pt: it.pt, addressId: it.addressId }))) });
+        cands.push({ routeId: r.id, shift: s, occ: ags.flatMap(({ it, a }, i) => os[i].map((date) => ({ date, min: (a.durationMin ?? 15) + (o.stopMin || 0), pt: it.pt, addressId: it.addressId }))) });
       }
       const first = mine.map((it) => it.ref).sort()[0];
       items.push({ key: rc, isRoute: true, routeId: r.id, pt: -1, ref: first, cur: mine.flatMap((it) => it.cur), cands, why: [], agreementIds: [], n: mine.length });
@@ -209,15 +209,17 @@ export function runOptimizer(P, { seed = 1, now = () => Date.now() } = {}) {
     for (const it of order) {
       if (now() - t0 > ms) break;
       const G = (nb.get(it.key) || []).filter((x) => sig(x) === sig(it)); if (!G.length) continue;
+      let best = null; // den bedste samlede flytning (ikke bare den første, der hjælper)
       for (const c of it.cands) {
         if (choice.get(it.key) === c) continue; const tgt = D.addDays(it.ref, c.shift);
         const members = [[it, c], ...G.map((x) => [x, x.cands.find((k) => k.routeId === c.routeId && D.addDays(x.ref, k.shift) === tgt)]).filter(([x, k]) => k && choice.get(x.key) !== k)];
         if (members.length < 2) continue;
         const { removed, delta } = removeKeys(new Set(members.map(([x]) => x.key)));
-        const cost = costOf(members.flatMap(([, k]) => k.occ)) + o.moveCost * members.filter(([x]) => !choice.get(x.key)).length;
-        if (cost < -delta - 1e-6) { for (const [x, k] of members) { place(x.key, k.occ); choice.set(x.key, k); } improved = true; break; }
+        const gain = -delta - (costOf(members.flatMap(([, k]) => k.occ)) + o.moveCost * members.filter(([x]) => !choice.get(x.key)).length);
         restore(removed);
+        if (gain > 1e-6 && (!best || gain > best.gain)) best = { gain, members };
       }
+      if (best) { removeKeys(new Set(best.members.map(([x]) => x.key))); for (const [x, k] of best.members) { place(x.key, k.occ); choice.set(x.key, k); } improved = true; }
     }
     for (const dy of S.days.values()) reorder(S, dy);
   }
