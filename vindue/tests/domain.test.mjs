@@ -273,3 +273,21 @@ test('fjern frase fra beskrivelser – resten bliver', () => {
   assert.equal(db.addresses[2].access, 'Bjergby kirke, nøgle i skur', 'uden "opkøb" røres ikke');
   assert.equal(db.agreements[0].service, 'Vinduesvask');
 });
+
+test('lønafregning: kun det der ikke er afregnet, rettelser kommer med næste gang, intet to gange', () => {
+  const db = S.emptyDb(); db.settings.commissionRate = 0.35;
+  db.employees = [{ id: 'e1', name: 'Jim', commissionRate: 0 }, { id: 'e2', name: 'Mads', commissionRate: 0.35 }];
+  const mk = (id, at, price, by = 'e2') => ({ id, customerId: 'c1', addressId: 'a1', plannedDate: at, status: 'udfoert', price, extras: [], completion: { by, at: at + 'T10:00:00Z', result: 'udfoert' }, history: [] });
+  db.visits = [mk('v1', '2026-10-30', 200), mk('v2', '2026-11-03', 300), mk('v3', '2026-11-04', 400, 'e1'), mk('v4', '2026-10-01', 999)];
+  db.settings.payrollFrom = '2026-10-15';
+  const r1 = S.settlePayroll(db, admin, '2026-11-05');
+  assert.equal(r1.totals.e2.n, 2); assert.equal(r1.totals.e2.com, 175); assert.ok(!r1.totals.e1, 'ejeren 0 %'); assert.ok(!db.visits[3].payroll, 'før startdato');
+  assert.equal(S.payrollPending(db, '2026-11-30').length, 0, 'intet to gange');
+  db.visits.push(mk('v5', '2026-11-02', 100)); // sent registreret med tidligere dato
+  db.visits[1].price = 500; // rettet efter afregning
+  const p = S.payrollPending(db, '2026-11-30');
+  assert.equal(p.length, 2); assert.equal(p.find((l) => l.kind === 'rettelse').com, 70); assert.equal(p.find((l) => l.kind === 'ny').com, 35);
+  const r2 = S.settlePayroll(db, admin, '2026-11-30'); assert.equal(r2.totals.e2.com, 105); assert.equal(r2.totals.e2.fix, 70);
+  const hist = S.payrollRuns(db); assert.equal(hist.length, 2); assert.equal(hist[0].totals.e2.com, 105); assert.equal(hist[1].totals.e2.com, 175);
+  assert.throws(() => S.settlePayroll(db, admin, '2026-11-30'), /Intet/);
+});

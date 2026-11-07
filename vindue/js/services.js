@@ -484,3 +484,53 @@ export function applyRouteRebuild(db, user, plan, todayIso) {
   audit(db, user.id, 'routes.rebuild', '-', { routes: plan.groups.length, created: newIds.length, emptied: plan.emptied.length });
   return { routes: plan.groups.length, created: newIds.length };
 }
+
+/* --------- Lønafregning: provision siden sidste afregning ---------
+ * Hvert besøg stemples, når det afregnes (v.payroll = { run, at, amounts }). Næste afregning tager alle fakturerbare besøg,
+ * der ikke er afregnet endnu (også sent registrerede), plus rettelser: er et afregnet besøg siden ændret (pris, ekstra opgaver,
+ * aflyst, andet fordelingsforhold), kommer forskellen med som en rettelseslinje. Intet afregnes to gange.
+ */
+export function visitCommission(db, v) {
+  if (!D.isBillable(v) || !v.completion) return {};
+  const rate = (id) => db.employees.find((e) => e.id === id)?.commissionRate ?? db.settings.commissionRate ?? 0;
+  const base = D.visitTotal(v) * (db.settings.commissionInclVat ? 1.25 : 1); const out = {};
+  const split = v.split?.length ? v.split : [{ employeeId: v.completion.by, pct: rate(v.completion.by) * 100 }];
+  for (const sp of split) { if (!sp.pct || !sp.employeeId) continue; const o = (out[sp.employeeId] ||= { base: 0, com: 0, pct: 0 }); o.base += base; o.com += base * sp.pct / 100; o.pct += sp.pct; }
+  for (const k in out) { out[k].base = Math.round(out[k].base * 100) / 100; out[k].com = Math.round(out[k].com * 100) / 100; }
+  return out;
+}
+export function payrollPending(db, toIso) {
+  const from = db.settings.payrollFrom || '0000'; const lines = [];
+  for (const v of db.visits) {
+    const d = v.completion?.at?.slice(0, 10); const cur = visitCommission(db, v);
+    if (!v.payroll) { if (!d || d < from || d > toIso) continue; for (const [e, x] of Object.entries(cur)) lines.push({ visitId: v.id, e, base: x.base, com: x.com, pct: x.pct, kind: 'ny', date: d }); continue; }
+    const prev = v.payroll.amounts || {};
+    for (const e of new Set([...Object.keys(cur), ...Object.keys(prev)])) { const db_ = Math.round(((cur[e]?.base || 0) - (prev[e]?.base || 0)) * 100) / 100; const dc = Math.round(((cur[e]?.com || 0) - (prev[e]?.com || 0)) * 100) / 100;
+      if (Math.abs(dc) >= 0.01) lines.push({ visitId: v.id, e, base: db_, com: dc, pct: cur[e]?.pct || 0, kind: 'rettelse', date: d || v.payroll.at.slice(0, 10) }); }
+  }
+  return lines;
+}
+export function payrollTotals(lines) {
+  const t = {}; for (const l of lines) { const o = (t[l.e] ||= { n: 0, base: 0, com: 0, fix: 0 }); if (l.kind === 'ny') o.n++; else o.fix += l.com; o.base += l.base; o.com += l.com; }
+  for (const k in t) for (const f of ['base', 'com', 'fix']) t[k][f] = Math.round(t[k][f] * 100) / 100;
+  return t;
+}
+export function settlePayroll(db, user, toIso) {
+  require_(user, 'economy.view');
+  const lines = payrollPending(db, toIso); if (!lines.length) throw new Error('Intet at afregne');
+  const run = { run: uid('pay'), at: now(), to: toIso, by: user.id };
+  // stemplet ligger på besøgene (ingen ny posttype) – tidligere stempler gemmes i payrollHist, så historikken kan genskabes
+  for (const id of new Set(lines.map((l) => l.visitId))) { const v = db.visits.find((x) => x.id === id); if (v.payroll) (v.payrollHist ||= []).push(v.payroll); v.payroll = { ...run, amounts: visitCommission(db, v) }; }
+  audit(db, user.id, 'payroll.settle', run.run, { to: toIso, lines: lines.length });
+  return { id: run.run, at: run.at, to: toIso, lines, totals: payrollTotals(lines) };
+}
+/** Tidligere afregninger, genskabt fra stemplerne på besøgene (nyeste først). */
+export function payrollRuns(db) {
+  const runs = new Map();
+  for (const v of db.visits) { const st = [...(v.payrollHist || []), ...(v.payroll ? [v.payroll] : [])]; let prev = {};
+    for (const e of st) { const r = runs.get(e.run) || { id: e.run, at: e.at, to: e.to, lines: [] }; runs.set(e.run, r);
+      for (const k of new Set([...Object.keys(e.amounts || {}), ...Object.keys(prev)])) { const c = Math.round(((e.amounts?.[k]?.com || 0) - (prev[k]?.com || 0)) * 100) / 100; if (Math.abs(c) < 0.01) continue;
+        r.lines.push({ visitId: v.id, e: k, base: Math.round(((e.amounts?.[k]?.base || 0) - (prev[k]?.base || 0)) * 100) / 100, com: c, pct: e.amounts?.[k]?.pct || 0, kind: Object.keys(prev).length ? 'rettelse' : 'ny', date: v.completion?.at?.slice(0, 10) || e.at.slice(0, 10) }); }
+      prev = e.amounts || {}; } }
+  return [...runs.values()].map((r) => ({ ...r, totals: payrollTotals(r.lines) })).sort((a, b) => (a.at < b.at ? 1 : -1));
+}
