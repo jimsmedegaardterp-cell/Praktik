@@ -15,23 +15,25 @@
 import * as D from './domain.js';
 import { km, optimize } from './dayplan.js';
 
-export const DEFAULTS = { horizonDays: 84, windowBack: 4, windowFwd: 10, minDay: 420, maxDay: 480, factor: 1, moveCost: 10, routeMoveCost: 30, timeMs: 4000, saMs: 0 };
+export const DEFAULTS = { horizonDays: 84, windowBack: 4, windowFwd: 10, minDay: 420, maxDay: 450, underW: 0.02, early: 0.05, factor: 1, moveCost: 10, routeMoveCost: 30, timeMs: 4000, saMs: 0 };
 const legMin = (a, b, f) => { const k = km(a, b); return k == null ? 0 : (k * 1.3) / 50 * 60 * f; };
 /** Strafpoint for en dags samlede minutter (0 = fridag, ingen straf). */
 export function dayPenalty(T, o = DEFAULTS) {
   if (T <= 0) return 0;
   const over = Math.max(0, T - o.maxDay), under = Math.max(0, o.minDay - T);
-  return over * 10 + over * over * 0.2 + under * 0.3; // over målet straffes hårdt (30 min over ≈ 8 timers kørsel)
+  return over * 10 + over * over * 0.2 + under * (o.underW ?? 0.02); // over målet straffes hårdt; korte dage næsten ikke (kørslen hjem tæller i forvejen)
 }
+/** Dagens samlede straf: kørsel betales særskilt; her længde + "tidlighed" (arbejde senere i perioden koster lidt, så alt rykker frem mod startdatoen). */
+const dayCost = (dy, work, drive, o) => dayPenalty(work + drive, o) + (o.early ?? 0) * work * dy.idx;
 /** Næste rytmedato ≥ fromIso for en aftale (uden sæson). */
 function nextRhythm(a, fromIso) { const step = a.intervalWeeks * 7; const k = Math.max(0, Math.ceil(D.diffDays(a.anchorDate, fromIso) / step)); return D.addDays(a.anchorDate, k * step); }
-/** Planlagte datoer for en aftale med ny ankerdato inden for [start, end]. */
-function occDates(a, anchor, start, end, closed) {
-  const out = []; const step = a.intervalWeeks * 7;
-  for (let r = anchor; r <= end; r = D.addDays(r, step)) { if (r < start || !D.inSeason(a, r)) continue; const p = D.nextWorkday(r, closed); if (p <= end) out.push(p); }
-  return out;
+/** De første n planlagte datoer (i sæson) fra en ny ankerdato – samme antal besøg som nu, så en flytning aldrig "sparer" besøg væk.
+ *  null hvis et besøg ville falde mere end `slack` dage efter perioden (fx skubbet ud af sæsonen). */
+function occN(a, anchor, n, end, slack, closed) {
+  const out = []; const step = a.intervalWeeks * 7; const lim = D.addDays(end, slack);
+  for (let r = anchor, g = 0; out.length < n && g < 400; r = D.addDays(r, step), g++) { if (!D.inSeason(a, r)) continue; const p = D.nextWorkday(r, closed); if (p > lim) return null; out.push(p); }
+  return out.length === n ? out : null;
 }
-
 /**
  * Byg problemet ud fra databasen. start = første dag (mandag) der må ændres.
  * Returnerer { pts, dates, items, fixed, routes, opts }.
@@ -77,10 +79,12 @@ export function buildProblem(db, opts = {}) {
       return [a.id, v ? v.plannedDate : nextRhythm(a, start)]; }));
     const ref = [...d0.values()].sort()[0]; const sh = shiftOf(from, ref); const rcls = from.id + '@' + cls(from, ref);
     // nuværende besøg (flyttes ruten i fase 1, følger kunden med)
-    const cur = sh ? ags.flatMap((a) => occDates(a, D.addDays(d0.get(a.id), sh), start, end, closed).map((d) => mk(d, a)))
+    const nOf = new Map(ags.map((a) => [a.id, db.visits.filter((v) => v.agreementId === a.id && live(v) && isMovableVisit(v)).length]));
+    const occFor = (a, anchor) => occN(a, anchor, nOf.get(a.id), end, o.windowFwd, closed);
+    const cur = sh ? ags.flatMap((a) => (occFor(a, D.addDays(d0.get(a.id), sh)) || []).map((d) => mk(d, a)))
       : db.visits.filter((v) => live(v) && isMovableVisit(v) && ags.some((a) => a.id === v.agreementId)).map((v) => mk(v.plannedDate, ags.find((a) => a.id === v.agreementId)));
     const cands = []; const why = [];
-    if (pt < 0) { items.push({ key, agreementIds: ags.map((a) => a.id), addressId, customerId: ags[0].customerId, routeId: from.id, rcls, pt, ref, d0, curShift: sh, cur, cands, why, whyAll: 'adressen mangler koordinater (Admin → Manglende koordinater)' }); continue; }
+    if (pt < 0) { items.push({ key, agreementIds: ags.map((a) => a.id), addressId, customerId: ags[0].customerId, routeId: from.id, rcls, pt, ref, d0, nOf, curShift: sh, cur, cands, why, whyAll: 'adressen mangler koordinater (Admin → Manglende koordinater)' }); continue; }
     for (const r of routes) {
       if (excl.has(r.id)) { why.push({ routeId: r.id, why: ign.has(r.id) ? 'udføres af en anden' : 'sat til "flyttes ikke"' }); continue; }
       const bad = ags.find((a) => a.intervalWeeks % r.intervalWeeks); if (bad) { why.push({ routeId: r.id, why: `kundens interval (${bad.intervalWeeks} uger) passer ikke med rutens (${r.intervalWeeks} uger)` }); continue; }
@@ -90,14 +94,15 @@ export function buildProblem(db, opts = {}) {
         const anchors = new Map(ags.map((a) => [a.id, D.addDays(d0.get(a.id), s)]));
         // egen rute: må lægges på enhver arbejdsdag i vinduet (også dage uden ruter); andre ruter: kun deres dage
         if ([...anchors.values()].some((d) => d < start || (r.id !== from.id && !runsOn(r, d)) || D.isClosedDay(d, closed))) continue;
-        const occ = ags.flatMap((a) => occDates(a, anchors.get(a.id), start, end, closed).map((date) => mk(date, a)));
+        const os = ags.map((a) => occFor(a, anchors.get(a.id))); if (os.some((x) => !x)) continue;
+        const occ = ags.flatMap((a, i) => os[i].map((date) => mk(date, a)));
         cands.push({ routeId: r.id, shift: s, anchors, occ });
       }
       if (cands.length === n0 && r.id === from.id) continue;
       if (cands.length === n0 && runsOn(r, D.addDays(ref, sh))) why.push({ routeId: r.id, why: `kører samme dag (${ref}) – ingen gevinst ved kun at skifte rute` });
       else if (cands.length === n0) { const nx = nextRun(r, D.addDays(ref, -o.windowBack)); why.push({ routeId: r.id, why: `kører ikke inden for ${o.windowBack} dage før / ${o.windowFwd} dage efter ${ref}${nx ? ` (næste: ${nx})` : ''}` }); }
     }
-    items.push({ key, agreementIds: ags.map((a) => a.id), addressId, customerId: ags[0].customerId, routeId: from.id, rcls, pt, ref, d0, curShift: sh, cur, cands, why });
+    items.push({ key, agreementIds: ags.map((a) => a.id), addressId, customerId: ags[0].customerId, routeId: from.id, rcls, pt, ref, d0, nOf, curShift: sh, cur, cands, why });
   }
   // Fase 1: hele rutedage som enheder – kunderne på en rute med samme dag i rytmen flyttes samme antal dage
   if (o.mode === 'routes') {
@@ -110,7 +115,8 @@ export function buildProblem(db, opts = {}) {
       for (let s = -o.windowBack; s <= o.windowFwd; s++) {
         if (!s) continue; const anchors = ags.map(({ it, a }) => D.addDays(it.d0.get(a.id), s));
         if (anchors.some((d) => d < start || D.isClosedDay(d, closed))) continue;
-        cands.push({ routeId: r.id, shift: s, occ: ags.flatMap(({ it, a }, i) => occDates(a, anchors[i], start, end, closed).map((date) => ({ date, min: a.durationMin ?? 15, pt: it.pt, addressId: it.addressId }))) });
+        const os = ags.map(({ it, a }, i) => occN(a, anchors[i], it.nOf.get(a.id), end, o.windowFwd, closed)); if (os.some((x) => !x)) continue;
+        cands.push({ routeId: r.id, shift: s, occ: ags.flatMap(({ it, a }, i) => os[i].map((date) => ({ date, min: a.durationMin ?? 15, pt: it.pt, addressId: it.addressId }))) });
       }
       const first = mine.map((it) => it.ref).sort()[0];
       items.push({ key: rc, isRoute: true, routeId: r.id, pt: -1, ref: first, cur: mine.flatMap((it) => it.cur), cands, why: [], agreementIds: [], n: mine.length });
@@ -125,8 +131,9 @@ function makeState(P) {
   const n = P.pts.length; const f = P.opts.factor; const M = new Float32Array(n * n);
   for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) M[i * n + j] = i === j ? 0 : legMin(P.pts[i], P.pts[j], f);
   const dist = (i, j) => (i < 0 || j < 0 || (i === 0 && !P.pts[0]) || (j === 0 && !P.pts[0]) ? 0 : M[i * n + j]);
-  const days = new Map(P.dates.map((d) => [d, { tour: [], work: 0, drive: 0 }]));
-  const day = (d) => { if (!days.has(d)) days.set(d, { tour: [], work: 0, drive: 0 }); return days.get(d); };
+  const idx = new Map(P.dates.map((d, i) => [d, i])); const ix = (d) => idx.get(d) ?? Math.round(D.diffDays(P.start, d) * 5 / 7);
+  const days = new Map(P.dates.map((d) => [d, { tour: [], work: 0, drive: 0, idx: ix(d) }]));
+  const day = (d) => { if (!days.has(d)) days.set(d, { tour: [], work: 0, drive: 0, idx: ix(d) }); return days.get(d); };
   return { dist, days, day };
 }
 const tourLen = (S, t) => { let s = 0, prev = 0; for (const x of t) { s += S.dist(prev, x.pt); prev = x.pt; } return s + S.dist(prev, 0); };
@@ -144,7 +151,7 @@ const removeGain = (S, t, i) => { const a = i ? t[i - 1].pt : 0, b = i < t.lengt
 const total = (dy) => dy.work + dy.drive;
 
 /** Samlet strafværdi for alle dage. */
-function objective(S, o) { let s = 0; for (const dy of S.days.values()) s += dy.drive + dayPenalty(total(dy), o); return s; }
+function objective(S, o) { let s = 0; for (const dy of S.days.values()) s += dy.drive + dayCost(dy, dy.work, dy.drive, o); return s; }
 
 /**
  * Optimér. Returnerer { moves, before, after } – intet i databasen ændres.
@@ -162,16 +169,16 @@ export function runOptimizer(P, { seed = 1, now = () => Date.now() } = {}) {
   /** Fjern alle stop for nøglerne (husk positioner, så genindsættelse giver præcis samme ture). */
   const removeKeys = (keys) => { const removed = []; let delta = 0;
     for (const [d, dy] of S.days) for (let i = dy.tour.length - 1; i >= 0; i--) if (keys.has(dy.tour[i].item)) {
-      const b = dy.drive + dayPenalty(total(dy), o); const g = removeGain(S, dy.tour, i); const [x] = dy.tour.splice(i, 1);
-      dy.drive -= g; dy.work -= x.min; removed.push({ d, i, x, g }); delta += dy.drive + dayPenalty(total(dy), o) - b; }
+      const b = dy.drive + dayCost(dy, dy.work, dy.drive, o); const g = removeGain(S, dy.tour, i); const [x] = dy.tour.splice(i, 1);
+      dy.drive -= g; dy.work -= x.min; removed.push({ d, i, x, g }); delta += dy.drive + dayCost(dy, dy.work, dy.drive, o) - b; }
     return { removed, delta }; };
   const restore = (removed) => { for (const r of [...removed].reverse()) { const dy = S.days.get(r.d); dy.tour.splice(r.i, 0, r.x); dy.drive += r.g; dy.work += r.x.min; } };
   const costOf = (occ) => { // indsæt midlertidigt pr. dato (billigste indsættelse, ét stop ad gangen) og fjern igen
     const byDate = new Map(); for (const c of occ) byDate.set(c.date, [...(byDate.get(c.date) || []), c]);
-    let s = 0; for (const [d, cs] of byDate) { const dy = S.day(d); const T0 = total(dy); let ic = 0, min = 0; const added = [];
+    let s = 0; for (const [d, cs] of byDate) { const dy = S.day(d); let ic = 0, min = 0; const added = [];
       for (const c of cs) { const x = insertCost(S, dy.tour, c.pt); const e = { pt: c.pt, min: c.min, item: '~' }; dy.tour.splice(x.at, 0, e); added.push(e); ic += x.cost; min += c.min; }
       dy.tour = dy.tour.filter((e) => !added.includes(e));
-      s += ic + dayPenalty(T0 + ic + min, o) - dayPenalty(T0, o); }
+      s += ic + dayCost(dy, dy.work + min, dy.drive + ic, o) - dayCost(dy, dy.work, dy.drive, o); }
     return s; };
   const place = (key, occ) => { for (const c of occ) { const dy = S.day(c.date); const { cost, at } = insertCost(S, dy.tour, c.pt); dy.tour.splice(at, 0, { pt: c.pt, min: c.min, item: key }); dy.drive += cost; dy.work += c.min; } };
   // naboer (≤ nearMin minutters kørsel) – til samlede flytninger, så en hel klynge kan skifte dag

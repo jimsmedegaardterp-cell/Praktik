@@ -15,7 +15,7 @@ import { showRouteMap } from './map.js';
 import * as KV from './store.js';
 import * as O from './optimizer.js';
 
-export const VERSION = '2026-11-07 #71';
+export const VERSION = '2026-11-07 #72';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -1143,7 +1143,7 @@ function ruteOversigt() {
  * Flytter kunder mellem de faste ruter/dage (højst 4 dage tilbage / 10 frem), så dagene bliver ca. 7–8 timer inkl. kørsel.
  * Intet ændres før "Gennemfør". Kræver kontrolleret backup; en fuld kopi gemmes også på enheden til "Fortryd".
  */
-const optState = () => (ui.opt ||= { start: D.addDays(mondayOf(todayIso()), 7), excl: new Set(), ign: new Set(db.routes.filter((r) => /tagrende/i.test(r.name)).map((r) => r.id)), minH: 7, maxH: 8, factor: db.settings.driveFactor || 1, backupOk: false, g: {} });
+const optState = () => (ui.opt ||= { start: D.addDays(mondayOf(todayIso()), 7), excl: new Set(), ign: new Set(db.routes.filter((r) => /tagrende/i.test(r.name)).map((r) => r.id)), minH: 5, maxH: 7.5, factor: db.settings.driveFactor || 1, backupOk: false, g: {} });
 const optOpts = () => { const o = optState(); return { start: o.start, startPoint: startPoint(), excludeRouteIds: [...o.excl], ignoreRouteIds: [...o.ign], minDay: o.minH * 60, maxDay: o.maxH * 60, factor: o.factor }; };
 function optProblem() { return O.buildProblem(db, optOpts()); }
 /** Kør (fase 2 igen hvis ruteflytninger er fravalgt). */
@@ -1181,7 +1181,7 @@ function optimView() {
   const tot = (x) => (x ? x.work + x.drive : 0);
   const cls = (m) => (m > o.maxH * 60 ? 'color:var(--bad);font-weight:700' : m && m < o.minH * 60 ? 'color:#b7791f' : '');
   const runs = (d) => db.routes.filter((r) => D.routeRuns(r, d)).map((r) => r.name).join(', ');
-  const kpi = (x) => x ? `Kørsel ${h(x.drive)} · Overtid ${h(x.over)} · Under ${o.minH} t: ${h(x.under)}` : '';
+  const kpi = (x) => x ? `Kørsel ${h(x.drive)} · Overtid ${h(x.over)} · ${Object.keys(x.perDate).length} arbejdsdage` : '';
   const dates = res ? [...new Set([...Object.keys(res.before.perDate), ...Object.keys(ev.perDate)])].sort() : [];
   const nOver = (x) => Object.values(x.perDate).filter((d) => tot(d) > o.maxH * 60).length;
   $view.innerHTML = kTabs() + `<div class="card"><div class="row"><h2 class="sp">✨ Optimér alle ruter (forsøg)</h2><button data-act="kview" data-v="ruter">← Faste ruter</button></div>
@@ -1191,7 +1191,8 @@ function optimView() {
     <h3>1. Backup</h3>
     <div class="row"><button data-act="backup">⬇ Download backup</button><label class="btn">Kontrollér backup-filen…<input type="file" id="optBk" accept=".json" hidden></label>${o.backupOk ? '<span class="pill ok">✓ Backup kontrolleret – den svarer præcis til data nu</span>' : '<span class="pill warn">Ikke kontrolleret</span>'}</div>
     <h3>2. Indstillinger</h3>
-    <div class="row"><label>Første dag der må ændres <input type="date" id="optStart" value="${o.start}"></label><label>Dag mindst <input type="number" id="optMin" value="${o.minH}" step="0.5" style="width:70px"> t</label><label>højst <input type="number" id="optMax" value="${o.maxH}" step="0.5" style="width:70px"> t</label></div>
+    <div class="row"><label>Første dag der må ændres <input type="date" id="optStart" value="${o.start}"></label><label>Dag højst <input type="number" id="optMax" value="${o.maxH}" step="0.25" style="width:70px"> t (inkl. kørsel)</label></div>
+    <p class="small mute">Hellere flere og lidt kortere dage end få lange. Arbejdet rykkes så vidt muligt frem mod første dag, så der ikke står tomme dage før fyldte. Kunderne må lægges på enhver hverdag i vinduet – også dage uden ruter.</p>
     <div class="row small">Udføres af en anden (flyttes ikke og tæller ikke med): ${db.routes.map((r) => `<label><input type="checkbox" data-optign="${r.id}" ${o.ign.has(r.id) ? 'checked' : ''}> ${esc(r.name)}</label>`).join(' ')}</div>
     <div class="row small">Flyttes ikke (tiden tæller med): ${db.routes.filter((r) => !o.ign.has(r.id)).map((r) => `<label><input type="checkbox" data-optexcl="${r.id}" ${o.excl.has(r.id) ? 'checked' : ''}> ${esc(r.name)}</label>`).join(' ')}</div>
     <div class="row"><span class="small">Kørsels-skøn: luftlinje × 1,3 ved 50 km/t × <b>${o.factor.toFixed(2)}</b>${o.calib ? ` <span class="mute">(målt mod Google på ${o.calib.n} dage: ${o.calib.txt})</span>` : ''}</span>${hasG ? `<button data-act="optCalib" ${o.busy ? 'disabled' : ''}>📏 Kalibrér mod Google</button>` : '<span class="small mute">(sæt Google-nøgle for at kalibrere)</span>'}</div>

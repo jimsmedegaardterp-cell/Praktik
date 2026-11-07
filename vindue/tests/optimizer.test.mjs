@@ -158,3 +158,27 @@ test('optimering: dyb søgning (annealing) er aldrig dårligere end den hurtige'
   const a = O.optimizeAll(db, base); const b = O.optimizeAll(db, { ...base, saMs: 600 });
   assert.ok(b.after.objective <= a.after.objective + 1, `${b.after.objective} vs ${a.after.objective}`);
 });
+
+test('optimering: tom mandag og fire overfyldte dage – arbejdet fordeles og rykkes frem', () => {
+  const db = S.emptyDb(); const days = ['2027-03-02', '2027-03-03', '2027-03-04', '2027-03-05'];
+  db.routes = days.map((d, k) => ({ id: 'R' + k, name: 'R' + k, intervalWeeks: 4, anchorDate: d, order: [] }));
+  let i = 0;
+  days.forEach((d, k) => { for (let j = 0; j < 22; j++) { i++; db.addresses.push({ id: 'ad' + i, customerId: 'c' + i, street: 'V' + i, lat: 57.40 + k * 0.05 + j * 0.001, lng: 10.0 + k * 0.08 });
+    db.agreements.push({ id: 'ag' + i, customerId: 'c' + i, addressId: 'ad' + i, routeId: 'R' + k, service: 'V', price: 200, intervalWeeks: 4, durationMin: 20, anchorDate: d, seasonMonths: [], active: true }); } });
+  S.planAhead(db, '2027-12-31', '2027-01-01');
+  const r = O.optimizeAll(db, { start: START, startPoint: { lat: 57.47, lng: 10.2 }, maxDay: 450, saMs: 800 });
+  const T = (s, d) => (s.perDate[d] ? s.perDate[d].work + s.perDate[d].drive : 0);
+  const wk = ['2027-03-01', ...days];
+  assert.ok(wk.some((d) => T(r.before, d) > 470), 'før: overfyldte dage');
+  assert.ok(T(r.after, '2027-03-01') > 120, 'mandag bruges: ' + wk.map((d) => T(r.after, d)).join(','));
+  assert.ok(wk.every((d) => T(r.after, d) <= 465), 'ingen dag over grænsen: ' + wk.map((d) => T(r.after, d)).join(','));
+});
+
+test('optimering: en flytning ændrer aldrig antallet af besøg (sæson og periodens slutning)', () => {
+  const db = mkDb(); const r = db.routes.find((x) => x.id === 'B');
+  db.addresses.push({ id: 'ads', customerId: 'cs', street: 'Sommerhus', lat: 57.5, lng: 10.2 });
+  db.agreements.push({ id: 'ags', customerId: 'cs', addressId: 'ads', routeId: 'B', service: 'V', price: 1, intervalWeeks: 12, durationMin: 30, anchorDate: '2027-04-28', seasonMonths: [4, 5, 6, 7, 8, 9, 10, 11], active: true });
+  S.planAhead(db, '2027-12-31', '2027-01-01');
+  const P = O.buildProblem(db, { ...opts, start: '2027-04-26' });
+  for (const it of P.items) for (const c of it.cands) assert.equal(c.occ.length, it.cur.length, it.key);
+});
