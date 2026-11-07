@@ -24,6 +24,15 @@
 - [ ] Konfliktvisning når to enheder ændrer samme post
 - [ ] Backup/gendannelse fra Supabase testet
 
+## Skift til rigtigt e-conomic-regnskab (når ruterne er på plads)
+- [ ] Kundenumre: appens kundenr. (fra SkvizBiz) skal være de samme som i det rigtige e-conomic, ellers oprettes kunderne igen
+- [ ] Skæringsdato: SkvizBiz fakturerer i sit eget program – fra datoen fakturerer appen, ikke SkvizBiz
+- [ ] Ny grant-token til det rigtige regnskab i Supabase-secrets; én testfaktura til sig selv (layout, moms, betalingsbetingelser, mail)
+- [ ] FI-kort (+71) på fakturaen, så bankindbetalinger afstemmes automatisk (SKAL VERIFICERES i e-conomic)
+- [ ] MobilePay MyShop: udbetales som ét samlet beløb pr. dag → kan ikke afstemmes pr. faktura af e-conomic alene.
+      Muligheder: færdig app i e-conomics app-butik (fx "MobilePay til e-conomic" fra 2apps, Kontolink – pris og MyShop-understøttelse SKAL VERIFICERES)
+      eller egen kobling via Vipps MobilePay Report API (om MyShop er med SKAL VERIFICERES)
+
 ## e-conomic – SKAL VERIFICERES i prøve-regnskab
 - [ ] Opret kunde (PUT ved opdatering bevarer øvrige felter?)
 - [x] Fortegn rettet til negativt (positivt øgede saldoen) – [ ] bekræft at saldo bliver 0 efter ny test
