@@ -345,6 +345,34 @@ export function moveToRoute(db, user, agreementIds, routeId, todayIso, untilIso)
   return { moved, visits, anchor };
 }
 
+/** Sæt en adresse ind i rutens faste rækkefølge, hvor den giver mindst omvej (luftlinje). */
+export function insertIntoRouteOrder(db, r, addressId) {
+  const addrOf = (id) => db.addresses.find((a) => a.id === id);
+  const dist = (x, y) => { const a = addrOf(x), b = addrOf(y); if (a?.lat == null || b?.lat == null) return 0; const dx = (a.lng - b.lng) * Math.cos(a.lat * Math.PI / 180), dy = a.lat - b.lat; return Math.hypot(dx, dy); };
+  const o = (r.order || []).filter((x) => x !== addressId); let at = o.length, best = Infinity;
+  for (let i = 0; i <= o.length; i++) { const c = (i ? dist(o[i - 1], addressId) : 0) + (i < o.length ? dist(addressId, o[i]) : 0) - (i && i < o.length ? dist(o[i - 1], o[i]) : 0); if (c < best) { best = c; at = i; } }
+  o.splice(at, 0, addressId); r.order = o;
+}
+/**
+ * Træk en kunde over i en anden rute i kalenderen.
+ * permanent=false: kun dette besøg køres med ruten den dag. permanent=true: aftalen flyttes til ruten, og serien rykkes, så besøget lander på dagen.
+ */
+export function moveVisitToRoute(db, user, visitId, routeId, dateIso, permanent) {
+  require_(user, 'visit.move');
+  const v = db.visits.find((x) => x.id === visitId); if (!v) throw new Error('Besøg findes ikke');
+  const r = db.routes.find((x) => x.id === routeId); if (!r) throw new Error('Ukendt rute');
+  const a = db.agreements.find((x) => x.id === v.agreementId);
+  if (!permanent || !a?.intervalWeeks) { moveVisit(db, user, visitId, dateIso, 'keep'); const nv = db.visits.find((x) => x.id === visitId); nv.routeId = routeId; audit(db, user.id, 'visit.moveRoute', visitId, { routeId, date: dateIso, permanent: false }); return nv; }
+  const oldRoute = a.routeId;
+  moveVisit(db, user, visitId, dateIso, 'shift');
+  const a2 = db.agreements.find((x) => x.id === v.agreementId); a2.routeId = routeId;
+  for (const x of db.visits) if (x.agreementId === a2.id && (x.status === 'planlagt' || x.status === 'udsat') && x.plannedDate >= dateIso) x.routeId = routeId;
+  insertIntoRouteOrder(db, r, a2.addressId);
+  const or = db.routes.find((x) => x.id === oldRoute);
+  if (or?.order && !db.agreements.some((x) => x.routeId === or.id && x.addressId === a2.addressId)) or.order = or.order.filter((x) => x !== a2.addressId);
+  audit(db, user.id, 'visit.moveRoute', visitId, { routeId, date: dateIso, permanent: true });
+  return db.visits.find((x) => x.id === visitId);
+}
 /**
  * Ruteoptimering: flyt kunder til ny rute + ny dato (moves fra optimizer.runOptimizer).
  * Fremtidige planlagte (ikke-manuelle) besøg fra startIso fjernes og dannes igen ud fra den nye ankerdato.
@@ -434,7 +462,7 @@ export function removePhrase(db, user, phrase, onlyIds) {
  */
 const cityOf = (street) => ((String(street || '').match(/\b\d{4}\s+([^,]+)$/) || [])[1] || '').trim();
 export function cycleFor(intervalWeeks) { const i = intervalWeeks; return i % 4 === 0 ? 4 : i % 2 === 0 ? 2 : i; }
-export function planRoutesFromCalendar(db, { fromIso, excludeRouteIds = [], startPoint = null } = {}) {
+export function planRoutesFromCalendar(db, { fromIso, excludeRouteIds = [], startPoint = null, defaultEmployeeId = null } = {}) {
   const excl = new Set(excludeRouteIds); const BASE = '2000-01-03';
   const addrOf = (id) => db.addresses.find((a) => a.id === id);
   const groups = new Map(); let untouched = 0;
@@ -463,7 +491,7 @@ export function planRoutesFromCalendar(db, { fromIso, excludeRouteIds = [], star
     const pts = addrIds.map((id) => ({ id, a: addrOf(id) })); const withLL = pts.filter((p) => p.a?.lat != null);
     g.order = [...localOptimal(withLL, (p) => p.a, startPoint), ...pts.filter((p) => p.a?.lat == null).map((p) => p.id)];
     const emp = {}; for (const a of ags) { const e = db.routes.find((r) => r.id === a.routeId)?.employeeId; if (e) emp[e] = (emp[e] || 0) + 1; }
-    g.employeeId = g.reuse ? db.routes.find((r) => r.id === g.reuse).employeeId : Object.entries(emp).sort((x, y) => y[1] - x[1])[0]?.[0] || null;
+    g.employeeId = g.reuse ? db.routes.find((r) => r.id === g.reuse).employeeId : defaultEmployeeId || Object.entries(emp).sort((x, y) => y[1] - x[1])[0]?.[0] || null;
     g.n = addrIds.length; g.min = ags.reduce((s, a) => s + (a.durationMin ?? 15), 0);
   }
   const involved = new Set(list.flatMap((g) => Object.keys(g.from)));

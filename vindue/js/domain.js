@@ -69,6 +69,14 @@ export function plannedFor(r, extraClosed = []) {
   const k = c.wk.get(d); let guard = 0; while (c.open.length <= k && guard++ < 5000) step();
   return c.open[k];
 }
+/** Omvendt: hvilken rytmedato giver denne planlagte dato? (bruges når en serie flyttes permanent til en valgt dato) */
+export function rhythmFor(p, extraClosed = []) {
+  if (!SHIFT_FROM || p < SHIFT_FROM) return p;
+  const c = conveyor(extraClosed); plannedFor(p, extraClosed); // sørg for at tabellerne når datoen
+  let k = c.open.indexOf(p); if (k < 0) return p; // lukkedag/weekend valgt med vilje
+  for (const [d, i] of c.wk) if (i === k) return d;
+  return p;
+}
 
 /* ---------------- Besøgsplan ----------------
  * En aftale har en grundrytme: anchorDate + k * intervalWeeks.
@@ -151,13 +159,14 @@ export function moveVisit(visits, agreement, visitId, newDate, mode, { by, at },
   if (!v) throw new Error('Besøg findes ikke');
   if (v.status !== 'planlagt' && v.status !== 'udsat') throw new Error('Kun planlagte/udsatte besøg kan flyttes');
   const delta = diffDays(v.plannedDate, newDate);
-  const log = (x, from) => [...x.history, { at, by, action: 'flyttet', from, to: x.plannedDate, mode }];
+  // 'flyttet' = flyttet i hånden én gang (holdes uden for helligdags-genberegning); 'forskudt' = rytmen er ændret
+  const log = (x, from) => [...x.history, { at, by, action: mode === 'keep' ? 'flyttet' : 'forskudt', from, to: x.plannedDate, mode }];
   if (mode === 'keep') {
     return { agreement, visits: visits.map((x) => x.id === visitId
       ? (() => { const n = { ...x, plannedDate: newDate, status: 'planlagt' }; n.history = log(n, x.plannedDate); return n; })() : x) };
   }
   if (mode !== 'shift') throw new Error('Ukendt flyttetype');
-  const rDelta = diffDays(v.rhythmDate, newDate); // ny grundrytme starter på den valgte dato
+  const rDelta = diffDays(v.rhythmDate, rhythmFor(newDate, extraClosed)); // ny grundrytme, så besøget lander på den valgte dato
   const ag = { ...agreement, anchorDate: addDays(agreement.anchorDate, rDelta) };
   return { agreement: ag, visits: visits.map((x) => {
     if (x.agreementId !== agreement.id || x.seriesIndex < v.seriesIndex) return x;

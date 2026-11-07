@@ -10,12 +10,13 @@
 //  - Ruter i `ignoreRouteIds` (Tagrenderens – udføres af en anden) flyttes ikke og tæller ikke med.
 //  - Hele ruter kan også flyttes (fase 1: alle rutens kunder samme antal dage, inden for samme vindue);
 //    derefter flyttes enkeltkunder (fase 2) oven på ruteflytningerne.
+//  - Dage under minimum (og tomme dage) undgås, så længe der er arbejde senere, der kan trækkes frem.
 //  - Én person, man–fre. Dagens tid = arbejde + kørsel (start → stop → start).
 //  - Kørsel skønnes med luftlinje × 1,3 ved 50 km/t × kalibreringsfaktor (målt mod Google).
 import * as D from './domain.js';
 import { km, optimize } from './dayplan.js';
 
-export const DEFAULTS = { horizonDays: 84, windowBack: 4, windowFwd: 10, minDay: 420, maxDay: 450, underW: 0.02, early: 0.02, emptyDay: 0, gap: 60, gapDays: 5, lightDay: 180, factor: 1, moveCost: 10, routeMoveCost: 30, timeMs: 4000, saMs: 0 };
+export const DEFAULTS = { horizonDays: 84, windowBack: 4, windowFwd: 10, minDay: 300, maxDay: 450, underW: 0, early: 0.02, emptyDay: 0, gap: 60, gapDays: 5, shortW: 0.8, factor: 1, moveCost: 10, routeMoveCost: 30, timeMs: 4000, saMs: 0 };
 const legMin = (a, b, f) => { const k = km(a, b); return k == null ? 0 : (k * 1.3) / 50 * 60 * f; };
 /** Strafpoint for en dags samlede minutter (0 = fridag, ingen straf). */
 export function dayPenalty(T, o = DEFAULTS) {
@@ -139,10 +140,13 @@ function makeState(P) {
   const days = new Map(P.dates.map((d) => [d, { tour: [], work: 0, drive: 0, idx: ix(d) }]));
   const day = (d) => { if (!days.has(d)) days.set(d, { tour: [], work: 0, drive: 0, idx: ix(d) }); return days.get(d); };
   // "huller": en tom hverdag med fulde dage lige efter (inden for gapDays hverdage) koster o.gap
-  const list = [...P.dates].sort(); const pos = new Map(list.map((d, i) => [d, i])); const o = P.opts; const K = o.gapDays ?? 5; const full = (o.maxDay ?? 450) - 60;
+  const list = [...P.dates].sort(); const pos = new Map(list.map((d, i) => [d, i])); const o = P.opts; const K = o.gapDays ?? 5; const minD = o.minDay ?? 300;
   const Tof = (d, ov) => (ov && ov.has(d) ? ov.get(d) : (days.get(d) ? days.get(d).work + days.get(d).drive : 0));
-  const light = o.lightDay ?? 180; // en dag med under 3 timer tæller også som et hul (ellers kunne én kunde 'fylde' en tom dag)
-  const gapAt = (i, ov) => { if (!o.gap || Tof(list[i], ov) >= light) return 0; for (let j = i + 1; j <= i + K && j < list.length; j++) if (Tof(list[j], ov) >= full) return o.gap; return 0; };
+  // En dag under minimum (eller tom) koster kun noget, hvis der ligger arbejde på de næste dage, som kunne trækkes frem.
+  // Tomme dage er altså i orden til sidst – når alt er taget – men ikke i første uge. Tom: o.gap. Kort: (minimum − tid) × shortW.
+  const gapAt = (i, ov) => { const T = Tof(list[i], ov); if (!o.gap || T >= minD) return 0;
+    let later = false; for (let j = i + 1; j <= i + K && j < list.length; j++) if (Tof(list[j], ov) > 0) { later = true; break; }
+    return later ? (minD - T) * (o.shortW ?? 0.8) + o.gap : 0; }; // samme grundstraf for tom og kort dag – så én kunde aldrig 'fylder' en dag
   const affected = (dates) => { const a = new Set(); for (const d of dates) { const p = pos.get(d); if (p == null) continue; for (let j = Math.max(0, p - K); j <= p; j++) a.add(j); } return a; };
   const gapSum = (aff, ov) => { let s = 0; for (const i of aff) s += gapAt(i, ov); return s; };
   const gapAll = () => { let s = 0; for (let i = 0; i < list.length; i++) s += gapAt(i); return s; };

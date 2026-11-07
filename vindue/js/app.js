@@ -15,7 +15,7 @@ import { showRouteMap } from './map.js';
 import * as KV from './store.js';
 import * as O from './optimizer.js';
 
-export const VERSION = '2026-11-07 #82';
+export const VERSION = '2026-11-07 #84';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -140,7 +140,7 @@ function overblik() {
   const unread = db.smsMessages.filter((m) => m.dir === 'ind' && !m.read);
   const open = db.invoiceLinks.filter((l) => l.status === 'bogført' && l.payment !== 'betalt');
   const errs = db.invoiceLinks.filter((l) => l.status === 'fejl').length + db.smsMessages.filter((m) => m.status === 'fejlet').length;
-  const dbl = D.findDoubleBookings(db.visits.filter((v) => v.plannedDate >= t));
+  const dbl = dblGroups();
   const overdue = db.visits.filter((v) => (v.status === 'planlagt' || v.status === 'udsat') && v.plannedDate < t);
   $view.innerHTML = `
   <div class="grid">
@@ -459,7 +459,7 @@ function alertsStrip() {
   const sent = new Set(db.smsMessages.filter((m) => m.clientRef?.startsWith('varsel:')).map((m) => m.clientRef.slice(7)));
   const left = tm.filter((v) => !sent.has(v.id) && D.normalizePhone(cust(v.customerId)?.phone)).length;
   if (left) out.push(`<span class="alert">📱 SMS til ${fmt(nd)}: ${left} mangler <button data-act="smsTomorrow">Send</button></span>`);
-  const dbl = D.findDoubleBookings(db.visits.filter((v) => v.plannedDate >= t));
+  const dbl = dblGroups();
   if (dbl.length && isAdmin()) out.push(`<span class="alert">⚠️ ${dbl.length} mulige dobbeltbookinger <button data-act="showDbl">Vis</button></span>`);
   if (isAdmin()) {
     const fl = db.visits.filter(isFlagged);
@@ -585,7 +585,8 @@ function kalender() {
     d.addEventListener('drop', (ev) => { ev.preventDefault(); d.classList.remove('drop'); const id = ev.dataTransfer.getData('text/plain');
       if (id.startsWith('many:')) { const vs2 = id.slice(5).split(',').map((x) => db.visits.find((v) => v.id === x)).filter(Boolean); ui.visSel = new Set(); bulkDialog(vs2, `Flyt ${vs2.length} kunder`, d.dataset.day); }
       else if (id.startsWith('route:')) { const [rid, from] = id.slice(6).split('|'); if (from !== d.dataset.day) bulkDialog(db.visits.filter((v) => v.routeId === rid && v.plannedDate === from), `Flyt ${route(rid).name} fra ${fmt(from)}`, d.dataset.day); }
-      else if (id) moveDialog(id, d.dataset.day); });
+      else if (id) { const blk = ev.target.closest('.rblock[data-rsel]'); const v = db.visits.find((x) => x.id === id); const [rid, rday] = blk ? blk.dataset.rsel.split('|') : [];
+        if (blk && v && rid && rid !== v.routeId) routeDropDialog(id, rid, rday); else moveDialog(id, d.dataset.day); } });
   });
 }
 function visitDialog(id) {
@@ -596,18 +597,28 @@ function visitDialog(id) {
     ${isAdmin() ? `<div class="row"><button type="button" data-act="obsEdit" data-a="${v.addressId}" data-c="${c.id}">✏ Beskrivelse og OBS</button><button type="button" data-act="moveFromDlg" data-id="${id}">Flyt…</button><button type="button" data-act="cancelVisit" data-id="${id}" class="bad">Aflys</button><button type="button" data-cust="${c.id}">Kundekort</button></div>` : ''}${isFlagged(v) ? `<p class="warn-t small">🔔 Meldt udsat af ${esc(v.flag.byName || '')}${v.flag.note ? ': ' + esc(v.flag.note) : ''}</p>` : ''}
     <h3>Historik</h3>${v.history.map((h) => `<div class="small">${esc(h.at?.slice?.(0, 16) ?? '')} · ${esc(h.action)} ${h.from ? esc(h.from) + ' → ' + esc(h.to) : ''} ${esc(h.note ?? '')}</div>`).join('') || '<div class="small mute">Ingen</div>'}`, null, 'Luk');
 }
+/** Kunde trukket over i en anden rute: kun denne gang eller fremover på den rute. */
+function routeDropDialog(id, rid, day) {
+  const v = db.visits.find((x) => x.id === id); const c = cust(v.customerId); const r = route(rid); const old = route(v.routeId); const a = db.agreements.find((x) => x.id === v.agreementId);
+  const fits = !a?.intervalWeeks || !r.intervalWeeks || a.intervalWeeks % r.intervalWeeks === 0;
+  openDlg(`<h2>Flyt ${esc(c.name)} til ${esc(r.name)} ${fmt(day)}</h2><p class="small mute">${esc(addr(v.addressId)?.street)}${old ? ` · står nu på ${esc(old.name)}` : ''}</p>
+    <label><input type="radio" name="mode" value="once" checked> <b>Kun denne gang</b> – køres med ${esc(r.name)} ${fmt(day)}; næste gang som normalt${old ? ` på ${esc(old.name)}` : ''}</label>
+    <label><input type="radio" name="mode" value="perm" ${a?.intervalWeeks ? '' : 'disabled'}> <b>Fremover</b> – kunden flyttes til ${esc(r.name)} og kommer med den hver gang (fra ${fmt(day)})</label>
+    ${fits ? '' : `<p class="small warn-t">⚠ Kundens interval (${a.intervalWeeks} uger) passer ikke med rutens (${r.intervalWeeks} uger) – fremover kan kunden ikke altid følge ruten.</p>`}`,
+  (f) => { S.moveVisitToRoute(db, ui.user, id, rid, day, f.mode === 'perm'); toast(f.mode === 'perm' ? `${c.name} kører nu med ${r.name} fremover` : `${c.name} kører med ${r.name} ${fmt(day)} – kun denne gang`); });
+}
 function moveDialog(id, newDate) {
   const v = db.visits.find((x) => x.id === id);
   openDlg(`<h2>Flyt besøg – ${esc(cust(v.customerId).name)}</h2>
     <label><span>Ny dato</span><input type="date" name="date" value="${newDate || v.plannedDate}" required></label>
-    <label><input type="radio" name="mode" value="keep" checked> <b>Behold grundrytmen</b> – kun dette besøg flyttes</label>
-    <label><input type="radio" name="mode" value="shift"> <b>Forskyd hele serien</b> – alle senere besøg flyttes tilsvarende</label>
+    <label><input type="radio" name="mode" value="keep" checked> <b>Kun denne gang</b> – næste besøg kommer som planlagt</label>
+    <label><input type="radio" name="mode" value="shift"> <b>Permanent</b> – også alle senere besøg rykker tilsvarende</label>
     <label><input type="checkbox" name="notify"> Send SMS til kunden om ny dato (mock)</label>`,
   async (f) => {
     if (D.isClosedDay(f.date, db.closedDays) && !confirm('Datoen er en lukkedag/weekend. Flyt alligevel?')) return false;
     S.moveVisit(db, ui.user, id, f.date, f.mode);
     if (f.notify) await S.sendSms(db, ui.user, { customerId: v.customerId, text: `Hej ${cust(v.customerId).name.split(' ')[0]}. Vores besøg er flyttet til ${fmt(f.date)}. Svar gerne hvis det ikke passer. Mvh. Sindal Vinduespolering` }, sms);
-    toast(f.mode === 'shift' ? 'Serien er forskudt' : 'Besøget er flyttet');
+    toast(f.mode === 'shift' ? 'Flyttet permanent – også senere besøg' : 'Flyttet – kun denne gang');
   });
 }
 
@@ -616,8 +627,8 @@ function bulkDialog(vs, title, presetDate) {
   if (!vs.length) return toast('Vælg mindst ét planlagt besøg');
   const from = vs[0].plannedDate; const nd = presetDate || D.nextWorkday(D.addDays(from, 1), db.closedDays);
   openDlg(`<h2>${esc(title)} – ${vs.length} besøg</h2>
-    <label><input type="radio" name="mode" value="keep" checked> <b>Flyt til</b> <input type="date" name="date" value="${nd}"> – kundernes rytme bevares</label>
-    <label><input type="radio" name="mode" value="shift"> <b>Flyt og forskyd</b> til samme dato – deres næste besøg rykker også</label>
+    <label><input type="radio" name="mode" value="keep" checked> <b>Kun denne gang:</b> flyt til <input type="date" name="date" value="${nd}"> – næste besøg kommer som planlagt</label>
+    <label><input type="radio" name="mode" value="shift"> <b>Permanent:</b> flyt til samme dato – også alle senere besøg rykker tilsvarende</label>
     <label><input type="radio" name="mode" value="udfoert"> <b>Marker udført</b></label>
     <label><input type="radio" name="mode" value="skip"> <b>Aflys</b> – kunderne får næste besøg i rytmen</label>
     <label><span>Bemærkning</span><input name="note"></label>
@@ -683,11 +694,17 @@ function checkDialog() {
     ${sec.map(([title, items], i) => `<details ${i < 2 && items.length && !title.startsWith('ℹ️') ? 'open' : ''}><summary><b>${title}</b> (${items.length})</summary>${items.length ? `<table>${items.slice(0, 300).map((x) => `<tr class="small"><td>${x.c ? `<a href="#" data-cust="${x.c.id}">${esc(x.c.name)}</a>` : `<a href="#" data-route="${x.r.id}">${esc(x.r.name)}</a>`}${(x.others || []).map((o) => ` · <a href="#" data-cust="${o.id}">${esc(o.name)}</a>`).join('')}</td><td>${esc(x.txt)}</td></tr>`).join('')}</table>` : '<p class="small mute">Ingen 👍</p>'}</details>`).join('')}
     ${(db.imports || []).some((b) => b.issues?.length) ? '<p><button type="button" data-act="showIssues">Vis advarsler fra importen</button></p>' : ''}`, null, 'Luk');
 }
+/** Mulige dobbeltbookinger – uden dem du har godkendt ("Det er i orden") og uden ruter der udføres af en anden (Tagrenderens). */
+const dblKey = (ids) => [...ids].sort().join(',');
+function dblGroups() {
+  const other = (v) => /tagrende/i.test(route(v.routeId)?.name || ''); const ok = new Set(db.settings.dblOk || []);
+  return D.findDoubleBookings(db.visits.filter((v) => v.plannedDate >= todayIso() && !other(v))).filter((ids) => !ok.has(dblKey(ids)));
+}
 function dblDialog() {
-  const groups = D.findDoubleBookings(db.visits.filter((v) => v.plannedDate >= todayIso()));
+  const groups = dblGroups();
   openDlg(`<h2>Mulige dobbeltbookinger (${groups.length})</h2><p class="small mute">Samme adresse samme dag med samme opgave to gange, eller på to forskellige ruter. Aflys det besøg, der er forkert, eller ret aftalen på kundekortet.</p>
     ${groups.map((ids) => { const vs = ids.map((id) => db.visits.find((v) => v.id === id)); const c = cust(vs[0].customerId);
-      return `<div class="card" style="padding:10px"><div class="row"><b class="sp"><a href="#" data-cust="${c.id}">${esc(c.name)}</a> · ${fmt(vs[0].plannedDate)} ${vs[0].plannedDate.slice(0, 4)}</b></div><div class="small mute">${esc(addr(vs[0].addressId)?.street)}</div>
+      return `<div class="card" style="padding:10px"><div class="row"><b class="sp"><a href="#" data-cust="${c.id}">${esc(c.name)}</a> · ${fmt(vs[0].plannedDate)} ${vs[0].plannedDate.slice(0, 4)}</b><button type="button" class="small" data-act="dblOk" data-id="${esc(dblKey(ids))}">✓ Det er i orden</button></div><div class="small mute">${esc(addr(vs[0].addressId)?.street)}</div>
       <table>${vs.map((v) => `<tr class="small"><td>${esc(v.service)}</td><td>${esc(route(v.routeId)?.name ?? 'Uden rute')}</td><td>${kr(v.price)}</td><td>${v.manual ? 'manuelt booket' : 'fast aftale'}</td><td>${v.status === 'planlagt' ? `<button type="button" class="bad" data-act="dblCancel" data-id="${v.id}">Aflys dette</button>` : pill(v.status)}</td></tr>`).join('')}</table></div>`; }).join('') || '<p class="mute">Ingen.</p>'}`, null, 'Luk');
 }
 function issuesDialog(batchId) {
@@ -1209,8 +1226,8 @@ function optimView() {
     <h3>1. Backup</h3>
     <div class="row"><button data-act="backup">⬇ Download backup</button><label class="btn">Kontrollér backup-filen…<input type="file" id="optBk" accept=".json" hidden></label>${o.backupOk ? '<span class="pill ok">✓ Backup kontrolleret – den svarer præcis til data nu</span>' : '<span class="pill warn">Ikke kontrolleret</span>'}</div>
     <h3>2. Indstillinger</h3>
-    <div class="row"><label>Første dag der må ændres <input type="date" id="optStart" value="${o.start}"></label><label>Dag højst <input type="number" id="optMax" value="${o.maxH}" step="0.25" style="width:70px"> t (inkl. kørsel)</label></div>
-    <p class="small mute">Hellere flere og lidt kortere dage end få lange. Arbejdet rykkes så vidt muligt frem mod første dag, så der ikke står tomme dage før fyldte. Kunderne må lægges på enhver hverdag i vinduet – også dage uden ruter.</p>
+    <div class="row"><label>Første dag der må ændres <input type="date" id="optStart" value="${o.start}"></label><label>Dag mindst <input type="number" id="optMin" value="${o.minH}" step="0.5" min="0" style="width:70px"> t</label><label>højst <input type="number" id="optMax" value="${o.maxH}" step="0.25" style="width:70px"> t (inkl. kørsel)</label></div>
+    <p class="small mute">Dage under minimum (og tomme dage) undgås, så længe der ligger arbejde de næste dage, der kan trækkes frem – tomme dage kommer først, når alt er taget. Jo højere minimum, jo mere kørsel kan det koste. Kunderne må lægges på enhver hverdag i vinduet – også dage uden ruter.</p>
     <div class="row small">Udføres af en anden (flyttes ikke og tæller ikke med): ${db.routes.map((r) => `<label><input type="checkbox" data-optign="${r.id}" ${o.ign.has(r.id) ? 'checked' : ''}> ${esc(r.name)}</label>`).join(' ')}</div>
     <div class="row small">Flyttes ikke (tiden tæller med): ${db.routes.filter((r) => !o.ign.has(r.id)).map((r) => `<label><input type="checkbox" data-optexcl="${r.id}" ${o.excl.has(r.id) ? 'checked' : ''}> ${esc(r.name)}</label>`).join(' ')}</div>
     <div class="row"><span class="small">Kørsels-skøn: luftlinje × 1,3 ved 50 km/t × <b>${o.factor.toFixed(2)}</b>${o.calib ? ` <span class="mute">(målt mod Google på ${o.calib.n} dage: ${o.calib.txt})</span>` : ''}</span>${hasG ? `<button data-act="optCalib" ${o.busy ? 'disabled' : ''}>📏 Kalibrér mod Google</button>` : '<span class="small mute">(sæt Google-nøgle for at kalibrere)</span>'}</div>
@@ -1241,7 +1258,7 @@ function optimView() {
   const wq = document.getElementById('optWhyQ'); if (wq) wq.oninput = () => { o.whyQ = wq.value; render(); const n = document.getElementById('optWhyQ'); n.focus(); n.setSelectionRange(n.value.length, n.value.length); };
   const ch = (id, fn) => { const el = document.getElementById(id); if (el) el.onchange = () => { fn(el.value); o.res = null; o._wP = null; render(); }; };
   ch('optStart', (v) => { if (v) o.start = v; });
-  ch('optMin', (v) => (o.minH = Number(v) || 7)); const m2 = document.getElementById('optMin2'); if (m2) m2.onchange = () => { o.minutes = Number(m2.value) || 1; };
+  ch('optMin', (v) => (o.minH = Math.max(0, Number(v) || 0))); const m2 = document.getElementById('optMin2'); if (m2) m2.onchange = () => { o.minutes = Number(m2.value) || 1; };
   clearInterval(ui._optTickT); if (o.busy === 'run') { const tick = () => { const el = document.getElementById('optTick'); if (!el) return clearInterval(ui._optTickT); const left = Math.max(0, Math.round((o.tEnd - Date.now()) / 1000)); el.textContent = `ca. ${left >= 60 ? Math.ceil(left / 60) + ' min' : left + ' sek.'} tilbage – du kan bruge resten af appen imens`; }; tick(); ui._optTickT = setInterval(tick, 1000); } ch('optMax', (v) => (o.maxH = Number(v) || 8));
 }
 const optLoadUndo = () => Promise.all([KV.get('vindue-optundo'), KV.get('vindue-optorig')]).then(([u, o]) => { ui._optUndo = u?.db ? { at: u.at } : null; ui._optOrig = o?.db ? { at: o.at } : null; softRender(); }).catch(() => {});
@@ -1261,8 +1278,10 @@ function optWhyCard(o, sel) {
     ${hits.length ? `<div class="row small">${hits.map((c) => `<button class="small" data-act="optWhy" data-id="${c.id}">${esc(c.name)}</button>`).join('')}</div>` : ''}${body}</div>`;
 }
 /** Forhåndsvisning + gennemførsel af "Byg ruter ud fra kalenderen". */
+/** Standard-medarbejder på ruter: valgt under Admin, ellers en medarbejder der hedder Olander, ellers den første. */
+function defaultEmp() { const act = db.employees.filter((x) => !x.inactive); return (act.find((e) => e.id === db.settings.defaultEmployeeId) || act.find((e) => /olander/i.test(e.name)) || act[0])?.id; }
 function rebuildDialog(afterOpt = false) {
-  const o = optState(); const plan = S.planRoutesFromCalendar(db, { fromIso: todayIso(), excludeRouteIds: [...o.ign, ...o.excl], startPoint: startPoint() });
+  const o = optState(); const plan = S.planRoutesFromCalendar(db, { fromIso: todayIso(), excludeRouteIds: [...o.ign, ...o.excl], startPoint: startPoint(), defaultEmployeeId: defaultEmp() });
   ui._rebuildPlan = plan; const rn = (id) => esc(route(id)?.name || '');
   openDlg(`<h2>🧩 Byg ruter ud fra kalenderen</h2>${afterOpt ? '<p><b>Flytningerne er gennemført.</b> De flyttede kunder står stadig på deres gamle ruter, så kalenderen viser mange små ruteblokke pr. dag. Byg nye ruter nu, så hver dag bliver én rute:</p>' : ''}<p class="small mute">Én fast rute pr. dag i rytmen (samme ugedag i samme uge af 4-ugers-rytmen; 8- og 12-ugers kunder kommer med på den rute, hvis dag de ligger på). Eksisterende ruter genbruges, hvor de fleste kunder kommer fra – navnet beholdes, hvis mindst halvdelen kommer derfra. <b>Ingen datoer ændres.</b> ${[...o.ign, ...o.excl].map(rn).join(', ') || ''} røres ikke.</p>
     <div style="max-height:50vh;overflow:auto"><table><tr><th>Rute</th><th>Rytme</th><th>Næste</th><th style="text-align:right">Kunder</th><th style="text-align:right">Arbejde</th><th>Områder</th><th>Genbruger</th></tr>
@@ -1713,7 +1732,7 @@ function admin() {
     <button data-act="empAdd" style="margin-top:8px">+ Medarbejder</button>
     <p class="small mute">Prototypen har ikke login endnu – brugeren vælges i topbjælken. Medarbejdere ser kun egne ruter og ingen økonomi.</p></div>
   <div class="card"><div class="row"><h2 class="sp">Prisregulering</h2><button data-act="priceAdj">💰 Regulér priser …</button></div><p class="small mute">Hæv eller sænk prisen på alle aftaler, en kundegruppe eller en rute fra en bestemt dato – med forhåndsvisning og SMS til kunderne.</p></div>
-  <div class="card"><h2>Ruter</h2>
+  <div class="card"><div class="row"><h2 class="sp">Ruter</h2><label class="small">Standard-medarbejder <select id="defEmp">${db.employees.filter((x) => !x.inactive).map((e) => `<option value="${e.id}" ${e.id === defaultEmp() ? 'selected' : ''}>${esc(e.name)}</option>`).join('')}</select></label><button class="small" data-act="defEmpAll">Sæt på alle ruter</button></div>
     <table><tr><th>Navn</th><th>Medarbejder</th><th>Hver … uge</th><th>Næste dato</th></tr>${db.routes.map((r) => `<tr><td><input data-rf="name" data-r="${r.id}" value="${esc(r.name)}"></td><td><select data-rf="employeeId" data-r="${r.id}">${db.employees.filter((x) => !x.inactive).map((e) => `<option value="${e.id}" ${e.id === r.employeeId ? 'selected' : ''}>${esc(e.name)}</option>`).join('')}</select></td>
       <td><input type="number" min="1" max="52" data-rf="intervalWeeks" data-r="${r.id}" value="${r.intervalWeeks}" style="width:70px"></td><td><input type="date" data-rf="anchorDate" data-r="${r.id}" value="${D.nextRouteDate(r, todayIso())}"></td></tr>`).join('')}</table>
     <div class="row" style="margin-top:8px"><button data-act="showCheck">Datakontrol</button><button data-act="phraseFind">Find og fjern tekst …</button><button data-act="addRoute">+ Rute</button><button data-act="delEmptyRoutes">Slet ruter uden kunder</button><button data-act="recalcRoutes">Genberegn rytme og dato ud fra kunderne</button></div>
@@ -1728,6 +1747,7 @@ function admin() {
   $view.querySelectorAll('[data-firm]').forEach((x) => (x.onchange = () => { db.settings.firm ||= {}; db.settings.firm[x.dataset.firm] = x.value.trim(); save(); toast('Gemt'); }));
   const saveStart = () => { const ll = (document.getElementById('stLL').value.match(/(-?\d+(?:[.,]\d+)?)\s*[,; ]\s*(-?\d+(?:[.,]\d+)?)/) || []);
     db.settings.start = { address: document.getElementById('stAddr').value.trim(), lat: ll[1] ? +ll[1].replace(',', '.') : null, lng: ll[2] ? +ll[2].replace(',', '.') : null }; save(); toast('Startadresse gemt'); };
+  document.getElementById('defEmp').onchange = (e) => { db.settings.defaultEmployeeId = e.target.value; save(); toast('Standard-medarbejder gemt'); };
   document.getElementById('holShift').onchange = (e) => { db.settings.holidayShift = e.target.checked; if (e.target.checked) db.settings.holidayShiftFrom ||= todayIso(); S.audit(db, ui.user.id, 'holiday.shift', e.target.checked ? 'on' : 'off'); render(); toast(e.target.checked ? 'Helligdage rykker nu hele planen' : 'Besøg på helligdage flyttes til næste hverdag'); };
   document.getElementById('stopMin').onchange = (e) => { db.settings.stopMin = Math.max(0, Math.min(30, Number(e.target.value) || 0)); save(); toast('Ekstra tid pr. adresse gemt'); };
   document.getElementById('stAddr').onchange = saveStart; document.getElementById('stLL').onchange = saveStart;
@@ -2044,6 +2064,7 @@ document.addEventListener('click', async (e) => {
       case 'showCheck': return checkDialog();
       case 'phraseFind': return phraseDialog();
       case 'phraseFind2': return phraseDialog(document.getElementById('phQ').value);
+      case 'dblOk': { (db.settings.dblOk ||= []).push(id); if (db.settings.dblOk.length > 500) db.settings.dblOk = db.settings.dblOk.slice(-500); save(); document.getElementById('dlg').close(); render(); return dblGroups().length ? dblDialog() : toast('Ingen flere mulige dobbeltbookinger'); }
       case 'dblCancel': { const v = db.visits.find((x) => x.id === id); if (!confirm(`Aflys ${v.service} ${fmt(v.plannedDate)}?`)) return; S.registerVisit(db, ui.user, id, { result: 'aflyst', opId: 'dbl:' + id, note: 'Dobbeltbooking' }); save(); document.getElementById('dlg').close(); render(); return dblDialog(); }
       case 'showIssues': return issuesDialog(id);
       case 'issueDone': { const [bid, k] = b.dataset.k.split(':'); const it = db.imports.find((x) => x.batchId === bid).issues[+k]; it.done = !it.done; save(); b.textContent = it.done ? '✓ Løst' : 'Markér løst'; b.closest('tr').style.opacity = it.done ? .45 : 1; return; }
@@ -2051,7 +2072,9 @@ document.addEventListener('click', async (e) => {
       case 'empDel': { const e = emp(id); if (e.role === 'admin' && db.employees.filter((x) => !x.inactive && x.role === 'admin').length === 1) return toast('Der skal være mindst én admin');
         const rs = db.routes.filter((r) => r.employeeId === id); if (!confirm(`Fjern ${e.name}?${rs.length ? ` ${rs.length} ruter flyttes til dig.` : ''} Historik og provision bevares.`)) return;
         rs.forEach((r) => (r.employeeId = ui.user.employeeId)); e.inactive = true; S.audit(db, ui.user.id, 'employee.remove', id); break; }
-      case 'addRoute': db.routes.push({ id: S.uid('r'), name: `Ny rute ${db.routes.length + 1}`, employeeId: db.employees[0].id, intervalWeeks: 4, anchorDate: D.nextWorkday(todayIso()) }); break;
+      case 'defEmpAll': { const e = emp(defaultEmp()); const rs = db.routes.filter((r) => !/tagrende/i.test(r.name) && r.employeeId !== e.id); if (!rs.length) return toast('Alle ruter har allerede ' + e.name);
+        if (!confirm(`Sæt ${e.name} på ${rs.length} ruter? (Tagrenderens røres ikke.)`)) return; for (const r of rs) r.employeeId = e.id; S.audit(db, ui.user.id, 'route.employeeAll', e.id, { n: rs.length }); toast(`${e.name} er sat på ${rs.length} ruter`); break; }
+      case 'addRoute': db.routes.push({ id: S.uid('r'), name: `Ny rute ${db.routes.length + 1}`, employeeId: defaultEmp(), intervalWeeks: 4, anchorDate: D.nextWorkday(todayIso()) }); break;
       case 'bookVisit': { const a = db.agreements.find((x) => x.id === id); return openDlg(`<h2>Book besøg – ${esc(cust(a.customerId).name)}</h2><p class="small">${esc(a.service)} · ${esc(addr(a.addressId)?.street)}</p><label><span>Dato</span><input type="date" name="date" required value="${D.nextWorkday(D.addDays(todayIso(), 1), db.closedDays)}"></label><label><span>Rute (valgfri)</span><select name="routeId"><option value="">Ingen</option>${db.routes.map((r) => `<option value="${r.id}" ${r.id === a.routeId ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</select></label>`, (f) => { const v = D.manualVisit(a, f.date, db.visits); v.routeId = f.routeId || null; db.visits.push(v); S.audit(db, ui.user.id, 'visit.book', v.id); toast('Besøg booket'); }); }
       case 'print': window.print(); return;
       case 'routesAll': ui.routeMaster = false; ui.route = null; ui.sel = new Set(); ui.tab = 'kunder'; ui.kView = 'ruter'; break;
