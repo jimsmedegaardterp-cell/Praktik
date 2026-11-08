@@ -15,7 +15,7 @@ import { showRouteMap } from './map.js';
 import * as KV from './store.js';
 import * as O from './optimizer.js';
 
-export const VERSION = '2026-11-08 #88';
+export const VERSION = '2026-11-08 #89';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -482,26 +482,14 @@ function alertsStrip() {
 /** Sats til "beregnet timeløn": rutens medarbejdersats, eller standardsatsen hvis ruten står på ejeren (0 %) – så tallet kan sammenlignes. */
 const wageRate = (routeId) => { const r = emp(route(routeId)?.employeeId)?.commissionRate; return r > 0 ? r : (db.settings.commissionRate ?? 0.35); };
 const WAGE_TIP = `Beregnet timeløn = omsætning × medarbejdersats ÷ (arbejde + kørsel). Ruter på ejeren regnes med standardsatsen (${Math.round((db.settings.commissionRate ?? 0.35) * 100)} %).`;
-function econ(vs, byRoute = false, useGoogle = true) {
+function econ(vs) {
   const live = vs.filter((v) => v.status !== 'aflyst' && v.status !== 'forgaeves');
   const sum = live.reduce((s2, v) => s2 + D.visitTotal(v), 0); const min = mins(live);
-  const groups = new Map(); for (const v of live) { const k = (v.routeId || '-') + '|' + v.plannedDate; groups.set(k, [...(groups.get(k) || []), v]); }
-  let km = 0; for (const [, g] of groups) { const r = route(g[0].routeId); const o = r?.order || []; g.sort((a, b) => (o.indexOf(a.addressId) + 1 || 999) - (o.indexOf(b.addressId) + 1 || 999)); km += routeKm(g.map((v) => addr(v.addressId)).filter(Boolean)) * 1.3; }
   const prov = live.reduce((s2, v) => s2 + D.visitTotal(v) * ((v.split?.length ? v.split : defaultSplit(v)).reduce((t2, x) => t2 + x.pct, 0) / 100), 0);
-  // Google-køretid pr. dag (samme som dagsplanen) eller pr. rute; skøn kun hvis Google mangler
-  let gSec = 0, gM = 0, gOk = useGoogle && !!db.settings.googleKey && live.length > 0, gWait = false;
-  if (gOk) {
-    const st = startPoint(); const parts = new Map();
-    for (const v of live) { if (!byRoute && isOther(v)) continue; const k = byRoute ? v.routeId + '|' + v.plannedDate : v.plannedDate; parts.set(k, [...(parts.get(k) || []), v]); }
-    for (const [k, g] of parts) {
-      const day = g[0].plannedDate; const ids = byRoute ? routeStops(g[0].routeId, day).filter((v) => g.includes(v)).map((v) => v.id) : dayOrder(day, g);
-      const r = googleFor(byRoute ? gKey('route:' + g[0].routeId + day, ids) : gKey(day + 'cur', ids), ids, { start: st, optimize: false });
-      if (r && !r.error) { const t = DP.sumLegs(r.legs); gSec += t.sec; gM += t.m; } else { gOk = false; gWait = !r?.error; }
-    }
-  }
-  const drive = gOk ? Math.round(gSec / 60) : Math.round(km / 50 * 60); const total = (min + drive) / 60; // timer i alt = arbejde + kørsel
+  // kørsel = andel af dagenes samlede tur (Google hvis beregnet, ellers skøn) – samme tal som "Dagen …" i kalenderen
+  const dr = driveOf(live); const drive = dr.min; const total = (min + drive) / 60; // timer i alt = arbejde + kørsel
   const wp = live.reduce((t2, v) => t2 + D.visitTotal(v) * wageRate(v.routeId), 0);
-  return { n: live.length, sum, min, km: gOk ? Math.round(gM / 1000) : Math.round(km), drive, google: gOk, gWait, prov, perHour: total ? sum / total : 0, wage: total ? wp / total : 0 };
+  return { n: live.length, sum, min, km: dr.km, drive, google: !dr.est && !!db.settings.googleKey && live.length > 0, gWait: false, prov, perHour: total ? sum / total : 0, wage: total ? wp / total : 0 };
 }
 /** Kalenderens tidsskala tilpasses, så alle adresser i hver ruteblok kan stå inden for blokkens tidshøjde (blokkene passer i længden). */
 function fitTimeline() {
@@ -535,12 +523,12 @@ function dayLen(d, vs) {
   const work = mins(live); const plan = db.dayPlans?.[d]; const legs = plan?.legs;
   // dagsplanens Google-tal bruges kun, hvis den er beregnet for præcis de besøg, der ligger på dagen nu
   const fresh = !!dayLegsFresh(d, vs);
-  if (fresh) { const dr = Math.round(DP.sumLegs(legs).sec / 60); return { work, drive: dr, total: work + dr, google: true }; }
+  if (fresh) { const sl = DP.sumLegs(legs); const dr = Math.round(sl.sec / 60); return { work, drive: dr, total: work + dr, google: true, km: sl.m / 1000 }; }
   const ck = d + '|' + live.map((v) => v.id + ':' + v.addressId + ':' + (v.durationMin ?? 15)).sort().join() + '|' + JSON.stringify(db.settings.start || {}) + '|' + (db.settings.stopMin || 0) + '|' + (db.settings.driveFactor || 1); const c = (ui._dayLenC ||= new Map()); if (c.has(ck)) return c.get(ck);
   if (c.size > 200) c.clear();
   const st = startPoint(); const A = (v) => addr(v.addressId) || {}; const pts = live.filter((v) => A(v).lat != null);
   const ord = DP.localOptimal(pts, A, st).map((id) => A(pts.find((v) => v.id === id)));
-  const dr = Math.round(DP.sumLegs(DP.estimateLegs(ord, st)).sec / 60 * (db.settings.driveFactor || 1)); const res = { work, drive: dr, total: work + dr, google: false }; c.set(ck, res); return res;
+  const sl = DP.sumLegs(DP.estimateLegs(ord, st)); const dr = Math.round(sl.sec / 60 * (db.settings.driveFactor || 1)); const res = { work, drive: dr, total: work + dr, google: false, km: sl.m / 1000 }; c.set(ck, res); return res;
 }
 function kalender() {
   const ws = ui.weekStart; const rf = ui.calRoute || '';
@@ -567,12 +555,12 @@ function kalender() {
         ${[...groups.entries()].map(([rid, gv]) => { const r = route(rid); const order = r?.order || []; gv.sort((a, b) => ((order.indexOf(a.addressId) + 1 || 999) - (order.indexOf(b.addressId) + 1 || 999)));
           const allDone = gv.every((v) => v.status !== 'planlagt' && v.status !== 'udsat');
           const key = (r?.id || '') + '|' + d;
-          const gd = r ? (ui._google || {})[gKey('route:' + r.id + d, gv.filter((v) => v.status !== 'aflyst').map((v) => v.id))] : null; const gdrv = gd?.legs ? Math.round(DP.sumLegs(gd.legs).sec / 60) : null;
-          // uden Google-svar: skøn (luftlinje × 1,3 ved 50 km/t fra startadressen og hjem) – vises med ≈
-          const drv = gdrv ?? (r ? Math.round(DP.sumLegs(DP.estimateLegs(gv.filter((v) => v.status !== 'aflyst').map((v) => addr(v.addressId)).filter((x) => x?.lat != null), startPoint())).sec / 60 * (db.settings.driveFactor || 1)) : 0);
+          // rutens andel af dagens samlede kørsel (fordelt efter arbejdstid) – så en lille rute ikke får hele turen hjemmefra
+          const DL = dayLen(d, vs); const myW = mins(gv.filter((v) => v.status !== 'aflyst' && v.status !== 'forgaeves' && !isOther(v)));
+          const drv = DL && DL.work ? Math.round(DL.drive * Math.min(1, myW / DL.work)) : 0; const gdrv = DL?.google ? drv : null;
           const bm = mins(gv.filter((v) => v.status !== 'aflyst')) + drv;
           return `<div style="--min:${Math.max(bm, 20)}" class="rblock ${allDone ? 'done' : ''} ${r && ui.calSel?.has(key) ? 'sel' : ''} ${ui.calPick === key ? 'picked' : ''}" ${r ? `data-rsel="${key}"` : ''}>${r ? `<div class="grip" data-act="routeMenu" data-r="${r.id}" data-d="${d}" draggable="true" data-dragroute="${key}" title="Klik: muligheder · Træk: flyt ruten · Ctrl+klik: vælg">⋮⋮</div>` : ''}<div class="rhead" ${r ? `data-dblroute="${r.id}" data-day="${d}" draggable="true" data-dragroute="${key}" title="Klik: vis rutens tal og muligheder · Dobbeltklik: færdigmeld · Træk: flyt hele ruten"` : ''}><b>${esc(r?.name ?? 'Uden rute')}</b><span class="badge">${gv.length}</span></div>
-          <div class="rmeta"><span>${drv && gdrv == null ? '≈' : ''}${D.hm(bm)} t${drv ? ' inkl. kørsel' : ''} · ${kr(gv.filter((v) => v.status !== 'aflyst').reduce((s2, v) => s2 + D.visitTotal(v), 0))}${bm && drv ? ` · <span title="Omsætning / (arbejde + kørsel)">${kr(Math.round(gv.filter((v) => v.status !== 'aflyst').reduce((s2, v) => s2 + D.visitTotal(v), 0) / (bm / 60)))}/t</span>` : ''}</span>${r ? `<button class="icon" data-act="printRoute" data-r="${r.id}" data-d="${d}" title="Udskriv ruteseddel">🖨</button>` : ''}</div>
+          <div class="rmeta"><span>${drv && gdrv == null ? '≈' : ''}${D.hm(bm)} t${drv ? ' inkl. andel af kørsel' : ''} · ${kr(gv.filter((v) => v.status !== 'aflyst').reduce((s2, v) => s2 + D.visitTotal(v), 0))}${bm && drv ? ` · <span title="Omsætning / (arbejde + kørsel)">${kr(Math.round(gv.filter((v) => v.status !== 'aflyst').reduce((s2, v) => s2 + D.visitTotal(v), 0) / (bm / 60)))}/t</span>` : ''}</span>${r ? `<button class="icon" data-act="printRoute" data-r="${r.id}" data-d="${d}" title="Udskriv ruteseddel">🖨</button>` : ''}</div>
           ${gv.map((v) => `<div class="vline ${v.status} ${ui.visSel?.has(v.id) ? 'vsel' : ''}" draggable="${v.status === 'planlagt' || v.status === 'udsat'}" data-visit="${v.id}" title="${esc(cust(v.customerId)?.name)} – ${esc(addr(v.addressId)?.street || '')}">${esc((addr(v.addressId)?.street || '').split(',')[0] || cust(v.customerId)?.name)}</div>`).join('')}</div>`; }).join('')}</div>`; }).join('')}</div></div>
     <aside class="econ"><h3>${ui.calPick ? `${esc(route(pick[0]).name)} · ${fmt(pick[1])}` : ui.calDay ? `Total for ${fmt(ui.calDay)}` : `Total for uge ${D.isoWeek(ws)}`}</h3>${ui.calPick || ui.calDay ? `<p class="small"><a href="#" data-act="calWeek">← Vis hele ugen</a>${ui.calDay ? ` · <a href="#" data-act="dayPlan" data-d="${ui.calDay}">🗺 Dagsplan</a>` : ''}</p>` : ''}
       ${ui.calPick ? `<div class="sidemenu">${routeMenuButtons(pick[0], pick[1])}</div>` : ''}
@@ -582,7 +570,7 @@ function kalender() {
       <h3>Fakturering</h3><dl>${ecoReal() ? (() => { const od = open.filter((l) => l.dueDate && l.dueDate < t); return `<dt><a href="#" data-tab="faktura">Ikke betalt til tiden</a></dt><dd${od.length ? ' style="color:var(--bad)"' : ''}>${od.length} · ${kr(Math.round(od.reduce((s2, l) => s2 + (l.remainder ?? l.gross ?? 0), 0)))}</dd>`; })()
         : `<dt><a href="#" data-tab="faktura">Klar til fakturering</a></dt><dd>${q.length} · ${kr(Math.round(q.reduce((s2, v) => s2 + D.visitTotal(v), 0)))}</dd>`}
       <dt>Åbne fakturaer</dt><dd>${open.length} · ${kr(Math.round(open.reduce((s2, l) => s2 + (l.remainder ?? l.total * 1.25), 0)))}</dd></dl>
-      <p class="small mute">${e.google ? 'Kørsel fra Google Maps (fra og til startadressen).' : e.gWait ? 'Henter køretider fra Google …' : 'Kørsel ≈ luftlinje × 1,3 ved 50 km/t (Google-nøgle mangler).'} Træk et navn til en anden dag for at flytte.</p></aside>
+      <p class="small mute">${e.google ? 'Kørsel fra Google Maps: hver dag som én tur fra og til startadressen; en rute får sin andel efter arbejdstid.' : db.settings.googleKey ? 'Kørsel: Google hvor dagene er beregnet, ellers skøn (≈). En rute får sin andel af dagens tur efter arbejdstid.' : 'Kørsel ≈ luftlinje × 1,3 ved 50 km/t (Google-nøgle mangler). En rute får sin andel af dagens tur efter arbejdstid.'} Træk et navn til en anden dag for at flytte.</p></aside>
   </div>`;
   document.getElementById('calRoute').onchange = (ev) => { ui.calRoute = ev.target.value; render(); };
   if (!isAdmin()) { // medarbejder: kun se – ingen menuer, træk eller flytning
@@ -1175,17 +1163,21 @@ function ruteOversigt() {
   const rows = db.routes.map((r) => { const ags = db.agreements.filter((a) => a.routeId === r.id && a.active); const next = nextRouteDay(r, t);
     const ids = next ? routeStops(r.id, next).filter((v) => v.status !== 'aflyst' && v.status !== 'forgaeves').map((v) => v.id) : [];
     const gk = gKey('route:' + r.id + next, ids);
-    const g0 = db.settings.googleKey && ids.length ? googleFor(gk, ids, { start: startPoint(), optimize: false }) : null; const g = g0 && !g0.error ? g0 : null;
+    // rutens andel af dagens samlede kørsel (fordelt efter arbejdstid) – fair timeløn også for små ruter
+    if (next) ensureDayGoogle(next); const DL = next ? dayLen(next, db.visits.filter((v) => v.plannedDate === next)) : null;
+    const myW = next ? mins(routeStops(r.id, next).filter((v) => v.status !== 'aflyst' && v.status !== 'forgaeves' && !isOther(v))) : 0;
+    const shareMin = DL && DL.work ? DL.drive * Math.min(1, myW / DL.work) : 0; const g0 = null;
+    const g = shareMin ? { legs: [{ sec: shareMin * 60, m: (DL.km || 0) * 1000 * Math.min(1, myW / DL.work) }], est: !DL.google } : null;
     const nvs = next ? routeStops(r.id, next).filter((v) => v.status !== 'aflyst' && v.status !== 'forgaeves') : []; const nRev = nvs.reduce((t2, v) => t2 + D.visitTotal(v), 0);
     const nRate = wageRate(r.id);
     return { r, nRev, nRate, n: new Set(ags.map((a) => a.customerId)).size, year: ags.reduce((s, a) => s + D.annualRevenue(a), 0), min: ags.filter((a) => next && D.generateVisits(a, next, next).length).reduce((s, a) => s + (a.durationMin ?? 15), 0), next, gk, ids, gErr: g0?.error, drive: g ? DP.sumLegs(g.legs) : null }; });
-  ui._ovKeys = rows.filter((x) => x.ids.length).map((x) => ({ k: x.gk, ids: x.ids }));
+  ui._ovKeys = rows.filter((x) => x.ids.length).map((x) => ({ k: x.gk, ids: x.ids, day: x.next }));
   const tot = rows.reduce((s, x) => s + x.year, 0);
   $view.innerHTML = kTabs() + `<div class="card"><div class="row"><h2 class="sp">Faste ruter (${db.routes.length})</h2><button data-act="optOpen">✨ Optimér alle ruter (forsøg)</button><button data-act="rebuildRoutes">🧩 Byg ruter ud fra kalenderen</button><button data-act="addRoute">+ Opret rute</button></div>
     <div style="overflow-x:auto"><table class="heat"><tr><td></td>${weeks.map((w) => `<td class="hm">${D.toDate(w).getUTCDate() <= 7 ? MONTHS[D.month(w) - 1] : ''}</td>`).join('')}</tr>
     ${['M', 'T', 'O', 'T', 'F'].map((dn, i) => `<tr><td class="hm">${dn}</td>${weeks.map((w) => { const d = D.addDays(w, i); const n = load.get(d) || 0; return `<td title="${fmt(d)}: ${n} besøg" style="background:${n ? `rgba(31,95,139,${0.15 + 0.85 * n / maxN})` : 'var(--chip)'}"></td>`; }).join('')}</tr>`).join('')}</table></div>
     <p class="small mute">Belastning pr. dag de næste 12 måneder (mørkere = flere besøg).</p></div>
-  <div class="card">${db.settings.googleKey ? `<div class="row small" style="margin-bottom:6px"><span class="sp mute">Kørsel = Google Maps for næste gang ruten kører (fra startadressen og hjem). Gemmes på enheden.</span><button class="small" data-act="routesRegoogle">🔄 Genberegn alle køretider</button></div>` : '<p class="small mute">Sæt en Google-nøgle under Admin for at se rigtige køretider.</p>'}
+  <div class="card">${db.settings.googleKey ? `<div class="row small" style="margin-bottom:6px"><span class="sp mute">Kørsel = rutens andel af dagens samlede tur næste gang den kører (fordelt efter arbejdstid, Google hvis beregnet) – så små ruter får en fair timeløn.</span><button class="small" data-act="routesRegoogle">🔄 Genberegn alle køretider</button></div>` : '<p class="small mute">Sæt en Google-nøgle under Admin for at se rigtige køretider.</p>'}
     <table class="clickable"><tr><th>Rutenavn</th><th>Medarbejder</th><th>Rytme</th><th>Størrelse</th><th>Næste</th><th style="text-align:right">Oms./år</th><th style="text-align:right">Inkl. moms</th><th>Arbejde</th><th>Kørsel</th><th>I alt</th><th style="text-align:right" title="Omsætning næste gang / (arbejde + kørsel)">Oms./time</th><th style="text-align:right" title="${WAGE_TIP}">Timeløn</th></tr>
     ${rows.map((x) => `<tr data-routemaster="${x.r.id}"><td><b>${esc(x.r.name)}</b></td><td>${esc(emp(x.r.employeeId)?.name)}</td><td>hver ${x.r.intervalWeeks}. uge</td><td>${x.n} kunder</td><td>${(() => { const op = openPastDay(x.r); return op ? `<span style="color:var(--bad)">${fmt(op)} ${op.slice(0, 4)} – åbne besøg</span><br>` : ''; })()}${x.r.anchorUnknown ? '<span style="color:var(--bad)">ukendt – sæt dato under Admin</span>' : x.next ? fmt(x.next) + ' ' + x.next.slice(0, 4) : '–'}</td><td style="text-align:right">${kr(Math.round(x.year))}</td><td style="text-align:right">${kr(Math.round(x.year * 1.25))}</td><td>${D.hm(x.min)}</td><td>${x.drive ? `${D.hm(Math.round(x.drive.sec / 60))} <span class="small mute">${Math.round(x.drive.m / 1000)} km</span>` : x.gErr ? '<span class="warn-t small">fejl</span>' : x.ids.length && db.settings.googleKey ? '<span class="mute small">henter …</span>' : '–'}</td><td><b>${x.drive ? D.hm(x.min + Math.round(x.drive.sec / 60)) : D.hm(x.min)}</b></td>${(() => { const h = (x.min + (x.drive ? x.drive.sec / 60 : 0)) / 60; return `<td style="text-align:right">${h && x.nRev ? kr(Math.round(x.nRev / h)) : '–'}</td><td style="text-align:right">${h && x.nRev ? kr(Math.round(x.nRev * x.nRate / h)) : '–'}</td>`; })()}</tr>`).join('')}
     <tr><td colspan="5"><b>Total</b></td><td style="text-align:right"><b>${kr(Math.round(tot))}</b></td><td style="text-align:right"><b>${kr(Math.round(tot * 1.25))}</b></td><td colspan="5"></td></tr></table>
@@ -1388,12 +1380,12 @@ const MDK = ['jan', 'feb', 'mar', 'apr', 'maj', 'jun', 'jul', 'aug', 'sep', 'okt
 const mLabel = (ym) => `${MDK[+ym.slice(5, 7) - 1]} ${ym.slice(0, 4)}`;
 const DONE = new Set(['udfoert', 'delvis']);
 /** Kørsel for en mængde besøg: gemt Google-dagsplan pr. dag hvor den findes, ellers skøn. */
+/** Kørsel for en mængde besøg = deres andel af hver dags samlede tur (fordelt efter arbejdstid). Så får en lille rute ikke hele turen hjemmefra. */
 function driveOf(vs) {
-  const byDay = new Map(); for (const v of vs) byDay.set(v.plannedDate, [...(byDay.get(v.plannedDate) || []), v]);
+  const byDay = new Map(); for (const v of vs) if (v.status !== 'aflyst' && v.status !== 'forgaeves' && !isOther(v)) byDay.set(v.plannedDate, [...(byDay.get(v.plannedDate) || []), v]);
+  const all = new Map(); for (const v of db.visits) if (byDay.has(v.plannedDate)) all.set(v.plannedDate, [...(all.get(v.plannedDate) || []), v]);
   let min = 0, km = 0, est = 0;
-  for (const [d, g] of byDay) { const p = db.dayPlans?.[d];
-    if (p?.legs && g.length === db.visits.filter((v) => v.plannedDate === d && v.status !== 'aflyst' && v.status !== 'forgaeves').length) { const t = DP.sumLegs(p.legs); min += t.sec / 60; km += t.m / 1000; }
-    else { const e = econ(g, false, false); min += e.drive; km += e.km; est++; } }
+  for (const [d, g] of byDay) { const L = dayLen(d, all.get(d) || g); if (!L || !L.work) continue; const f = Math.min(1, mins(g) / L.work); min += L.drive * f; km += (L.km || 0) * f; if (!L.google) est++; }
   return { min: Math.round(min), km: Math.round(km), est };
 }
 function monthStats(vs) {
@@ -2028,7 +2020,7 @@ document.addEventListener('click', async (e) => {
           for (const a of list) { const p = r[k++]; if (p) { a.lat = p.lat; a.lng = p.lng; ok++; } }
           S.audit(db, ui.user.id, 'geo.fill', '-', { ok, of: streets.length }); toast(`${ok} af ${streets.length} adresser fik koordinater${ok < streets.length ? ' – resten kunne Google ikke finde (ret adressen)' : ''}`); }
         catch (er) { toast(er.message); } break; }
-      case 'routesRegoogle': { const c = ui._google || {}; for (const { k } of ui._ovKeys || []) delete c[k]; toast('Henter køretider fra Google …'); break; }
+      case 'routesRegoogle': { const c = ui._google || {}; for (const { k, day } of ui._ovKeys || []) { delete c[k]; if (day && db.dayPlans?.[day]) { delete db.dayPlans[day].legs; delete db.dayPlans[day].legsFor; for (const key of Object.keys(c)) if (key.startsWith(day + 'cur|')) delete c[key]; } } toast('Henter køretider fra Google …'); break; }
       case 'ordSelClear': ui.ordSel = new Set(); break;
       case 'ordMove': { const r = route(ui.route); const ags = db.agreements.filter((a) => a.routeId === r.id && a.active !== false && ui.ordSel?.has(a.addressId));
         return openDlg(`<h2>Flyt ${ui.ordSel.size} adresser fra ${esc(r.name)}</h2><label><span>Til rute</span><select name="to">${db.routes.filter((x) => x.id !== r.id).map((x) => `<option value="${x.id}">${esc(x.name)} (hver ${x.intervalWeeks}. uge · næste ${fmt(D.nextRouteDate(x, todayIso()) || todayIso())})</option>`).join('')}</select></label>
