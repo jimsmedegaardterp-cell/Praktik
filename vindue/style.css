@@ -26,7 +26,7 @@ h2{margin:0 0 10px;font-size:19px;font-weight:650;letter-spacing:-.01em}h3{margi
 .tabs button{border:0;background:none;padding:8px 14px;color:var(--mute);font:inherit;font-weight:550;cursor:pointer;white-space:nowrap;border-radius:99px}
 .tabs button:hover{background:var(--soft);color:var(--ink)}
 .tabs button.on{background:var(--pri-soft);color:var(--pri)}
-main{padding:18px 20px 40px;max-width:1440px;margin:0 auto}
+main{padding:18px 20px 40px;max-width:1880px;margin:0 auto} /* brug skærmens bredde (kalenderen) */
 
 /* Grundelementer */
 .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:16px;margin-bottom:14px;box-shadow:var(--shadow)}
