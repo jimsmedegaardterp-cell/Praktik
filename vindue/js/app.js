@@ -15,7 +15,7 @@ import { showRouteMap } from './map.js';
 import * as KV from './store.js';
 import * as O from './optimizer.js';
 
-export const VERSION = '2026-11-08 #86';
+export const VERSION = '2026-11-08 #87';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -512,15 +512,24 @@ function fitTimeline() {
   if (need > 1.5) tl.style.setProperty('--pxm', Math.min(5, need).toFixed(2) + 'px');
 }
 /** Hele dagen som én tur: arbejde + kørsel (dagsplanens Google-tal hvis gemt, ellers luftlinje-skøn i bedste rækkefølge). */
+/** Dagens besøg for den, der pudser (uden aflyste og uden Tagrenderens – den udføres af en anden). */
+const isOther = (v) => /tagrende/i.test(route(v.routeId)?.name || '');
+const dayVisits = (d, vs = db.visits.filter((v) => v.plannedDate === d)) => vs.filter((v) => v.plannedDate === d && v.status !== 'aflyst' && v.status !== 'forgaeves' && !isOther(v));
+/** Google-køretid for alle dage som standard: hentes automatisk (højst én gang pr. ændring af dagen) og gemmes på dagen. */
+function ensureDayGoogle(d) {
+  if (!db.settings.googleKey || !startPoint()) return; const vs = dayVisits(d); if (!vs.length || dayLegsFresh(d, vs)) return;
+  const order = dayOrder(d, vs); const store = (g) => { if (!g || g.error) return; (db.dayPlans ||= {})[d] = { ...(db.dayPlans[d] || {}), legs: g.legs, polylines: g.polylines, legsFor: order.join(','), gAt: new Date().toISOString() }; save(); };
+  store(googleFor(gKey(d + 'cur', order), order, { start: startPoint(), optimize: false, onDone: store }));
+}
 /** Dagsplanens Google-ben, hvis de er beregnet for præcis de besøg, der ligger på dagen nu (ellers null). */
 function dayLegsFresh(d, vs) {
   const plan = db.dayPlans?.[d]; if (!plan?.legs) return null;
-  const ids = (plan.legsFor || plan.order?.join(',') || '').split(',').filter(Boolean); const cur = vs.filter((v) => v.status !== 'aflyst' && v.status !== 'forgaeves').map((v) => v.id);
+  const ids = (plan.legsFor || plan.order?.join(',') || '').split(',').filter(Boolean); const cur = dayVisits(d, vs).map((v) => v.id);
   return ids.length === cur.length && cur.every((id) => ids.includes(id)) ? plan.legs : null;
 }
 function dayLen(d, vs) {
   // Tagrenderens udføres af en anden og tæller ikke med i dagen
-  const live = vs.filter((v) => v.status !== 'aflyst' && v.status !== 'forgaeves' && !/tagrende/i.test(route(v.routeId)?.name || '')); if (!live.length) return null;
+  const live = dayVisits(d, vs); if (!live.length) return null;
   const work = mins(live); const plan = db.dayPlans?.[d]; const legs = plan?.legs;
   // dagsplanens Google-tal bruges kun, hvis den er beregnet for præcis de besøg, der ligger på dagen nu
   const fresh = !!dayLegsFresh(d, vs);
@@ -550,7 +559,7 @@ function kalender() {
     <select id="calRoute"><option value="">Alle ruter</option>${db.routes.map((r) => `<option value="${r.id}" ${rf === r.id ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}</select></div>
   <div class="cal" style="--ndays:${days.length}"><!-- kompakt: blokkene er kun så høje som deres adresser (dagens længde står øverst) -->
     <div class="weekwrap"><div class="taxis">${(() => { const mx = Math.max(480, ...days.map((d) => { const vs = wv.filter((v) => v.plannedDate === d && v.status !== 'aflyst'); return mins(vs) + 30; })); return Array.from({ length: Math.ceil(mx / 60) + 1 }, (_, h) => `<div>${h === 0 ? 'Start' : h === 1 ? '1 time' : h + ' timer'}</div>`).join(''); })()}</div>
-    <div class="week">${days.map((d) => { const vs = wv.filter((v) => v.plannedDate === d); const closed = D.isClosedDay(d, db.closedDays);
+    <div class="week">${days.map((d) => { const vs = wv.filter((v) => v.plannedDate === d); if (!rf) ensureDayGoogle(d); const closed = D.isClosedDay(d, db.closedDays);
       const groups = new Map(); for (const v of vs) { const k = v.routeId || ''; groups.set(k, [...(groups.get(k) || []), v]); }
       return `<div class="day ${closed ? 'closed' : ''} ${d === t ? 'today' : ''} ${ui.calDay === d ? 'picked' : ''}" data-day="${d}" title="Klik på et tomt felt: vis dagens tal · Dobbeltklik: dagsplan"><div class="dayhead"><button class="daybtn" data-act="dayOpts" data-d="${d}" title="Ferie/fridag, dagsplan, flyt dagen">${fmt(d)}</button><span class="sp"></span>${vs.length ? `<button class="icon ${dayLegsFresh(d, vs) || db.dayPlans?.[d]?.order ? 'on' : ''}" data-act="dayPlan" data-d="${d}" title="Dagsplan: rækkefølge og køretid for hele dagen">🗺${dayLegsFresh(d, vs) ? ` <span class="small">${D.hm(Math.round(DP.sumLegs(dayLegsFresh(d, vs)).sec / 60))}</span>` : ''}</button>` : ''}${vs.some((v) => v.status === 'planlagt') ? `<button class="icon" data-act="dayMenu" data-d="${d}" title="Flyt/aflys/udfør hele dagen">⋯</button>` : ''}</div>${(() => { const L = dayLen(d, vs); return L ? `<div class="small daylen" style="padding:0 6px 4px;${L.total > 480 ? 'color:var(--bad);font-weight:700' : 'color:var(--mute)'}" title="Hele dagen som én sammenhængende tur: arbejde + kørsel fra startadressen, gennem alle ruter og hjem${L.google ? ' (Google)' : ' (skøn – åbn 🗺 for Google)'}">Dagen ${L.google ? '' : '≈'}${D.hm(L.total)} t = arbejde ${D.hm(L.work)} + kørsel ${D.hm(L.drive)}</div>` : ''; })()}${closed ? `<div class="closedlbl">${esc(db.closedInfo?.[d]?.label || (D.weekday(d) >= 5 ? 'Weekend' : D.danishHolidays(+d.slice(0, 4)).has(d) ? 'Helligdag' : 'Lukket'))}</div>` : ''}
         ${[...groups.entries()].map(([rid, gv]) => { const r = route(rid); const order = r?.order || []; gv.sort((a, b) => ((order.indexOf(a.addressId) + 1 || 999) - (order.indexOf(b.addressId) + 1 || 999)));
@@ -877,7 +886,7 @@ function dayOrder(day, vs) {
 function setDayOrder(day, order, extra = {}) { (db.dayPlans ||= {})[day] = { ...(db.dayPlans[day] || {}), order: [...order], mode: 'tilpasset', at: new Date().toISOString(), ...extra }; save(); }
 function dagsplan() {
   const day = ui.planDay || todayIso(); db.dayPlans ||= {}; const saved = db.dayPlans[day];
-  const vs = db.visits.filter((v) => v.plannedDate === day && v.status !== 'aflyst' && v.status !== 'forgaeves');
+  const vs = dayVisits(day); // Tagrenderens er ikke med – den udføres af en anden
   const byId = new Map(vs.map((v) => [v.id, v])); const A = (v) => addr(v.addressId) || {};
   const st = startPoint(); const useG = !!db.settings.googleKey;
   const order = dayOrder(day, vs);
@@ -2034,7 +2043,7 @@ document.addEventListener('click', async (e) => {
       case 'calWeek': ui.calDay = null; ui.calPick = null; break;
       case 'toggleRouteMap': ui.hideRouteMap = !ui.hideRouteMap; break;
       case 'planGoogle': { const day = ui.planDay; const k = gKey(day + 'cur', ui._planOrder); if (ui._google) delete ui._google[k]; googleFor(k, [...ui._planOrder], { start: startPoint(), optimize: false }); break; }
-      case 'planOpt': { const day = ui.planDay; const vs = db.visits.filter((v) => v.plannedDate === day && v.status !== 'aflyst' && v.status !== 'forgaeves'); const st = startPoint();
+      case 'planOpt': { const day = ui.planDay; const vs = dayVisits(day); const st = startPoint();
         const pre = DP.localOptimal(vs, (v) => addr(v.addressId) || {}, st); b.disabled = true; b.textContent = 'Optimerer …';
         googleFor(gKey(day + 'opt', pre, true), pre, { start: st, optimize: true, onDone: (res) => { (ui._google ||= {})[gKey(day + 'cur', res.order)] = { ...res, t: Date.now() }; persistGoogle(); setDayOrder(day, res.order, { legs: res.legs, polylines: res.polylines, legsFor: res.order.join(',') }); toast('Dagen er optimeret – træk evt. kunder på plads'); } }); return; }
       case 'printRoute': document.getElementById('dlg').open && document.getElementById('dlg').close(); ui.tab = 'ruter'; ui.route = b.dataset.r; ui.day = b.dataset.d; ui._routeDayFor = ui.route + ui.day; ui.routeMode = 'sheet'; render(); setTimeout(() => window.print(), 300); return;
