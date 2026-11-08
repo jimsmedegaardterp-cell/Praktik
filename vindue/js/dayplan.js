@@ -14,6 +14,24 @@ export function routeOrder(visits, routes) {
   return out.map((v) => v.id);
 }
 
+/**
+ * Som routeOrder, men når flere ruter kører samme dag, vælges den rækkefølge (og retning) af ruterne, der giver kortest tur
+ * fra start, gennem alle ruter og hjem (luftlinje). Inde i hver rute bevares rutens faste rækkefølge.
+ */
+export function routeOrderBest(visits, routes, addrOf, start) {
+  const base = routeOrder(visits, routes); const byId = new Map(visits.map((v) => [v.id, v]));
+  const groups = []; for (const id of base) { const v = byId.get(id); const g = groups[groups.length - 1]; if (g && g.rid === (v.routeId || '')) g.ids.push(id); else groups.push({ rid: v.routeId || '', ids: [id] }); }
+  if (groups.length < 2 || groups.length > 6) return base;
+  const P = (id) => addrOf(byId.get(id)); const d = (a, b) => { const k = km(a, b); return k == null ? 0 : k; };
+  const inner = groups.map((g) => { let s = 0; for (let i = 1; i < g.ids.length; i++) s += d(P(g.ids[i - 1]), P(g.ids[i])); return s; });
+  let best = null; const n = groups.length; const perm = [...Array(n).keys()];
+  const rec = (k) => { if (k === n) { for (let mask = 0; mask < (1 << n); mask++) { let cost = 0, prev = start?.lat != null ? start : null;
+        for (const gi of perm) { const g = groups[gi]; const rev = (mask >> gi) & 1; const first = P(rev ? g.ids[g.ids.length - 1] : g.ids[0]), last = P(rev ? g.ids[0] : g.ids[g.ids.length - 1]); if (prev) cost += d(prev, first); cost += inner[gi]; prev = last; }
+        if (start?.lat != null && prev) cost += d(prev, start);
+        if (!best || cost < best.cost - 1e-9) best = { cost, order: perm.flatMap((gi) => ((mask >> gi) & 1 ? [...groups[gi].ids].reverse() : groups[gi].ids)) }; } return; }
+    for (let i = k; i < n; i++) { [perm[k], perm[i]] = [perm[i], perm[k]]; rec(k + 1); [perm[k], perm[i]] = [perm[i], perm[k]]; } };
+  rec(0); return best.order;
+}
 /** Lokal optimering (nærmeste nabo + 2-opt) på en omkostningsfunktion cost(i,j) over punkter 0..n-1; start = indeks n (depot) eller null. */
 export function optimize(n, cost, depot = null) {
   if (n <= 2) return [...Array(n).keys()];

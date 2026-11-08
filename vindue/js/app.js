@@ -15,7 +15,7 @@ import { showRouteMap } from './map.js';
 import * as KV from './store.js';
 import * as O from './optimizer.js';
 
-export const VERSION = '2026-11-08 #87';
+export const VERSION = '2026-11-08 #88';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -492,7 +492,7 @@ function econ(vs, byRoute = false, useGoogle = true) {
   let gSec = 0, gM = 0, gOk = useGoogle && !!db.settings.googleKey && live.length > 0, gWait = false;
   if (gOk) {
     const st = startPoint(); const parts = new Map();
-    for (const v of live) { const k = byRoute ? v.routeId + '|' + v.plannedDate : v.plannedDate; parts.set(k, [...(parts.get(k) || []), v]); }
+    for (const v of live) { if (!byRoute && isOther(v)) continue; const k = byRoute ? v.routeId + '|' + v.plannedDate : v.plannedDate; parts.set(k, [...(parts.get(k) || []), v]); }
     for (const [k, g] of parts) {
       const day = g[0].plannedDate; const ids = byRoute ? routeStops(g[0].routeId, day).filter((v) => g.includes(v)).map((v) => v.id) : dayOrder(day, g);
       const r = googleFor(byRoute ? gKey('route:' + g[0].routeId + day, ids) : gKey(day + 'cur', ids), ids, { start: st, optimize: false });
@@ -524,8 +524,10 @@ function ensureDayGoogle(d) {
 /** Dagsplanens Google-ben, hvis de er beregnet for præcis de besøg, der ligger på dagen nu (ellers null). */
 function dayLegsFresh(d, vs) {
   const plan = db.dayPlans?.[d]; if (!plan?.legs) return null;
-  const ids = (plan.legsFor || plan.order?.join(',') || '').split(',').filter(Boolean); const cur = dayVisits(d, vs).map((v) => v.id);
-  return ids.length === cur.length && cur.every((id) => ids.includes(id)) ? plan.legs : null;
+  // kun hvis tallene er beregnet for præcis dagens besøg i den rækkefølge, de køres i nu
+  const cur = dayVisits(d, vs); const key = d + '|' + cur.map((v) => v.id).sort().join() + '|' + (plan.order || []).join() + '|' + db.routes.map((r) => (r.order || []).length).join();
+  const oc = (ui._dayOrdC ||= new Map()); if (!oc.has(key)) { if (oc.size > 300) oc.clear(); oc.set(key, dayOrder(d, cur).join(',')); }
+  return (plan.legsFor || plan.order?.join(',') || '') === oc.get(key) ? plan.legs : null;
 }
 function dayLen(d, vs) {
   // Tagrenderens udføres af en anden og tæller ikke med i dagen
@@ -879,7 +881,7 @@ function googleFor(cacheKey, ids, { start, end, optimize, pointOf, onDone }) {
 }
 /** Dagens rækkefølge (på tværs af ruter). Ingen plan = som de faste ruter. */
 function dayOrder(day, vs) {
-  const base = DP.routeOrder(vs, db.routes); const p = db.dayPlans?.[day];
+  const base = DP.routeOrderBest(vs, db.routes, (v) => addr(v.addressId) || {}, startPoint()); const p = db.dayPlans?.[day]; // flere ruter: bedste rækkefølge mellem dem
   if (!p?.order) return base; const ids = new Set(vs.map((v) => v.id));
   return [...p.order.filter((id) => ids.has(id)), ...base.filter((id) => !p.order.includes(id))];
 }

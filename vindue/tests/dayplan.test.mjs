@@ -59,3 +59,14 @@ test('Koordinater: 26 adresser pr. kald; ukendt adresse slås op enkeltvis', asy
   assert.equal(r[0].lat, 57); assert.equal(r[25].lat, 57.25); assert.equal(r[26].lat, 57.26); assert.equal(r[29].lat, 57.29);
   assert.equal(r[27], null, 'ukendt adresse mangler'); assert.equal(calls.length, 1 + 1 + 4, '1 bid OK, 1 bid fejlede → 4 enkeltopslag');
 });
+
+test('flere ruter samme dag: bedste rækkefølge mellem ruterne (nabo-ruter efter hinanden)', () => {
+  const start = { lat: 57.0, lng: 10.0 };
+  // A og C ligger nordpå tæt på hinanden, B ligger østpå. Naiv rækkefølge A, B, C kører frem og tilbage.
+  const vs = [{ id: 'a1', routeId: 'A', addressId: 'a1' }, { id: 'b1', routeId: 'B', addressId: 'b1' }, { id: 'c1', routeId: 'C', addressId: 'c1' }];
+  const Pt = { a1: { lat: 57.3, lng: 10.0 }, b1: { lat: 57.0, lng: 10.5 }, c1: { lat: 57.32, lng: 10.05 } };
+  const routes = [{ id: 'A', order: ['a1'] }, { id: 'B', order: ['b1'] }, { id: 'C', order: ['c1'] }];
+  assert.deepEqual(DP.routeOrder(vs, routes), ['a1', 'b1', 'c1']);
+  const o = DP.routeOrderBest(vs, routes, (v) => Pt[v.addressId], start);
+  assert.equal(Math.abs(o.indexOf('a1') - o.indexOf('c1')), 1, 'A og C efter hinanden: ' + o.join());
+});
