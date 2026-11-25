@@ -15,7 +15,7 @@ import { showRouteMap } from './map.js';
 import * as KV from './store.js';
 import * as O from './optimizer.js';
 
-export const VERSION = '2026-11-25 #90';
+export const VERSION = '2026-11-25 #91';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -2277,7 +2277,7 @@ async function ecoCard() {
   const sel = (key, list, label, fmt = (x) => `${x.id} · ${x.name}`) => `<label><span>${label}</span><select data-eco="${key}"><option value="">– vælg –</option>${list.map((x) => `<option value="${esc(x.id)}" ${String(cfg[key] ?? '') === String(x.id) ? 'selected' : ''}>${esc(fmt(x))}</option>`).join('')}</select></label>`;
   // nyt regnskab? (fx skift fra prøveregnskab til det rigtige) – gamle fakturaer og kundenumre må ikke blandes med det nye
   const ag = String(info.agreementNumber || '');
-  if (ag && !cfg.agreementNumber && !db.invoiceLinks.some((l) => !l.archived)) { cfg.agreementNumber = ag; save(); }
+  if (ag && !cfg.agreementNumber) { cfg.agreementNumber = ag; save(); } // første gang: det regnskab, appen allerede bruger (prøveregnskabet) huskes
   if (ag && cfg.agreementNumber !== ag) {
     const n = db.invoiceLinks.filter((l) => !l.archived).length; ui._ecoAg = ag;
     el.innerHTML = head + `<div class="warnbox"><b>Forbundet til ${esc(info.company || '')} (aftale ${esc(ag)})</b>${cfg.agreementNumber ? ` – før: aftale ${esc(cfg.agreementNumber)}` : ''}.<br>
