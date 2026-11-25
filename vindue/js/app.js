@@ -15,7 +15,7 @@ import { showRouteMap } from './map.js';
 import * as KV from './store.js';
 import * as O from './optimizer.js';
 
-export const VERSION = '2026-11-08 #89';
+export const VERSION = '2026-11-25 #90';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -23,6 +23,10 @@ db.customerNotes ||= [];
 let eco = new MockEconomic(db.mock.economic);
 let sms = new MockSms(db.mock.sms);
 /** Rigtig e-conomic når den er slået til og man er admin i den fælles database; ellers øve-udgaven (mock). */
+/** Fakturaer fra et tidligere regnskab (prøveregnskabet) er arkiveret: de vises ikke og hentes ikke status på. */
+const liveLinks = () => db.invoiceLinks.filter((l) => !l.archived);
+/** Faktureringskø – uden besøg fra før skæringsdatoen (dem fakturerede SkvizBiz). */
+const invQueue = () => { const from = ecoReal() ? db.settings.economic?.invoiceFrom : null; return D.invoiceQueue(db.visits, db.invoiceLinks).filter((v) => !from || v.completion.at >= from); };
 const ecoReal = () => !!(db.settings.economic?.enabled && cloud?.economic && member?.role === 'admin');
 const ecoApi = () => (ecoReal() ? new EconomicApi((op, p) => cloud.economic(op, p), db.settings.economic) : eco);
 function setDb(nd) { db = nd; db.customerNotes ||= []; db.mock ||= { economic: {}, sms: {} }; eco = new MockEconomic(db.mock.economic); sms = new MockSms(db.mock.sms); }
@@ -136,10 +140,10 @@ function overblik() {
   const t = todayIso(); const ws = mondayOf(t); const we = D.addDays(ws, 6);
   const today = db.visits.filter((v) => v.plannedDate === t);
   const week = db.visits.filter((v) => v.plannedDate >= ws && v.plannedDate <= we);
-  const q = D.invoiceQueue(db.visits, db.invoiceLinks);
+  const q = invQueue();
   const unread = db.smsMessages.filter((m) => m.dir === 'ind' && !m.read);
-  const open = db.invoiceLinks.filter((l) => l.status === 'bogført' && l.payment !== 'betalt');
-  const errs = db.invoiceLinks.filter((l) => l.status === 'fejl').length + db.smsMessages.filter((m) => m.status === 'fejlet').length;
+  const open = liveLinks().filter((l) => l.status === 'bogført' && l.payment !== 'betalt');
+  const errs = liveLinks().filter((l) => l.status === 'fejl').length + db.smsMessages.filter((m) => m.status === 'fejlet').length;
   const dbl = dblGroups();
   const overdue = db.visits.filter((v) => (v.status === 'planlagt' || v.status === 'udsat') && v.plannedDate < t);
   $view.innerHTML = `
@@ -227,7 +231,7 @@ function kundekort(c) {
   const t = todayIso();
   const msgs = db.smsMessages.filter((m) => m.customerId === c.id).sort((a, b) => a.at.localeCompare(b.at));
   msgs.forEach((m) => (m.read = true));
-  const invs = db.invoiceLinks.filter((l) => l.customerId === c.id);
+  const invs = liveLinks().filter((l) => l.customerId === c.id);
   $view.innerHTML = `<div class="row" style="margin-bottom:10px"><button data-act="back">← Kunder</button><span class="sp"></span><button data-act="editCustomer" data-id="${c.id}">Rediger</button><button data-act="exportCustomer" data-id="${c.id}">GDPR-eksport</button><button class="bad" data-act="deleteCustomer" data-id="${c.id}">Slet</button></div>
   <div class="grid">
     <div class="card"><h2>${esc(c.name)} ${c.customerNo || c.skvizbizId ? `<span class="small mute">#${esc(c.customerNo || c.skvizbizId)}</span>` : ''}</h2>
@@ -469,9 +473,9 @@ function alertsStrip() {
     if (db.settings.realData && (age == null || age >= 7)) out.push(`<span class="alert">💾 ${age == null ? 'Der er ikke taget backup endnu' : `Sidste backup er ${age} dage gammel`} <button data-act="backup">Download backup</button></span>`);
     // driftspåmindelser (se docs/DRIFT.md)
     for (const d of DRIFT) if (t >= d.from && !db.settings.driftDone?.[d.id]) out.push(`<span class="alert">🔔 ${d.text} <button data-act="driftOk" data-id="${d.id}">Klaret</button></span>`);
-    const od = db.invoiceLinks.filter((l) => l.status === 'bogført' && l.payment !== 'betalt' && l.dueDate && l.dueDate < t);
+    const od = liveLinks().filter((l) => l.status === 'bogført' && l.payment !== 'betalt' && l.dueDate && l.dueDate < t);
     if (od.length) out.push(`<span class="alert">💸 ${od.length} faktura${od.length > 1 ? 'er' : ''} ikke betalt til tiden (${kr(Math.round(od.reduce((s2, l) => s2 + (l.remainder ?? l.gross ?? 0), 0)))}) <button data-tab="faktura">Vis</button></span>`);
-    const bad = db.invoiceLinks.filter((l) => l.status === 'fejl' || (l.status === 'kladde' && (l.attempts || 0) >= 3));
+    const bad = liveLinks().filter((l) => l.status === 'fejl' || (l.status === 'kladde' && (l.attempts || 0) >= 3));
     if (bad.length) out.push(`<span class="alert">⚠️ ${bad.length} faktura${bad.length > 1 ? 'er' : ''} kunne ikke laves i e-conomic <button data-tab="faktura">Vis</button></span>`);
   }
   const chk = dataCheck().slice(0, 2).reduce((s2, [, it]) => s2 + it.length, 0);
@@ -539,7 +543,7 @@ function kalender() {
   const pick = ui.calPick?.split('|'); if (pick && (pick[1] < ws || pick[1] > D.addDays(ws, 6) || !route(pick[0]))) ui.calPick = null;
   const pv = ui.calPick ? wv.filter((v) => v.routeId === pick[0] && v.plannedDate === pick[1]) : ui.calDay ? wv.filter((v) => v.plannedDate === ui.calDay) : wv;
   const e = econ(pv, !!ui.calPick);
-  const q = D.invoiceQueue(db.visits, db.invoiceLinks); const open = db.invoiceLinks.filter((l) => l.status === 'bogført' && l.payment !== 'betalt');
+  const q = invQueue(); const open = liveLinks().filter((l) => l.status === 'bogført' && l.payment !== 'betalt');
   const t = todayIso();
   $view.innerHTML = `${alertsStrip()}
   <div class="toolbar"><button class="pri dagsrute-btn" data-tab="mobil">🚐 Dagsrute</button><div class="seg"><button data-act="wk" data-d="-7">‹</button><button data-act="wk" data-d="0">I dag</button><button data-act="wk" data-d="7">›</button></div>
@@ -1473,10 +1477,10 @@ function runCsv(r) {
 }
 /** Penge ind: faktureret, betalt, udestående og forfaldent (fra fakturaerne og betalingsstatus fra e-conomic). */
 function moneyCard(sel) {
-  const t = todayIso(); const ls = db.invoiceLinks.filter((l) => l.status === 'bogført'); const g = (l) => l.gross ?? l.total * 1.25; const rem = (l) => l.remainder ?? g(l);
+  const t = todayIso(); const ls = liveLinks().filter((l) => l.status === 'bogført'); const g = (l) => l.gross ?? l.total * 1.25; const rem = (l) => l.remainder ?? g(l);
   const inM = ls.filter((l) => (l.createdAt || '').slice(0, 7) === sel); const open = ls.filter((l) => l.payment !== 'betalt'); const od = open.filter((l) => l.dueDate && l.dueDate < t);
   const cash = ls.filter((l) => l.paymentRegistered && (l.paymentRegistered.at || l.createdAt || '').slice(0, 7) === sel);
-  const notSent = db.invoiceLinks.filter((l) => l.status !== 'bogført').length; const sum = (xs, f) => xs.reduce((s2, l) => s2 + f(l), 0);
+  const notSent = liveLinks().filter((l) => l.status !== 'bogført').length; const sum = (xs, f) => xs.reduce((s2, l) => s2 + f(l), 0);
   let synced = null; try { synced = Number(localStorage.getItem('vindue-paysync')) || null; } catch {}
   const box = (label, val, sub, bad) => `<div><div class="mute small">${label}</div><div class="kpi" style="font-size:22px${bad ? ';color:var(--bad)' : ''}">${val}</div><div class="small mute">${sub}</div></div>`;
   return `<div class="card"><div class="row"><h2 class="sp">💰 Penge ind</h2><button class="small" data-act="syncPay">Hent betalingsstatus</button></div>
@@ -1532,7 +1536,7 @@ async function installApp() {
 /* ---------------- Fakturering ---------------- */
 /** Forfaldne fakturaer: vælg og send betalingspåmindelse som SMS fra egen telefon. */
 function overdueCard() {
-  const t = todayIso(); const od = db.invoiceLinks.filter((l) => l.status === 'bogført' && l.payment !== 'betalt' && l.dueDate && l.dueDate < t).sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+  const t = todayIso(); const od = liveLinks().filter((l) => l.status === 'bogført' && l.payment !== 'betalt' && l.dueDate && l.dueDate < t).sort((a, b) => a.dueDate.localeCompare(b.dueDate));
   if (!od.length) return ''; ui.odSel ||= new Set();
   const last = (l) => (l.reminders || []).map((r) => r.at).sort().at(-1);
   return `<div class="card"><div class="row"><h2 class="sp">💸 Ikke betalt til tiden (${od.length})</h2><button class="small" data-act="odAll">Vælg alle</button><button class="pri" data-act="remindSel" ${ui.odSel.size ? '' : 'disabled'}>📱 Send påmindelse til valgte (${[...ui.odSel].filter((id) => od.some((l) => l.id === id)).length})</button></div>
@@ -1549,8 +1553,8 @@ function remindDialog() {
     ${ui._remList.map((x, i) => { const tel = D.normalizePhone(x.c?.phone); return `<div class="row" style="border-bottom:1px solid var(--line);padding:6px 0"><div class="sp"><b>${esc(x.c?.name)}</b><div class="small mute">${esc(x.text)}</div></div>${tel ? `<a class="btn pri" data-remi="${i}" href="${smsLink(tel, x.text)}">📱 Send</a>` : '<span class="pill bad">intet mobilnr.</span>'}</div>`; }).join('')}`, null, 'Færdig');
 }
 function faktura() {
-  const q = D.invoiceQueue(db.visits, db.invoiceLinks).sort((a, b) => a.completion.at.localeCompare(b.completion.at));
-  const links = [...db.invoiceLinks].reverse();
+  const q = invQueue().sort((a, b) => a.completion.at.localeCompare(b.completion.at));
+  const links = [...liveLinks()].reverse();
   $view.innerHTML = ecoTabs() + overdueCard() + `<div class="card"><div class="row"><h2 class="sp">Faktureringskø (${q.length})</h2><label class="small"><input type="checkbox" id="perC" ${db.settings.perCustomerInvoice ? 'checked' : ''}> Samlefaktura pr. kunde</label></div>
     ${q.length ? `<table><tr><th><input type="checkbox" id="all" checked></th><th>Udført</th><th>Kunde</th><th class="hide-m">Ydelse</th><th>Af</th><th>Pris</th></tr>${q.map((v) => `<tr><td><input type="checkbox" class="qv" value="${v.id}" checked></td><td>${fmt(v.completion.at.slice(0, 10))}</td><td>${esc(cust(v.customerId).name)}${cust(v.customerId).billTo ? `<div class="small mute">💳 faktureres via ${esc(cust(cust(v.customerId).billTo)?.name)}</div>` : ''}</td><td class="hide-m small">${esc(v.service)}${v.status === 'delvis' ? ' (delvis)' : ''}${v.completion.priceChanged ? ' <span class="pill warn">pris ændret</span>' : ''}${v.completion.note ? `<br>💬 ${esc(v.completion.note)}` : ''}</td><td>${esc(emp(v.completion.by)?.name ?? v.completion.by)}<div class="small mute">${esc(PAY[cust(v.customerId).paymentMethod] ?? '')}${v.completion.cashPaid ? ` <span class="pill ok">${v.completion.payMethod === 'mobilepay' ? 'MobilePay' : 'kontant'} modtaget</span>` : ''}</div></td><td>${kr(v.price)}</td></tr>`).join('')}</table>
     <div class="row" style="margin-top:10px"><button class="${ecoReal() ? '' : 'pri'}" data-act="approve">${ecoReal() ? 'Fakturér valgte nu' : 'Godkend valgte → opret kladder (øve-udgave)'}</button>${ecoReal() ? '' : `<label class="small"><input type="checkbox" id="fail" ${eco.failNext ? 'checked' : ''}> Simulér timeout ved næste kald</label>`}</div>
@@ -1838,7 +1842,7 @@ document.addEventListener('click', async (e) => {
         if (!confirm(`Afregn provision til og med ${fmt(to)} (${n} linjer)?\n\nBesøgene markeres som afregnet og kommer ikke med igen. Løngrundlaget hentes som CSV.`)) return;
         const r = S.settlePayroll(db, ui.user, to); runCsv(r); toast('Afregnet – løngrundlag hentet'); break; }
       case 'payCsv': { const r = S.payrollRuns(db).find((x) => x.id === id); if (r) runCsv(r); return; }
-      case 'odAll': { const t = todayIso(); ui.odSel = new Set(db.invoiceLinks.filter((l) => l.status === 'bogført' && l.payment !== 'betalt' && l.dueDate && l.dueDate < t).map((l) => l.id)); break; }
+      case 'odAll': { const t = todayIso(); ui.odSel = new Set(liveLinks().filter((l) => l.status === 'bogført' && l.payment !== 'betalt' && l.dueDate && l.dueDate < t).map((l) => l.id)); break; }
       case 'remindSel': return remindDialog();
       case 'rebuildRoutes': return rebuildDialog();
       case 'optWhy': optState().whyC = id; break;
@@ -1977,6 +1981,9 @@ document.addEventListener('click', async (e) => {
       case 'ivCreate': { const code = await cloud.createInvite(member.orgId, document.getElementById('ivRole').value, document.getElementById('ivEmp').value, null); S.audit(db, ui.user.id, 'user.invite', document.getElementById('ivEmp').value);
         openDlg(`<h2>Invitationskode</h2><p style="font-size:30px;font-weight:700;letter-spacing:3px" class="code">${esc(code)}</p><p class="small">Giv koden til medarbejderen. De åbner <b>${esc(location.origin + location.pathname)}</b>, opretter en bruger og indtaster koden.</p>`, null, 'Luk'); return cloudCard(); }
       case 'ecoRetry': ui._ecoOpts = null; return ecoCard();
+      case 'ecoSame': db.settings.economic.agreementNumber = ui._ecoAg; S.audit(db, ui.user.id, 'economic.agreement', ui._ecoAg); save(); return ecoCard();
+      case 'ecoSwitch': { if (!confirm('Skift til det nye regnskab? Tag gerne en backup først (Admin → Download backup).')) return;
+        const r = S.switchEconomicAgreement(db, ui.user, ui._ecoAg); ui._ecoOpts = null; save(); toast(`Skiftet – ${r.links} gamle fakturaer arkiveret. Vælg opsætningen og slå fakturering til.`); return ecoCard(); }
       case 'ivDel': await cloud.deleteInvite(id); return cloudCard();
       case 'cmRemove': if (!confirm('Fjern brugerens adgang til firmaets data?')) return; await cloud.removeMember(member.orgId, id); S.audit(db, ui.user.id, 'user.remove', id); return cloudCard();
       case 'cfSave': { const url = document.getElementById('cfUrl').value.trim(), key2 = document.getElementById('cfKey').value.trim(); if (!/^https:\/\/.+/.test(url) || !key2) return toast('Udfyld URL og nøgle');
@@ -2220,7 +2227,7 @@ async function autoEconomic() {
     if (!db.settings.economic.autoFrom) { db.settings.economic.autoFrom = new Date().toISOString(); await save(); } // allerede slået til før denne version
     const api = ecoApi(); const r = await S.autoInvoice(db, ui.user, api, { from: db.settings.economic.autoFrom });
     const last = +(localStorage.getItem('vindue-paysync') || 0);
-    if (Date.now() - last > 3 * 3600e3 && db.invoiceLinks.some((l) => l.status === 'bogført' && l.payment !== 'betalt')) { await S.syncPayments(db, api, ui.user); localStorage.setItem('vindue-paysync', String(Date.now())); r.push(1); }
+    if (Date.now() - last > 3 * 3600e3 && liveLinks().some((l) => l.status === 'bogført' && l.payment !== 'betalt')) { await S.syncPayments(db, api, ui.user); localStorage.setItem('vindue-paysync', String(Date.now())); r.push(1); }
     if (r.length) { await save(); softRender(); }
   } catch (e) { console.warn('Automatisk fakturering', e); }
   finally { autoBusy = false; }
@@ -2268,6 +2275,16 @@ async function ecoCard() {
   try { info = await cloud.economic('ping'); opts = ui._ecoOpts || (ui._ecoOpts = await cloud.economic('options')); }
   catch (e) { el.innerHTML = head + `<p class="warn-t">${esc(e.message)}</p><p class="small">Opsætning: se <b>vindue/supabase/OPSÆTNING.md → e-conomic</b>. Fakturering kører i øve-udgave, indtil forbindelsen virker.</p><button data-act="ecoRetry">Prøv igen</button>`; return; }
   const sel = (key, list, label, fmt = (x) => `${x.id} · ${x.name}`) => `<label><span>${label}</span><select data-eco="${key}"><option value="">– vælg –</option>${list.map((x) => `<option value="${esc(x.id)}" ${String(cfg[key] ?? '') === String(x.id) ? 'selected' : ''}>${esc(fmt(x))}</option>`).join('')}</select></label>`;
+  // nyt regnskab? (fx skift fra prøveregnskab til det rigtige) – gamle fakturaer og kundenumre må ikke blandes med det nye
+  const ag = String(info.agreementNumber || '');
+  if (ag && !cfg.agreementNumber && !db.invoiceLinks.some((l) => !l.archived)) { cfg.agreementNumber = ag; save(); }
+  if (ag && cfg.agreementNumber !== ag) {
+    const n = db.invoiceLinks.filter((l) => !l.archived).length; ui._ecoAg = ag;
+    el.innerHTML = head + `<div class="warnbox"><b>Forbundet til ${esc(info.company || '')} (aftale ${esc(ag)})</b>${cfg.agreementNumber ? ` – før: aftale ${esc(cfg.agreementNumber)}` : ''}.<br>
+      Er det dit <b>rigtige regnskab</b>? Så skal appen skifte: ${n} fakturaer fra det gamle regnskab arkiveres (vises ikke og hentes ikke status på), kundernes numre i e-conomic glemmes (de oprettes i det nye regnskab med samme kundenummer, første gang de faktureres), opsætningen skal vælges igen, og automatisk fakturering starter først, når du slår den til – kun besøg færdigmeldt derefter faktureres (dem før har SkvizBiz faktureret).
+      <div class="row" style="margin-top:8px"><button class="pri" data-act="ecoSwitch">Ja, skift til dette regnskab</button><button data-act="ecoSame">Nej – det er samme regnskab som før</button></div></div>`;
+    return;
+  }
   const need = ['layout', 'paymentTerms', 'vatZone', 'customerGroup', 'product'];
   const missing = need.filter((k) => !cfg[k]);
   el.innerHTML = head + `<p class="small">✓ Forbundet til <b>${esc(info.company || '')}</b> (aftale ${esc(info.agreementNumber)})</p>
@@ -2276,11 +2293,12 @@ async function ecoCard() {
     <h3>Kontant betaling på stedet</h3><div class="grid">${sel('journal', opts.journals, 'Kassekladde')}${sel('cashAccount', opts.accounts.filter((a) => a.type === 'status'), 'Konto for kontant')}</div>
     <label class="small"><input type="checkbox" data-eco="sendEmail" ${cfg.sendEmail === false ? '' : 'checked'}> Send fakturaen pr. mail ved bogføring (kunder med e-mail og fakturatype "Email")</label><br>
     <label class="small"><input type="checkbox" data-eco="enabled" ${cfg.enabled ? 'checked' : ''} ${missing.length ? 'disabled' : ''}> <b>Brug e-conomic til fakturering</b>${missing.length ? ' – udfyld felterne ovenfor først' : ''}</label>
-    ${cfg.autoFrom ? `<p class="small">Automatisk fakturering af besøg færdigmeldt efter <b>${fmtTs(cfg.autoFrom)}</b>. Ældre besøg kan faktureres manuelt under Fakturering.</p>` : ''}<p class="small mute">Når den er slået til, laver "Fakturering" rigtige fakturaer i e-conomic. Kunder oprettes automatisk (med samme kundenummer som i appen, når det er ledigt).</p>
+    ${cfg.autoFrom ? `<p class="small">Automatisk fakturering af besøg færdigmeldt efter <b>${fmtTs(cfg.autoFrom)}</b>. ${cfg.invoiceFrom ? 'Ældre besøg er faktureret i SkvizBiz og vises ikke i faktureringskøen.' : 'Ældre besøg kan faktureres manuelt under Fakturering.'}</p>` : ''}<p class="small mute">Når den er slået til, laver "Fakturering" rigtige fakturaer i e-conomic. Kunder oprettes automatisk (med samme kundenummer som i appen, når det er ledigt).</p>
     <div class="row"><button data-act="ecoRetry">Genindlæs lister</button></div>`;
   el.querySelectorAll('[data-eco]').forEach((x) => (x.onchange = () => { const k = x.dataset.eco;
     cfg[k] = x.type === 'checkbox' ? x.checked : x.value === '' ? null : (k === 'product' ? x.value : Number(x.value));
     if (k === 'enabled' && x.checked && !cfg.autoFrom) cfg.autoFrom = new Date().toISOString(); // gamle besøg faktureres ikke automatisk
+    if (k === 'enabled' && x.checked && cfg.setInvoiceFrom) { cfg.invoiceFrom = cfg.autoFrom; delete cfg.setInvoiceFrom; } // skæringsdato: ældre besøg er faktureret i SkvizBiz
     S.audit(db, ui.user.id, 'economic.settings', k, { value: cfg[k] }); save(); ecoCard(); }));
 }
 async function cloudCard() {

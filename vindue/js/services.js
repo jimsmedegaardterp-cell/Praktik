@@ -153,7 +153,7 @@ export async function autoInvoice(db, user, economic, { nowMs = Date.now(), grac
   // fejlede kladder/bogføringer prøves igen (højst hvert 10. minut pr. faktura)
   const fresh = new Set(out.map((l) => l.id)); out.forEach((l) => { if (l.status !== 'bogført') l.lastTry = nowMs; });
   for (const l of db.invoiceLinks) {
-    if (!fresh.has(l.id) && (l.status === 'fejl' || l.status === 'kladde') && (!l.lastTry || nowMs - l.lastTry > 600000) && (l.attempts || 0) < 6) {
+    if (!l.archived && !fresh.has(l.id) && (l.status === 'fejl' || l.status === 'kladde') && (!l.lastTry || nowMs - l.lastTry > 600000) && (l.attempts || 0) < 6) {
       l.lastTry = nowMs; if (l.status === 'fejl') await retryInvoice(db, user, l.id, economic); if (l.status === 'kladde') await bookInvoice(db, user, l.id, economic); out.push(l);
     }
   }
@@ -216,7 +216,7 @@ export async function bookInvoice(db, user, linkId, economic) {
 }
 
 export async function syncPayments(db, economic, user) {
-  const open = db.invoiceLinks.filter((x) => x.status === 'bogført' && x.payment !== 'betalt');
+  const open = db.invoiceLinks.filter((x) => !x.archived && x.status === 'bogført' && x.payment !== 'betalt');
   if (user) for (const l of open) if (!l.paymentRegistered) await registerOnSitePayment(db, user, l, economic);
   if (economic.getStatuses && open.length) {
     for (let i = 0; i < open.length; i += 100) { const part = open.slice(i, i + 100); const st = await economic.getStatuses(part.map((l) => l.invoiceNumber));
@@ -581,4 +581,21 @@ export function holidayPeriods(db, fromIso, toIso) {
   const isWk = (d) => D.weekday(d) < 5; const days = []; for (let d = fromIso; d <= toIso; d = D.addDays(d, 1)) if (isWk(d) && D.isClosedDay(d, db.closedDays || [])) days.push(d);
   const out = []; for (const d of days) { const p = out[out.length - 1]; if (p && D.diffDays(p.days[p.days.length - 1], d) <= 7) p.days.push(d); else out.push({ days: [d] }); }
   return out.map((p) => ({ start: p.days[0], end: p.days[p.days.length - 1], days: p.days, n: p.days.length }));
+}
+
+/**
+ * Skift fra prøveregnskab til det rigtige regnskab (ny aftale i e-conomic):
+ * gamle fakturaer arkiveres (vises ikke, ingen betalingsstatus), kundernes e-conomic-numre glemmes (oprettes igen i det nye regnskab),
+ * opsætningen skal vælges igen, og automatisk fakturering starter først, når den slås til igen – fra det tidspunkt (skæringsdato).
+ */
+export function switchEconomicAgreement(db, user, agreementNumber) {
+  require_(user, 'invoice.book');
+  const cfg = (db.settings.economic ||= {}); const old = cfg.agreementNumber || 'prøveregnskab';
+  let links = 0, custs = 0;
+  for (const l of db.invoiceLinks) if (!l.archived) { l.archived = true; l.archivedFrom = old; links++; }
+  for (const c of db.customers) if (c.economicNumber || c.economicSynced) { delete c.economicNumber; delete c.economicSynced; custs++; }
+  for (const k of ['layout', 'paymentTerms', 'vatZone', 'customerGroup', 'product', 'journal', 'cashAccount', 'autoFrom', 'invoiceFrom']) cfg[k] = null;
+  cfg.enabled = false; cfg.agreementNumber = String(agreementNumber); cfg.setInvoiceFrom = true;
+  audit(db, user.id, 'economic.switchAgreement', String(agreementNumber), { from: old, links, customers: custs });
+  return { links, customers: custs };
 }

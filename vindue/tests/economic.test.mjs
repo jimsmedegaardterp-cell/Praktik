@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EconomicApi, splitAddress } from '../js/adapters.js';
 import * as S from '../js/services.js';
+import * as D from '../js/domain.js';
 import { seedDb } from '../js/seed.js';
 
 const admin = { id: 'u1', role: 'admin', employeeId: 'e1' };
@@ -140,4 +141,24 @@ test('fakturatekst: aftalens tekst bruges på fakturalinjen, ellers opgaven', as
   await S.approveAndBook(db, admin, ids, api);
   assert.match(st.calls.find(([op]) => op === 'createDraft')[1].lines[0].description, /^Vinduespolering udvendig – /);
   ag.invoiceText = ''; assert.equal(S.invoiceTextFor(db, v), ag.service);
+});
+
+test('skift til det rigtige regnskab: gamle fakturaer arkiveres, kundenumre glemmes, intet gammelt prøves igen', async () => {
+  const db = seedDb('2026-11-07'); db.settings.economic = { ...cfg, agreementNumber: '2470886', autoFrom: '2026-01-01T00:00:00Z' };
+  const { st, api } = fakeServer(); const ids = doneVisits(db, 3);
+  await S.approveAndBook(db, admin, ids, api, { perCustomer: false });
+  db.invoiceLinks[0].status = 'fejl'; // en fejlet faktura i prøveregnskabet
+  const cs = db.customers.filter((c) => c.economicNumber).length; assert.ok(cs > 0);
+  const r = S.switchEconomicAgreement(db, admin, '9876543');
+  assert.equal(r.links, db.invoiceLinks.length); assert.ok(db.invoiceLinks.every((l) => l.archived));
+  assert.ok(!db.customers.some((c) => c.economicNumber), 'kundenumre fra prøveregnskabet glemt');
+  const e = db.settings.economic; assert.equal(e.enabled, false); assert.equal(e.layout, null); assert.equal(e.agreementNumber, '9876543'); assert.equal(e.autoFrom, null);
+  // arkiverede prøves ikke igen og hentes ikke status på
+  const before = st.calls.length;
+  await S.autoInvoice(db, admin, api, { nowMs: Date.now() + 1e9, graceMin: 5, from: '2026-01-01T00:00:00Z' });
+  await S.syncPayments(db, api, admin);
+  assert.ok(!st.calls.slice(before).some(([op]) => op === 'createDraft' || op === 'book' || op === 'status'), 'intet sendt for gamle fakturaer');
+  // besøgene der blev bogført i prøveregnskabet kommer ikke i køen igen
+  const booked = db.invoiceLinks.filter((l) => l.status === 'bogført').flatMap((l) => l.visitIds);
+  const q = new Set(D.invoiceQueue(db.visits, db.invoiceLinks).map((v) => v.id)); assert.ok(booked.length && booked.every((id) => !q.has(id)));
 });
