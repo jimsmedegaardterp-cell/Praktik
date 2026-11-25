@@ -122,7 +122,7 @@ async function pushDraft(db, user, link, economic) {
       if (f) { Object.assign(link, { status: 'bogført', invoiceNumber: f.invoiceNumber, gross: f.gross, payment: 'åben', error: null }); audit(db, user.id, 'invoice.found', link.id, { invoiceNumber: f.invoiceNumber }); return link; } }
     const dates = link.visitIds.map((id) => db.visits.find((x) => x.id === id)?.completion?.at?.slice(0, 10)).filter(Boolean).sort();
     const { draftNumber, gross } = await economic.createDraftInvoice({ idempotencyKey: link.idempotencyKey, customerExternalId: c.economicNumber, lines,
-      reference: 'SV-' + link.id, recipient: { name: c.name, ...addr }, date: dates[dates.length - 1] || now().slice(0, 10) });
+      reference: 'SV-' + link.id, recipient: { name: c.name, ...addr }, date: dates[dates.length - 1] || now().slice(0, 10), customer: c });
     Object.assign(link, { status: 'kladde', draftNumber, error: null, total: lines.reduce((s, l) => s + l.unitNetPrice * (l.quantity || 1), 0), ...(gross ? { gross } : {}) });
     audit(db, user.id, 'invoice.draft', link.id, { draftNumber });
   } catch (e) {
@@ -594,7 +594,7 @@ export function switchEconomicAgreement(db, user, agreementNumber) {
   let links = 0, custs = 0;
   for (const l of db.invoiceLinks) if (!l.archived) { l.archived = true; l.archivedFrom = old; links++; }
   for (const c of db.customers) if (c.economicNumber || c.economicSynced) { delete c.economicNumber; delete c.economicSynced; custs++; }
-  for (const k of ['layout', 'paymentTerms', 'vatZone', 'customerGroup', 'product', 'journal', 'cashAccount', 'autoFrom', 'invoiceFrom']) cfg[k] = null;
+  for (const k of ['layout', 'paymentTerms', 'vatZone', 'customerGroup', 'product', 'journal', 'cashAccount', 'autoFrom', 'invoiceFrom', 'termByDays']) cfg[k] = null;
   cfg.enabled = false; cfg.agreementNumber = String(agreementNumber); cfg.setInvoiceFrom = true;
   audit(db, user.id, 'economic.switchAgreement', String(agreementNumber), { from: old, links, customers: custs });
   return { links, customers: custs };
