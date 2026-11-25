@@ -162,3 +162,15 @@ test('skift til det rigtige regnskab: gamle fakturaer arkiveres, kundenumre glem
   const booked = db.invoiceLinks.filter((l) => l.status === 'bogført').flatMap((l) => l.visitIds);
   const q = new Set(D.invoiceQueue(db.visits, db.invoiceLinks).map((v) => v.id)); assert.ok(booked.length && booked.every((id) => !q.has(id)));
 });
+
+test('betalingsbetingelse pr. kunde: kundens antal dage → valgt betingelse i e-conomic, ellers standard', async () => {
+  const db = seedDb('2026-11-07'); const { st } = fakeServer();
+  const api = new EconomicApi(async (op, p) => { st.calls.push([op, p]); if (op === 'upsertCustomer') return { customerNumber: 7000 + st.calls.length }; if (op === 'createDraft') return { draftNumber: st.calls.length, net: 1, gross: 1.25 }; if (op === 'book') return { invoiceNumber: 900 + st.calls.length, gross: 1.25 }; if (op === 'findBooked') return null; return {}; }, { ...cfg, paymentTerms: 1, termByDays: { 30: 3 } });
+  const seen = new Set(); const pickV = db.visits.filter((v) => v.status === 'planlagt' && !seen.has(v.customerId) && seen.add(v.customerId)).slice(0, 2);
+  for (const v of pickV) S.registerVisit(db, admin, v.id, { result: 'udfoert', opId: 'o' + v.id }); const ids = pickV.map((v) => v.id); const vs = pickV;
+  db.customers.find((c) => c.id === vs[0].customerId).paymentDays = 30; db.customers.find((c) => c.id === vs[1].customerId).paymentDays = 8;
+  await S.approveAndBook(db, admin, ids, api, { perCustomer: false });
+  const drafts = st.calls.filter(([op]) => op === 'createDraft').map(([, p]) => p.settings.paymentTerms).sort();
+  const custs = st.calls.filter(([op]) => op === 'upsertCustomer').map(([, p]) => p.settings.paymentTerms).sort();
+  assert.deepEqual(drafts, [1, 3]); assert.deepEqual(custs, [1, 3]);
+});

@@ -15,7 +15,7 @@ import { showRouteMap } from './map.js';
 import * as KV from './store.js';
 import * as O from './optimizer.js';
 
-export const VERSION = '2026-11-25 #91';
+export const VERSION = '2026-11-25 #92';
 const KEY = 'vindue-demo-v3'; // v3: ruter med egen rytme
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 let db = await load();
@@ -309,6 +309,7 @@ function customerForm(c, preset = null) {
     Object.assign(c, { customerNo: f.customerNo.trim(), group: f.group, name: f.name.trim(), phone: f.phone.trim(), landline: f.landline.trim(), email: f.email.trim(), cvr: f.cvr.trim(), contact: f.contact.trim(),
       invoiceType: f.invoiceType, invoiceInterval: f.invoiceInterval, paymentDays: Math.max(0, +f.paymentDays || 0), paymentTerms: `Netto ${Math.max(0, +f.paymentDays || 0)} dage`, paymentMethod: f.paymentMethod, vatLiable: !!f.vatLiable,
       callBefore: f.callBefore === '1', smsBefore: f.smsBefore === '1', smsAfter: f.smsAfter === '1', marketingConsent: !!f.marketingConsent, rememberNext: f.rememberNext.trim(), notes: f.notes });
+    c.economicSynced = false; // kundekortet i e-conomic opdateres ved næste faktura (navn, e-mail, betalingsbetingelse …)
     if (isNew) {
       c.id = S.uid('c'); db.customers.push(c);
       const same = preset && f.street.trim() === preset.street;
@@ -2290,11 +2291,18 @@ async function ecoCard() {
   el.innerHTML = head + `<p class="small">✓ Forbundet til <b>${esc(info.company || '')}</b> (aftale ${esc(info.agreementNumber)})</p>
     <div class="grid">${sel('customerGroup', opts.customerGroups, 'Kundegruppe for nye kunder')}${sel('paymentTerms', opts.paymentTerms, 'Betalingsbetingelse')}${sel('vatZone', opts.vatZones, 'Momszone')}
     ${sel('layout', opts.layouts, 'Fakturalayout')}${sel('product', opts.products, 'Vare på fakturalinjer', (x) => `${x.id} · ${x.name}`)}</div>
+    ${(() => { const cnt = {}; for (const c of db.customers) if (!c.deleted) { const d = String(c.paymentDays ?? 8); cnt[d] = (cnt[d] || 0) + 1; }
+      const ds = Object.keys(cnt).sort((a, b) => a - b); if (ds.length < 2 && !cfg.termByDays) return '';
+      return `<h3>Betalingsbetingelse pr. kunde</h3><p class="small mute">Kunderne har forskellige betalingsfrister (fra SkvizBiz / kundekortet). Vælg hvilken betingelse i e-conomic hver frist svarer til – ellers bruges standard ovenfor. Opret de manglende betingelser i e-conomic (Indstillinger → Betalingsbetingelser) og tryk "Genindlæs lister".</p>
+        <div class="grid">${ds.map((d) => `<label><span>${d} dage (${cnt[d]} kunder)</span><select data-term="${d}"><option value="">Standard</option>${opts.paymentTerms.map((x) => `<option value="${esc(x.id)}" ${String(cfg.termByDays?.[d] ?? '') === String(x.id) ? 'selected' : ''}>${esc(x.id + ' · ' + x.name)}</option>`).join('')}</select></label>`).join('')}</div>`; })()}
     <h3>Kontant betaling på stedet</h3><div class="grid">${sel('journal', opts.journals, 'Kassekladde')}${sel('cashAccount', opts.accounts.filter((a) => a.type === 'status'), 'Konto for kontant')}</div>
     <label class="small"><input type="checkbox" data-eco="sendEmail" ${cfg.sendEmail === false ? '' : 'checked'}> Send fakturaen pr. mail ved bogføring (kunder med e-mail og fakturatype "Email")</label><br>
     <label class="small"><input type="checkbox" data-eco="enabled" ${cfg.enabled ? 'checked' : ''} ${missing.length ? 'disabled' : ''}> <b>Brug e-conomic til fakturering</b>${missing.length ? ' – udfyld felterne ovenfor først' : ''}</label>
     ${cfg.autoFrom ? `<p class="small">Automatisk fakturering af besøg færdigmeldt efter <b>${fmtTs(cfg.autoFrom)}</b>. ${cfg.invoiceFrom ? 'Ældre besøg er faktureret i SkvizBiz og vises ikke i faktureringskøen.' : 'Ældre besøg kan faktureres manuelt under Fakturering.'}</p>` : ''}<p class="small mute">Når den er slået til, laver "Fakturering" rigtige fakturaer i e-conomic. Kunder oprettes automatisk (med samme kundenummer som i appen, når det er ledigt).</p>
     <div class="row"><button data-act="ecoRetry">Genindlæs lister</button></div>`;
+  el.querySelectorAll('[data-term]').forEach((x) => (x.onchange = () => { cfg.termByDays ||= {}; if (x.value) cfg.termByDays[x.dataset.term] = Number(x.value); else delete cfg.termByDays[x.dataset.term];
+    for (const c of db.customers) if (String(c.paymentDays ?? 8) === x.dataset.term) c.economicSynced = false; // kundekortene i e-conomic opdateres
+    S.audit(db, ui.user.id, 'economic.termByDays', x.dataset.term, { value: x.value }); save(); toast('Gemt'); }));
   el.querySelectorAll('[data-eco]').forEach((x) => (x.onchange = () => { const k = x.dataset.eco;
     cfg[k] = x.type === 'checkbox' ? x.checked : x.value === '' ? null : (k === 'product' ? x.value : Number(x.value));
     if (k === 'enabled' && x.checked && !cfg.autoFrom) cfg.autoFrom = new Date().toISOString(); // gamle besøg faktureres ikke automatisk

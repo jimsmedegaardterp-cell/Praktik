@@ -72,13 +72,15 @@ export class EconomicApi {
   constructor(call, cfg) { this.call = call; this.cfg = cfg || {}; this.real = true; }
   ping() { return this.call('ping'); }
   options() { return this.call('options'); }
+  /** Betalingsbetingelse i e-conomic for en kunde: kundens antal dage (fra SkvizBiz) → valgt betingelse; ellers standard. */
+  termFor(c) { return (c && this.cfg.termByDays?.[String(c.paymentDays ?? 8)]) || this.cfg.paymentTerms; }
   async upsertCustomer(c, extra = {}) {
-    const r = await this.call('upsertCustomer', { number: c.economicNumber || null, settings: this.cfg,
+    const r = await this.call('upsertCustomer', { number: c.economicNumber || null, settings: { ...this.cfg, paymentTerms: this.termFor(c) },
       customer: { id: c.id, customerNo: c.customerNo, name: c.name, email: c.email, mobilePhone: c.phone, phone: c.landline, cvr: c.cvr, ean: c.ean, ...extra.address } });
     return { externalId: r.customerNumber };
   }
-  async createDraftInvoice({ idempotencyKey, customerExternalId, lines, reference, recipient, date, heading }) {
-    const body = { customerNumber: customerExternalId, lines: lines.map((l) => ({ ...l, productNumber: l.productNumber || this.cfg.product })), reference, recipient, date, heading, settings: this.cfg };
+  async createDraftInvoice({ idempotencyKey, customerExternalId, lines, reference, recipient, date, heading, customer }) {
+    const body = { customerNumber: customerExternalId, lines: lines.map((l) => ({ ...l, productNumber: l.productNumber || this.cfg.product })), reference, recipient, date, heading, settings: { ...this.cfg, paymentTerms: this.termFor(customer) } };
     // samme indhold → samme nøgle (e-conomic afviser dubletter i 1 time); ændret indhold (fx rettet opsætning) → ny nøgle
     const r = await this.call('createDraft', { ...body, idem: 'draft:' + reference + ':' + fnv(JSON.stringify(body)) });
     return { draftNumber: r.draftNumber, gross: r.gross, net: r.net };
