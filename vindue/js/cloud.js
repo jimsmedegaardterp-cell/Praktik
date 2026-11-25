@@ -92,6 +92,11 @@ export class MemoryCloud {
   constructor() { this.K = 'vindue-memserver'; this.cbs = []; this.backend = { push: (o, r) => this.mem().push(o, r), pull: (o, s) => this.mem().pull(o, s) }; }
   st() { try { return JSON.parse(localStorage.getItem(this.K)) || { users: [], orgs: [], members: [], invites: [], rows: {}, clock: 0 }; } catch { return { users: [], orgs: [], members: [], invites: [], rows: {}, clock: 0 }; } }
   put(s) { localStorage.setItem(this.K, JSON.stringify(s)); }
+  /** Kun til test: falsk e-conomic (slås til med localStorage 'vindue-fake-economic' = aftalenummer). */
+  get economic() { const ag = localStorage.getItem('vindue-fake-economic'); if (!ag) return undefined;
+    return async (op) => { if (op === 'ping') return { company: 'Testfirma', agreementNumber: ag };
+      if (op === 'options') { const l = (n) => [{ id: 1, name: n }]; return { layouts: l('Layout'), paymentTerms: l('Netto 8 dage'), vatZones: l('Indland'), customerGroups: l('Kunder'), products: [{ id: '1', name: 'Vinduespolering' }], journals: l('Kassekladde'), accounts: [{ id: 5800, name: 'Kasse', type: 'status' }] }; }
+      throw new Error('Falsk e-conomic (test): ' + op); }; }
   mem() { const s = this.st(); const self = this; const m = new MemoryBackend(s); m.role = this.myRole || 'admin'; m.emp = this.myEmp || null;
     return { push: async (o, rows) => { await m.push(o, rows); self.put(s); }, pull: (o, since) => m.pull(o, since) }; }
   uid() { return sessionStorage.getItem('vindue-memuser') || localStorage.getItem('vindue-memuser'); }

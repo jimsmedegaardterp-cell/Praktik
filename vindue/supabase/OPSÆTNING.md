@@ -78,8 +78,14 @@ I e-conomic skal firmaets e-mail være udfyldt (Indstillinger → Firma), ellers
 - **Bankintegration/bankafstemning** i e-conomic afstemmer bankindbetalinger. Opsættes i e-conomic.
 - Kontant betalt på stedet lægges af appen i kassekladden.
 
-### Når det skal i drift
-Lav den rigtige regnskabsaftale, åbn Installation URL dér, og udskift `ECONOMIC_GRANT` med den nye token. Opsætningen i appen skal vælges igen (numrene kan være anderledes).
+### Når det skal i drift (skift fra prøveregnskab til det rigtige)
+1. **I det rigtige e-conomic:** Indstillinger → Firma: firmaets e-mail udfyldt. Opret varen "Vinduespolering" (25 % moms) hvis den ikke findes. Tjek betalingsbetingelsen (fx Netto 8 dage) og fakturalayoutet (logo, bankoplysninger – evt. FI-kort/+71, SKAL VERIFICERES i e-conomic).
+2. **Ny nøgle:** Log ind på **udvikleraftalen** → Apps → din app → **Tokens** → kopiér **Installation URL**. Log ud, log ind på det **rigtige regnskab**, åbn Installation URL → godkend → kopiér den nye **AgreementGrantToken**.
+3. **Supabase → Edge Functions → Secrets:** ret `ECONOMIC_GRANT` til den nye token (`ECONOMIC_APP_SECRET` er den samme). Indsæt aldrig nøgler i chatten.
+4. **Appen → Admin → e-conomic → Prøv igen:** appen opdager det nye regnskab og spørger. Tryk **"Ja, skift til dette regnskab"**: gamle testfakturaer arkiveres, kundernes numre fra prøveregnskabet glemmes (kunderne oprettes i det nye regnskab med samme kundenummer, første gang de faktureres).
+5. Vælg opsætningen igen (kundegruppe, betalingsbetingelse, momszone, layout, vare, kassekladde + kassekonto) og slå **"Brug e-conomic til fakturering"** til. Tidspunktet bliver **skæringsdato**: kun besøg færdigmeldt derefter faktureres; ældre besøg (faktureret i SkvizBiz) vises ikke i faktureringskøen.
+6. **Testfaktura til dig selv:** opret dig selv som kunde med din e-mail, book et besøg, færdigmeld det, og tjek fakturaen i e-conomic og i din mail. Lav en kreditnota i e-conomic bagefter.
+7. Stop fakturering i SkvizBiz fra samme dato.
 
 ## GDPR og drift – SKAL VERIFICERES
 - Indgå Supabase's databehandleraftale (DPA) under organisationens indstillinger.

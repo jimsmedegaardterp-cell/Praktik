@@ -25,9 +25,9 @@
 - [ ] Backup/gendannelse fra Supabase testet
 
 ## Skift til rigtigt e-conomic-regnskab (når ruterne er på plads)
-- [ ] Kundenumre: appens kundenr. (fra SkvizBiz) skal være de samme som i det rigtige e-conomic, ellers oprettes kunderne igen
+- [ ] Kundenumre: appens kundenr. (fra SkvizBiz) bruges i det nye regnskab, når det er et tal og ledigt (kunde med samme navn kobles på). Hvis kunderne allerede er importeret i e-conomic med andre numre, skal det tjekkes først
 - [ ] Skæringsdato: SkvizBiz fakturerer i sit eget program – fra datoen fakturerer appen, ikke SkvizBiz
-- [ ] Ny grant-token til det rigtige regnskab i Supabase-secrets; én testfaktura til sig selv (layout, moms, betalingsbetingelser, mail)
+- [ ] Ny grant-token til det rigtige regnskab i Supabase-secrets; én testfaktura til sig selv (layout, moms, betalingsbetingelser, mail) – appen har "skift regnskab" (Admin → e-conomic), se OPSÆTNING.md
 - [ ] FI-kort (+71) på fakturaen, så bankindbetalinger afstemmes automatisk (SKAL VERIFICERES i e-conomic)
 - [ ] MobilePay MyShop: udbetales som ét samlet beløb pr. dag → kan ikke afstemmes pr. faktura af e-conomic alene.
       Muligheder: færdig app i e-conomics app-butik (fx "MobilePay til e-conomic" fra 2apps, Kontolink – pris og MyShop-understøttelse SKAL VERIFICERES)
